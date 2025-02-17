@@ -2,6 +2,9 @@
 #include <bluetooth/hci.h>
 #include <thread>
 #include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/socket.h>
 
 #include "HciSocket.h"
 #include "Logger.h"
@@ -11,16 +14,17 @@ namespace ggk {
 
 // Initializes an unconnected socket
 HciSocket::HciSocket()
-: fdSocket(-1)
-{
+    : fdSocket(-1)
+    , isRunning(true) {
 }
 
-// Socket destructor
-//
-// This will automatically disconnect the socket if it is currently connected
-HciSocket::~HciSocket()
-{
-	disconnect();
+HciSocket::~HciSocket() {
+    stop();
+    disconnect();
+}
+
+void HciSocket::stop() {
+    isRunning = false;
 }
 
 // Connects to an HCI socket using the Bluetooth Management API protocol
@@ -162,31 +166,23 @@ bool HciSocket::write(const uint8_t *pBuffer, size_t count) const
 // Wait for data to arrive, or for a shutdown event
 //
 // Returns true if data is available, false if we are shutting down
-bool HciSocket::waitForDataOrShutdown() const
-{
-	while(ggkIsServerRunning())
-	{
-		fd_set rfds;
-		FD_ZERO(&rfds);
-		FD_SET(fdSocket, &rfds);
+bool HciSocket::waitForDataOrShutdown() const {
+    while(isRunning) {
+        fd_set rfds;
+        FD_ZERO(&rfds);
+        FD_SET(fdSocket, &rfds);
 
-		struct timeval tv;
-		tv.tv_sec = 0;
-		tv.tv_usec = kDataWaitTimeMS * 1000;
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = kDataWaitTimeMS * 1000;
 
-		int retval = select(fdSocket+1, &rfds, NULL, NULL, &tv);
+        int retval = select(fdSocket+1, &rfds, NULL, NULL, &tv);
 
-		// Do we have data?
-		if (retval > 0) { return true; }
-
-		// We have an error
-		if (retval < 0) { return false; }
-
-		// No data; keep waiting
-		continue;
-	}
-
-	return false;
+        if (retval > 0) { return true; }
+        if (retval < 0) { return false; }
+        continue;
+    }
+    return false;
 }
 
 // Utilitarian function for logging errors for the given operation
