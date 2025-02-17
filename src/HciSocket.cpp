@@ -6,6 +6,10 @@
 #include <string.h>
 #include <sys/socket.h>
 
+#include <sys/ioctl.h>       // ioctl 함수 정의
+#include <linux/ioctl.h>     // _IOR 매크로 정의
+#include <bluetooth/hci_lib.h>  // hci_xxx 함수들
+
 #include "HciSocket.h"
 #include "Logger.h"
 #include "Utils.h"
@@ -185,7 +189,7 @@ bool HciSocket::write(const uint8_t *pBuffer, size_t count) const {
     Logger::debug(dump);
 
     // HCI 명령어 패킷 구조체 생성
-    struct hci_command_hdr hdr;
+    hci_command_hdr hdr;
     hdr.opcode = pBuffer[1] | (pBuffer[2] << 8);  // LSB | (MSB << 8)
     hdr.plen = count - 3;  // 헤더(3바이트) 제외한 실제 파라미터 길이
 
@@ -204,27 +208,6 @@ bool HciSocket::write(const uint8_t *pBuffer, size_t count) const {
     }
 
     return true;
-}
-
-// Writes the array of bytes of a given count
-//
-// This method returns true if the bytes were written successfully, otherwise false
-bool HciSocket::write(const uint8_t *pBuffer, size_t count) const
-{
-	std::string dump = "";
-	dump += "  > Writing " + std::to_string(count) + " bytes\n";
-	dump += Utils::hex(pBuffer, count);
-	Logger::debug(dump);
-
-	size_t len = ::write(fdSocket, pBuffer, count);
-
-	if (len != count)
-	{
-		logErrno("write");
-		return false;
-	}
-
-	return true;
 }
 
 // Wait for data to arrive, or for a shutdown event

@@ -1,159 +1,131 @@
 #include "BLEPeripheralManager.h"
-#include <algorithm>
-#include <iomanip>
-#include <sstream>
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/hci.h>
+#include <bluetooth/hci_lib.h>
 
 namespace ggk {
 
 BLEPeripheralManager::BLEPeripheralManager() 
-    : hciSocket(std::make_unique<HciSocket>())
-    , isAdvertising(false) {
+    : isAdvertising(false)
+    , hciDevice(-1) {
     Logger::debug("BLE Peripheral Manager created");
 }
 
 BLEPeripheralManager::~BLEPeripheralManager() {
     stopAdvertising();
+    if (hciDevice >= 0) {
+        hci_close_dev(hciDevice);
+    }
 }
 
 bool BLEPeripheralManager::initialize() {
-    if (!hciSocket->connect()) {
-        Logger::error("Failed to connect HCI socket");
+    hciDevice = hci_open_dev(0);
+    if (hciDevice < 0) {
+        Logger::error("Failed to open HCI device");
         return false;
     }
-    
-    // HCI reset command
-    // HCI_CMD_RESET (0x0C03)
-    struct {
-        uint8_t type;    // HCI Command packet type
-        uint16_t opcode; // OCF = 0x03, OGF = 0x03 (0x0C03)
-        uint8_t plen;    // Parameter length
-    } __attribute__((packed)) reset_cmd = {
-        HCI_COMMAND_PKT,
-        htobs(HCI_CMD_RESET),
-        0
-    };
-
-    if (!hciSocket->write(reinterpret_cast<uint8_t*>(&reset_cmd), sizeof(reset_cmd))) {
-        Logger::error("Failed to send HCI reset command");
-        return false;
-    }
-
-    std::vector<uint8_t> response;
-    if (!hciSocket->read(response)) {
-        Logger::error("Failed to read HCI reset response");
-        return false;
-    }
-
-    // Check if reset was successful
-    if (response.size() >= 7 && response[0] == HCI_EVENT_PKT && 
-        response[1] == EVT_CMD_COMPLETE && response[6] == HCI_SUCCESS) {
-        Logger::info("BLE Peripheral Manager initialized");
-        return true;
-    }
-
-    Logger::error("HCI reset failed");
-    return false;
+    Logger::info("BLE Peripheral Manager initialized");
+    return true;
 }
 
 bool BLEPeripheralManager::setAdvertisementData(const AdvertisementData& data) {
-    std::vector<uint8_t> cmd;
-    // LE Set Advertising Data command
-    cmd.push_back(0x01);  // HCI command packet
-    cmd.push_back(0x08);  // OpCode LSB
-    cmd.push_back(0x20);  // OpCode MSB
-    cmd.push_back(31);    // Parameter length
-    
-    // Build advertisement data according to BLE spec
-    std::vector<uint8_t> advData;
-    
-    // Device name
-    if (!data.name.empty()) {
-        advData.push_back(data.name.length() + 1);
-        advData.push_back(0x09);  // Complete Local Name
-        advData.insert(advData.end(), data.name.begin(), data.name.end());
-    }
+    if (hciDevice < 0) return false;
 
-    // Service UUIDs
-    if (!data.serviceUUIDs.empty()) {
-        std::vector<uint8_t> serviceUUIDs;
-        for (const auto& uuid : data.serviceUUIDs) {
-            std::vector<uint8_t> uuidBytes;
-            if (convertUUIDToBytes(uuid, uuidBytes)) {
-                serviceUUIDs.insert(serviceUUIDs.end(), uuidBytes.begin(), uuidBytes.end());
-            }
-        }
-        if (!serviceUUIDs.empty()) {
-            advData.push_back(serviceUUIDs.size() + 1);
-            advData.push_back(0x03);  // Complete List of 16-bit Service UUIDs
-            advData.insert(advData.end(), serviceUUIDs.begin(), serviceUUIDs.end());
-        }
-    }
-
-    // Manufacturer Data
-    for (const auto& [companyId, data] : data.manufacturerData) {
-        std::vector<uint8_t> mfrData;
-        mfrData.push_back(companyId & 0xFF);
-        mfrData.push_back((companyId >> 8) & 0xFF);
-        mfrData.insert(mfrData.end(), data.begin(), data.end());
-        
-        advData.push_back(mfrData.size() + 1);
-        advData.push_back(0xFF);  // Manufacturer Specific Data
-        advData.insert(advData.end(), mfrData.begin(), mfrData.end());
-    }
-
-    // Fill remaining space with 0x00
-    advData.resize(31, 0x00);
-    
-    // Add advertisement data to command
-    cmd.insert(cmd.end(), advData.begin(), advData.end());
-
-    if (!sendHCICommand(cmd)) {
-        Logger::error("Failed to set advertisement data");
+    if (hci_write_local_name(hciDevice, "BLEtest", 1000) < 0) {
+        Logger::error("Failed to set local name");
         return false;
     }
 
-    Logger::info("Advertisement data set successfully");
+    // BLE 광고 데이터 설정 (Complete Local Name 포함)
+    uint8_t advertisement_data[31] = {0}; // 최대 31바이트
+    uint8_t ad_length = 0;
+    uint8_t scan_response_data[31] = {0};
+    uint8_t scan_length = 0;
+
+    // 1. Complete Local Name (0x09)
+    scan_response_data[scan_length++] = data.name.length() + 1;
+    scan_response_data[scan_length++] = 0x09; // Complete Local Name
+    memcpy(&scan_response_data[scan_length], data.name.c_str(), data.name.length());
+    scan_length += data.name.length();
+
+    // Scan Response Data 설정
+    struct hci_request scan_rsp_rq = {};
+    scan_rsp_rq.ogf = OGF_LE_CTL;
+    scan_rsp_rq.ocf = OCF_LE_SET_SCAN_RESPONSE_DATA;
+    scan_rsp_rq.cparam = scan_response_data;
+    scan_rsp_rq.clen = sizeof(scan_response_data);
+
+    if (hci_send_req(hciDevice, &scan_rsp_rq, 1000) < 0) {
+        Logger::error("Failed to set scan response data");
+        return false;
+    }
+    Logger::info("Scan Response Data set successfully.");
+
+    // 1. Flags (General Discoverable Mode)
+    advertisement_data[ad_length++] = 2;  // Length
+    advertisement_data[ad_length++] = 0x01;  // Flags type
+    advertisement_data[ad_length++] = 0x06;  // LE General Discoverable Mode + BR/EDR Not Supported
+
+    // 2. Complete Local Name (0x09)
+    advertisement_data[ad_length++] = data.name.length() + 1; // Length
+    advertisement_data[ad_length++] = 0x09; // AD Type: Complete Local Name
+
+    // 3. 실제 장치 이름 복사
+    memcpy(&advertisement_data[ad_length], data.name.c_str(), data.name.length());
+    ad_length += data.name.length();
+
+    // 광고 데이터 설정
+    struct hci_request adv_data_rq = {};
+    adv_data_rq.ogf = OGF_LE_CTL;
+    adv_data_rq.ocf = OCF_LE_SET_ADVERTISING_DATA;
+    adv_data_rq.cparam = advertisement_data;
+    adv_data_rq.clen = sizeof(advertisement_data);
+
+    if (hci_send_req(hciDevice, &adv_data_rq, 1000) < 0) {
+        Logger::error("Failed to set advertising data");
+        return false;
+    }
+
+    // 광고 파라미터 설정
+    le_set_advertising_parameters_cp adv_params = {};
+    adv_params.min_interval = htobs(0x0800);
+    adv_params.max_interval = htobs(0x0800);
+    adv_params.advtype = 0x00;
+    adv_params.chan_map = 7;
+
+    struct hci_request adv_param_rq = {};
+    adv_param_rq.ogf = OGF_LE_CTL;
+    adv_param_rq.ocf = OCF_LE_SET_ADVERTISING_PARAMETERS;
+    adv_param_rq.cparam = &adv_params;
+    adv_param_rq.clen = LE_SET_ADVERTISING_PARAMETERS_CP_SIZE;
+
+    if (hci_send_req(hciDevice, &adv_param_rq, 1000) < 0) {
+        Logger::error("Failed to set advertising parameters");
+        return false;
+    }
+
+    Logger::info("Advertisement data set successfully with name: " + data.name);
     return true;
 }
 
 bool BLEPeripheralManager::startAdvertising() {
+    if (hciDevice < 0) return false;
     if (isAdvertising) {
         Logger::warn("Already advertising");
         return true;
     }
 
-    // LE Set Advertising Parameters command
-    std::vector<uint8_t> paramCmd = {
-        0x01,  // HCI command packet
-        0x06,  // OpCode LSB
-        0x20,  // OpCode MSB
-        0x0F,  // Parameter length
-        0x40, 0x00,  // min interval (64 * 0.625 ms = 40 ms)
-        0x80, 0x00,  // max interval (128 * 0.625 ms = 80 ms)
-        0x00,  // advertising type (connectable undirected)
-        0x00,  // own address type (public)
-        0x00,  // peer address type
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // peer address
-        0x07,  // advertising channel map (all channels)
-        0x00   // filter policy
-    };
+    le_set_advertise_enable_cp adv_enable = {};
+    adv_enable.enable = 0x01;
 
-    if (!sendHCICommand(paramCmd)) {
-        Logger::error("Failed to set advertising parameters");
-        return false;
-    }
+    struct hci_request rq = {};
+    rq.ogf = OGF_LE_CTL;
+    rq.ocf = OCF_LE_SET_ADVERTISE_ENABLE;
+    rq.cparam = &adv_enable;
+    rq.clen = LE_SET_ADVERTISE_ENABLE_CP_SIZE;
 
-    // LE Set Advertising Enable command
-    std::vector<uint8_t> enableCmd = {
-        0x01,  // HCI command packet
-        0x0A,  // OpCode LSB
-        0x20,  // OpCode MSB
-        0x01,  // Parameter length
-        0x01   // Enable advertising
-    };
-
-    if (!sendHCICommand(enableCmd)) {
-        Logger::error("Failed to start advertising");
+    if (hci_send_req(hciDevice, &rq, 1000) < 0) {
+        Logger::error("Failed to enable advertising");
         return false;
     }
 
@@ -163,20 +135,19 @@ bool BLEPeripheralManager::startAdvertising() {
 }
 
 void BLEPeripheralManager::stopAdvertising() {
-    if (!isAdvertising) {
-        return;
-    }
+    if (hciDevice < 0 || !isAdvertising) return;
 
-    std::vector<uint8_t> cmd = {
-        0x01,  // HCI command packet
-        0x0A,  // OpCode LSB
-        0x20,  // OpCode MSB
-        0x01,  // Parameter length
-        0x00   // Disable advertising
-    };
+    le_set_advertise_enable_cp adv_enable = {};
+    adv_enable.enable = 0x00;
 
-    if (!sendHCICommand(cmd)) {
-        Logger::error("Failed to stop advertising");
+    struct hci_request rq = {};
+    rq.ogf = OGF_LE_CTL;
+    rq.ocf = OCF_LE_SET_ADVERTISE_ENABLE;
+    rq.cparam = &adv_enable;
+    rq.clen = LE_SET_ADVERTISE_ENABLE_CP_SIZE;
+
+    if (hci_send_req(hciDevice, &rq, 1000) < 0) {
+        Logger::error("Failed to disable advertising");
         return;
     }
 
@@ -185,47 +156,7 @@ void BLEPeripheralManager::stopAdvertising() {
 }
 
 bool BLEPeripheralManager::addGATTService(const GATTService& service) {
-    services.push_back(service);
-    // TODO: Implement D-Bus communication with BlueZ for GATT service registration
-    return true;
-}
-
-bool BLEPeripheralManager::sendHCICommand(const std::vector<uint8_t>& cmd) {
-    if (!hciSocket->write(cmd)) {
-        return false;
-    }
-
-    std::vector<uint8_t> response;
-    if (!hciSocket->read(response)) {
-        return false;
-    }
-
-    // Check command complete event
-    if (response.size() >= 7 && response[0] == 0x04 && response[1] == 0x0E) {
-        return response[6] == 0x00;  // Status code
-    }
-
-    return false;
-}
-
-bool BLEPeripheralManager::convertUUIDToBytes(const std::string& uuid, std::vector<uint8_t>& bytes) {
-    std::string cleanUUID = uuid;
-    cleanUUID.erase(std::remove(cleanUUID.begin(), cleanUUID.end(), '-'), cleanUUID.end());
-    
-    if (cleanUUID.length() != 4 && cleanUUID.length() != 32) {
-        Logger::error("Invalid UUID format: " + uuid);
-        return false;
-    }
-
-    std::istringstream iss(cleanUUID);
-    std::string byteStr;
-    
-    while (iss.good()) {
-        byteStr = cleanUUID.substr(0, 2);
-        cleanUUID = cleanUUID.substr(2);
-        bytes.push_back(std::stoul(byteStr, nullptr, 16));
-    }
-
+    // GATT 서비스 구현은 아직...
     return true;
 }
 

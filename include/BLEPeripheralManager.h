@@ -6,7 +6,6 @@
 #include <vector>
 #include "HciSocket.h"
 #include "Logger.h"
-#include "Utils.h"
 
 namespace ggk {
 
@@ -36,13 +35,8 @@ public:
     bool addGATTService(const GATTService& service);
 
 private:
-    std::unique_ptr<HciSocket> hciSocket;
     bool isAdvertising;
-    std::vector<GATTService> services;
-    
-    // HCI command helper methods
-    bool sendHCICommand(const std::vector<uint8_t>& cmd);
-    bool convertUUIDToBytes(const std::string& uuid, std::vector<uint8_t>& bytes);
+    int hciDevice;
 };
 
 } // namespace ggk
