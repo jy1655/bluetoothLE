@@ -1,5 +1,7 @@
 #include <iostream>
 #include <signal.h>
+#include <thread>
+#include <chrono>
 #include "BLEPeripheralManager.h"
 
 static volatile bool running = true;
