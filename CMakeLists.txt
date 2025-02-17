@@ -23,6 +23,8 @@ set(SOURCES
     src/Logger.cpp
     src/Utils.cpp
     src/BLEPeripheralManager.cpp
+    src/HciAdapter.cpp      
+    src/Mgmt.cpp
 )
 
 # Create executable

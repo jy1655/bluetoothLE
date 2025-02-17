@@ -37,49 +37,33 @@ void HciSocket::stop() {
 bool HciSocket::connect() {
     disconnect();
 
-    // USER 채널로 변경
-    fdSocket = socket(AF_BLUETOOTH, SOCK_RAW | SOCK_CLOEXEC, BTPROTO_HCI);
+    // RAW 소켓으로 생성
+    fdSocket = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI);
     if (fdSocket < 0) {
         logErrno("Connect(socket)");
         return false;
     }
 
-    // Get HCI device info
-    struct hci_dev_list_req *dl;
-    struct hci_dev_req *dr;
+    // 권한 확인 및 설정
+    struct hci_dev_info di;
+    int dev_id = 0;  // hci0
     
-    dl = (struct hci_dev_list_req *)malloc(HCI_MAX_DEV * sizeof(struct hci_dev_req) + sizeof(uint16_t));
-    if (!dl) {
-        Logger::error("Failed to allocate memory");
-        return false;
-    }
-    
-    dl->dev_num = HCI_MAX_DEV;
-    dr = dl->dev_req;
-
-    if (ioctl(fdSocket, HCIGETDEVLIST, (void *)dl) < 0) {
-        free(dl);
-        logErrno("Failed to get HCI device list");
-        return false;
-    }
-
-    int dev_id = -1;
-    for (int i = 0; i < dl->dev_num; i++) {
-        dev_id = dr[i].dev_id;
-        break;  // Use first available device
-    }
-    free(dl);
-
-    if (dev_id < 0) {
-        Logger::error("No HCI devices found");
-        return false;
+    if (ioctl(fdSocket, HCIGETDEVINFO, (void *)&di) < 0) {
+        // 디바이스 정보를 가져올 수 없는 경우 down/up 시도
+        system("sudo hciconfig hci0 down");
+        system("sudo hciconfig hci0 up");
+        usleep(100000);  // 100ms 대기
     }
 
     struct sockaddr_hci addr;
     memset(&addr, 0, sizeof(addr));
     addr.hci_family = AF_BLUETOOTH;
     addr.hci_dev = dev_id;
-    addr.hci_channel = HCI_CHANNEL_USER;
+    addr.hci_channel = HCI_CHANNEL_RAW;  // RAW 채널 사용
+
+    // 바인딩 전에 기존 연결 해제 시도
+    system("sudo hcitool cmd 0x03 0x0003");  // HCI Reset 명령
+    usleep(100000);  // 100ms 대기
 
     if (bind(fdSocket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         logErrno("Connect(bind)");
@@ -87,7 +71,7 @@ bool HciSocket::connect() {
         return false;
     }
 
-    // Set filter to receive HCI events
+    // 필터 설정
     struct hci_filter flt;
     hci_filter_clear(&flt);
     hci_filter_set_ptype(HCI_EVENT_PKT, &flt);
@@ -100,7 +84,6 @@ bool HciSocket::connect() {
     }
 
     Logger::debug(SSTR << "Connected to HCI device " << dev_id << " (fd = " << fdSocket << ")");
-
     return true;
 }
 
@@ -208,6 +191,10 @@ bool HciSocket::write(const uint8_t *pBuffer, size_t count) const {
     }
 
     return true;
+}
+
+bool HciSocket::write(std::vector<uint8_t> buffer) const {
+    return write(buffer.data(), buffer.size());
 }
 
 // Wait for data to arrive, or for a shutdown event

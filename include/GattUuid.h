@@ -4,8 +4,8 @@
 #include <algorithm>
 #include <stdint.h>
 #include <ctype.h>
-
 #include <iostream>
+
 #include "Logger.h"
 
 namespace ggk {

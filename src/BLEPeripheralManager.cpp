@@ -1,13 +1,10 @@
 #include "BLEPeripheralManager.h"
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
+#include <string.h>
 
 namespace ggk {
 
 BLEPeripheralManager::BLEPeripheralManager() 
     : hciAdapter(std::make_unique<HciAdapter>())
-    , mgmt(std::make_unique<Mgmt>(0))  // 첫 번째 컨트롤러 사용
     , isAdvertising(false) {
     Logger::debug("BLE Peripheral Manager created");
 }
@@ -17,18 +14,26 @@ BLEPeripheralManager::~BLEPeripheralManager() {
 }
 
 bool BLEPeripheralManager::initialize() {
-    // HCI 어댑터 초기화
     if (!hciAdapter->initialize()) {
         Logger::error("Failed to initialize HCI adapter");
         return false;
     }
 
-    // 블루투스 컨트롤러 설정
-    if (!mgmt->setPowered(true) ||
-        !mgmt->setLE(true) ||
-        !mgmt->setBredr(false) ||  // BR/EDR 비활성화 (BLE only)
-        !mgmt->setSecureConnections(1)) {  // Secure Connections 활성화
-        Logger::error("Failed to configure bluetooth controller");
+    mgmt = std::make_unique<Mgmt>(*hciAdapter);
+
+    // 기본 설정
+    if (!mgmt->setPowered(true)) {
+        Logger::error("Failed to power on controller");
+        return false;
+    }
+
+    if (!mgmt->setLE(true)) {
+        Logger::error("Failed to enable LE");
+        return false;
+    }
+
+    if (!mgmt->setBredr(false)) {  // BR/EDR 비활성화 (BLE only)
+        Logger::error("Failed to disable BR/EDR");
         return false;
     }
 
@@ -46,30 +51,21 @@ bool BLEPeripheralManager::setAdvertisementData(const AdvertisementData& data) {
     // 광고 데이터 설정
     struct {
         HciAdapter::HciHeader header;
-        uint8_t data[31];
-    } __attribute__((packed)) adv_data = {};
+        uint8_t data[31];  // 최대 31 바이트
+    } __attribute__((packed)) advData = {};
 
     uint8_t offset = 0;
 
     // 1. Flags
-    adv_data.data[offset++] = 2;  // Length
-    adv_data.data[offset++] = 0x01;  // Type (Flags)
-    adv_data.data[offset++] = 0x06;  // LE General Discoverable + BR/EDR Not Supported
+    advData.data[offset++] = 2;  // Length
+    advData.data[offset++] = 0x01;  // Type (Flags)
+    advData.data[offset++] = 0x06;  // LE General Discoverable + BR/EDR Not Supported
 
-    // 2. Complete Local Name
-    if (!data.name.empty()) {
-        size_t nameLen = std::min(data.name.length(), size_t(29));  // 최대 29바이트 (길이 + 타입 = 2바이트)
-        adv_data.data[offset++] = nameLen + 1;  // Length
-        adv_data.data[offset++] = 0x09;  // Type (Complete Local Name)
-        memcpy(&adv_data.data[offset], data.name.c_str(), nameLen);
-        offset += nameLen;
-    }
-
-    // 3. Service UUIDs (있는 경우)
+    // 2. Service UUIDs (있는 경우)
     if (!data.serviceUUIDs.empty()) {
         std::vector<uint8_t> uuids;
         for (const auto& uuid : data.serviceUUIDs) {
-            // 16-bit UUID만 지원
+            // 16-bit UUID 처리
             if (uuid.length() == 4) {
                 uint16_t uuid_val = std::stoul(uuid, nullptr, 16);
                 uuids.push_back(uuid_val & 0xFF);
@@ -77,20 +73,28 @@ bool BLEPeripheralManager::setAdvertisementData(const AdvertisementData& data) {
             }
         }
         
-        if (!uuids.empty()) {
-            adv_data.data[offset++] = uuids.size() + 1;  // Length
-            adv_data.data[offset++] = 0x03;  // Type (Complete List of 16-bit Service UUIDs)
-            memcpy(&adv_data.data[offset], uuids.data(), uuids.size());
+        if (!uuids.empty() && offset + uuids.size() + 2 <= 31) {
+            advData.data[offset++] = uuids.size() + 1;  // Length
+            advData.data[offset++] = 0x03;  // Type (Complete List of 16-bit Service UUIDs)
+            memcpy(&advData.data[offset], uuids.data(), uuids.size());
             offset += uuids.size();
         }
     }
 
-    // 광고 데이터 설정
-    adv_data.header.code = HciAdapter::CMD_SET_LE;
-    adv_data.header.controllerId = 0;
-    adv_data.header.dataSize = offset;
+    // 3. Device Name
+    if (!data.name.empty() && offset + data.name.length() + 2 <= 31) {
+        size_t nameLen = std::min(data.name.length(), size_t(31 - offset - 2));
+        advData.data[offset++] = nameLen + 1;  // Length
+        advData.data[offset++] = 0x09;  // Type (Complete Local Name)
+        memcpy(&advData.data[offset], data.name.c_str(), nameLen);
+        offset += nameLen;
+    }
 
-    if (!hciAdapter->sendCommand(adv_data.header)) {
+    advData.header.code = HciAdapter::CMD_SET_ADVERTISING_DATA;
+    advData.header.controllerId = 0;
+    advData.header.dataSize = 31;  // 항상 31바이트 전송
+
+    if (!hciAdapter->sendCommand(advData.header)) {
         Logger::error("Failed to set advertising data");
         return false;
     }
@@ -105,7 +109,7 @@ bool BLEPeripheralManager::startAdvertising() {
         return true;
     }
 
-    // 먼저 discoverable 모드 설정
+    // Discoverable 모드 설정
     if (!mgmt->setDiscoverable(0x01, 0)) {  // General discoverable, no timeout
         Logger::error("Failed to set discoverable mode");
         return false;
@@ -135,8 +139,7 @@ void BLEPeripheralManager::stopAdvertising() {
 }
 
 bool BLEPeripheralManager::addGATTService(const GATTService& service) {
-    // TODO: GATT 서비스 구현
-    // BlueZ D-Bus API를 사용하여 구현 필요
+    // GATT 서비스 구현은 아직...
     return true;
 }
 

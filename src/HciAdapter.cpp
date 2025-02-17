@@ -1,7 +1,4 @@
 #include "HciAdapter.h"
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <bluetooth/hci_lib.h>
 #include <string.h>
 
 namespace ggk {
@@ -23,12 +20,6 @@ bool HciAdapter::initialize() {
     isRunning = true;
     eventThread = std::thread(&HciAdapter::processEvents, this);
     
-    // Power on and enable BLE
-    if (!setPowered(true) || !setLEEnabled(true)) {
-        stop();
-        return false;
-    }
-
     Logger::info("HCI Adapter initialized");
     return true;
 }
@@ -53,12 +44,7 @@ bool HciAdapter::sendCommand(HciHeader& request) {
     uint8_t* pRequest = reinterpret_cast<uint8_t*>(&request);
     
     std::vector<uint8_t> requestPacket(pRequest, pRequest + sizeof(request) + request.dataSize);
-    if (!hciSocket.write(requestPacket)) {
-        Logger::error("Failed to write HCI command");
-        return false;
-    }
-
-    return true;
+    return hciSocket.write(requestPacket);
 }
 
 bool HciAdapter::setAdapterName(const std::string& name) {
@@ -69,10 +55,13 @@ bool HciAdapter::setAdapterName(const std::string& name) {
     } __attribute__((packed)) request;
 
     request.header.code = CMD_SET_LOCAL_NAME;
-    request.header.controllerId = 0;  // First controller
+    request.header.controllerId = 0;
     request.header.dataSize = sizeof(request) - sizeof(HciHeader);
 
+    memset(request.name, 0, sizeof(request.name));
     strncpy(request.name, name.c_str(), sizeof(request.name) - 1);
+    
+    memset(request.shortName, 0, sizeof(request.shortName));
     strncpy(request.shortName, name.c_str(), sizeof(request.shortName) - 1);
 
     return sendCommand(request.header);
