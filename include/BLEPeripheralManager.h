@@ -4,7 +4,8 @@
 #include <map>
 #include <string>
 #include <vector>
-#include "HciSocket.h"
+#include "HciAdapter.h"
+#include "Mgmt.h"
 #include "Logger.h"
 
 namespace ggk {
@@ -35,8 +36,9 @@ public:
     bool addGATTService(const GATTService& service);
 
 private:
+    std::unique_ptr<HciAdapter> hciAdapter;
+    std::unique_ptr<Mgmt> mgmt;
     bool isAdvertising;
-    int hciDevice;
 };
 
 } // namespace ggk
