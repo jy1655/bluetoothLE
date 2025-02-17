@@ -21,15 +21,38 @@ bool BLEPeripheralManager::initialize() {
         return false;
     }
     
-    // HCI initialization commands
-    std::vector<uint8_t> resetCmd = {0x01, 0x03, 0x0C, 0x00};
-    if (!sendHCICommand(resetCmd)) {
+    // HCI reset command
+    // HCI_CMD_RESET (0x0C03)
+    struct {
+        uint8_t type;    // HCI Command packet type
+        uint16_t opcode; // OCF = 0x03, OGF = 0x03 (0x0C03)
+        uint8_t plen;    // Parameter length
+    } __attribute__((packed)) reset_cmd = {
+        HCI_COMMAND_PKT,
+        htobs(HCI_CMD_RESET),
+        0
+    };
+
+    if (!hciSocket->write(reinterpret_cast<uint8_t*>(&reset_cmd), sizeof(reset_cmd))) {
         Logger::error("Failed to send HCI reset command");
         return false;
     }
 
-    Logger::info("BLE Peripheral Manager initialized");
-    return true;
+    std::vector<uint8_t> response;
+    if (!hciSocket->read(response)) {
+        Logger::error("Failed to read HCI reset response");
+        return false;
+    }
+
+    // Check if reset was successful
+    if (response.size() >= 7 && response[0] == HCI_EVENT_PKT && 
+        response[1] == EVT_CMD_COMPLETE && response[6] == HCI_SUCCESS) {
+        Logger::info("BLE Peripheral Manager initialized");
+        return true;
+    }
+
+    Logger::error("HCI reset failed");
+    return false;
 }
 
 bool BLEPeripheralManager::setAdvertisementData(const AdvertisementData& data) {

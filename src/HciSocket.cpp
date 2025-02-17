@@ -30,33 +30,74 @@ void HciSocket::stop() {
 // Connects to an HCI socket using the Bluetooth Management API protocol
 //
 // Returns true on success, otherwise false
-bool HciSocket::connect()
-{
-	disconnect();
+bool HciSocket::connect() {
+    disconnect();
 
-	fdSocket = socket(PF_BLUETOOTH, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, BTPROTO_HCI);
-	if (fdSocket < 0)
-	{
-		logErrno("Connect(socket)");
-		return false;
-	}
+    // USER 채널로 변경
+    fdSocket = socket(AF_BLUETOOTH, SOCK_RAW | SOCK_CLOEXEC, BTPROTO_HCI);
+    if (fdSocket < 0) {
+        logErrno("Connect(socket)");
+        return false;
+    }
 
-	struct sockaddr_hci addr;
-	memset(&addr, 0, sizeof(addr));
-	addr.hci_family = AF_BLUETOOTH;
-	addr.hci_dev = HCI_DEV_NONE;
-	addr.hci_channel = HCI_CHANNEL_CONTROL;
+    // Get HCI device info
+    struct hci_dev_list_req *dl;
+    struct hci_dev_req *dr;
+    
+    dl = (struct hci_dev_list_req *)malloc(HCI_MAX_DEV * sizeof(struct hci_dev_req) + sizeof(uint16_t));
+    if (!dl) {
+        Logger::error("Failed to allocate memory");
+        return false;
+    }
+    
+    dl->dev_num = HCI_MAX_DEV;
+    dr = dl->dev_req;
 
-	if (bind(fdSocket, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) < 0)
-	{
-		logErrno("Connect(bind)");
-		disconnect();
-		return false;
-	}
+    if (ioctl(fdSocket, HCIGETDEVLIST, (void *)dl) < 0) {
+        free(dl);
+        logErrno("Failed to get HCI device list");
+        return false;
+    }
 
-	Logger::debug(SSTR << "Connected to HCI control socket (fd = " << fdSocket << ")");
+    int dev_id = -1;
+    for (int i = 0; i < dl->dev_num; i++) {
+        dev_id = dr[i].dev_id;
+        break;  // Use first available device
+    }
+    free(dl);
 
-	return true;
+    if (dev_id < 0) {
+        Logger::error("No HCI devices found");
+        return false;
+    }
+
+    struct sockaddr_hci addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.hci_family = AF_BLUETOOTH;
+    addr.hci_dev = dev_id;
+    addr.hci_channel = HCI_CHANNEL_USER;
+
+    if (bind(fdSocket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        logErrno("Connect(bind)");
+        disconnect();
+        return false;
+    }
+
+    // Set filter to receive HCI events
+    struct hci_filter flt;
+    hci_filter_clear(&flt);
+    hci_filter_set_ptype(HCI_EVENT_PKT, &flt);
+    hci_filter_all_events(&flt);
+    
+    if (setsockopt(fdSocket, SOL_HCI, HCI_FILTER, &flt, sizeof(flt)) < 0) {
+        logErrno("Failed to set HCI filter");
+        disconnect();
+        return false;
+    }
+
+    Logger::debug(SSTR << "Connected to HCI device " << dev_id << " (fd = " << fdSocket << ")");
+
+    return true;
 }
 
 // Returns true if the socket is currently connected, otherwise false
@@ -137,9 +178,32 @@ bool HciSocket::read(std::vector<uint8_t> &response) const
 // Writes the array of bytes of a given count
 //
 // This method returns true if the bytes were written successfully, otherwise false
-bool HciSocket::write(std::vector<uint8_t> buffer) const
-{
-	return write(buffer.data(), buffer.size());
+bool HciSocket::write(const uint8_t *pBuffer, size_t count) const {
+    std::string dump = "";
+    dump += "  > Writing " + std::to_string(count) + " bytes\n";
+    dump += Utils::hex(pBuffer, count);
+    Logger::debug(dump);
+
+    // HCI 명령어 패킷 구조체 생성
+    struct hci_command_hdr hdr;
+    hdr.opcode = pBuffer[1] | (pBuffer[2] << 8);  // LSB | (MSB << 8)
+    hdr.plen = count - 3;  // 헤더(3바이트) 제외한 실제 파라미터 길이
+
+    // 헤더 먼저 전송
+    if (::write(fdSocket, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+        logErrno("write(header)");
+        return false;
+    }
+
+    // 파라미터가 있다면 전송
+    if (hdr.plen > 0) {
+        if (::write(fdSocket, pBuffer + 3, hdr.plen) != hdr.plen) {
+            logErrno("write(parameters)");
+            return false;
+        }
+    }
+
+    return true;
 }
 
 // Writes the array of bytes of a given count
