@@ -37,6 +37,16 @@ void HciSocket::stop() {
 bool HciSocket::connect() {
     disconnect();
 
+    // Jetson에서 블루투스 컨트롤러 상태 확인
+    std::string hciDevStatus = "hciconfig hci0 | grep 'UP RUNNING'";
+    if (system(hciDevStatus.c_str()) != 0) {
+        Logger::warn("HCI device not ready, attempting to initialize...");
+        system("sudo hciconfig hci0 down");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        system("sudo hciconfig hci0 up");
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
     // RAW 소켓으로 생성
     fdSocket = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI);
     if (fdSocket < 0) {
@@ -162,32 +172,18 @@ bool HciSocket::read(std::vector<uint8_t> &response) const
 	return true;
 }
 
-// Writes the array of bytes of a given count
-//
-// This method returns true if the bytes were written successfully, otherwise false
+
 bool HciSocket::write(const uint8_t *pBuffer, size_t count) const {
     std::string dump = "";
     dump += "  > Writing " + std::to_string(count) + " bytes\n";
     dump += Utils::hex(pBuffer, count);
     Logger::debug(dump);
 
-    // HCI 명령어 패킷 구조체 생성
-    hci_command_hdr hdr;
-    hdr.opcode = pBuffer[1] | (pBuffer[2] << 8);  // LSB | (MSB << 8)
-    hdr.plen = count - 3;  // 헤더(3바이트) 제외한 실제 파라미터 길이
-
-    // 헤더 먼저 전송
-    if (::write(fdSocket, &hdr, sizeof(hdr)) != sizeof(hdr)) {
-        logErrno("write(header)");
+    // 형 변환 경고 수정
+    ssize_t written = ::write(fdSocket, pBuffer, count);
+    if (written < 0 || static_cast<size_t>(written) != count) {
+        logErrno("write");
         return false;
-    }
-
-    // 파라미터가 있다면 전송
-    if (hdr.plen > 0) {
-        if (::write(fdSocket, pBuffer + 3, hdr.plen) != hdr.plen) {
-            logErrno("write(parameters)");
-            return false;
-        }
     }
 
     return true;

@@ -12,6 +12,12 @@ namespace ggk {
 
 class BLEPeripheralManager {
 public:
+    struct InitConfig {
+        int deviceIndex = 0;  // hci 디바이스 인덱스
+        bool forcePowercycle = false;  // 강제 전원 사이클
+        int initRetryCount = 3;  // 초기화 재시도 횟수
+    };
+
     struct GATTService {
         std::string uuid;
         std::vector<std::string> characteristics;

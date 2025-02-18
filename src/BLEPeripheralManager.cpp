@@ -50,9 +50,15 @@ bool BLEPeripheralManager::setAdvertisementData(const AdvertisementData& data) {
 
     // 광고 데이터 설정
     struct {
-        HciAdapter::HciHeader header;
+        uint8_t type;    // HCI Command packet type = 0x01
+        uint16_t opcode; // Set Advertising Data command
+        uint8_t plen;    // Parameter length
         uint8_t data[31];  // 최대 31 바이트
     } __attribute__((packed)) advData = {};
+
+    advData.type = 0x01;  // HCI Command
+    advData.opcode = htole16(HciAdapter::CMD_SET_ADVERTISING_DATA);
+    advData.plen = 31;    // 항상 31바이트 전송
 
     uint8_t offset = 0;
 
@@ -90,11 +96,7 @@ bool BLEPeripheralManager::setAdvertisementData(const AdvertisementData& data) {
         offset += nameLen;
     }
 
-    advData.header.code = HciAdapter::CMD_SET_ADVERTISING_DATA;
-    advData.header.controllerId = 0;
-    advData.header.dataSize = 31;  // 항상 31바이트 전송
-
-    if (!hciAdapter->sendCommand(advData.header)) {
+    if (!hciAdapter->sendCommand(*reinterpret_cast<HciAdapter::HciHeader*>(&advData))) {
         Logger::error("Failed to set advertising data");
         return false;
     }

@@ -19,13 +19,13 @@ bool Mgmt::setName(std::string name, std::string shortName) {
         char shortName[11];
     } __attribute__((packed)) request;
 
-    request.header.code = HciAdapter::CMD_SET_LOCAL_NAME;
-    request.header.controllerId = controllerIndex;
-    request.header.dataSize = sizeof(request) - sizeof(HciAdapter::HciHeader);
+    request.header.type = 0x01;
+    request.header.opcode = HciAdapter::CMD_SET_LOCAL_NAME;
+    request.header.plen = sizeof(request) - sizeof(HciAdapter::HciHeader);
 
     memset(request.name, 0, sizeof(request.name));
     strncpy(request.name, name.c_str(), sizeof(request.name) - 1);
-
+    
     memset(request.shortName, 0, sizeof(request.shortName));
     strncpy(request.shortName, shortName.c_str(), sizeof(request.shortName) - 1);
 
@@ -39,9 +39,9 @@ bool Mgmt::setDiscoverable(uint8_t disc, uint16_t timeout) {
         uint16_t timeout;
     } __attribute__((packed)) request;
 
-    request.header.code = HciAdapter::CMD_SET_DISCOVERABLE;
-    request.header.controllerId = controllerIndex;
-    request.header.dataSize = sizeof(request) - sizeof(HciAdapter::HciHeader);
+    request.header.type = 0x01;
+    request.header.opcode = HciAdapter::CMD_SET_DISCOVERABLE;
+    request.header.plen = sizeof(request) - sizeof(HciAdapter::HciHeader);
     request.disc = disc;
     request.timeout = timeout;
 
@@ -54,16 +54,28 @@ bool Mgmt::setState(uint16_t commandCode, uint16_t controllerId, uint8_t newStat
         uint8_t state;
     } __attribute__((packed)) request;
 
-    request.header.code = commandCode;
-    request.header.controllerId = controllerId;
-    request.header.dataSize = sizeof(request) - sizeof(HciAdapter::HciHeader);
+    request.header.type = 0x01;
+    request.header.opcode = commandCode;
+    request.header.plen = sizeof(request) - sizeof(HciAdapter::HciHeader);
     request.state = newState;
 
     return hciAdapter.sendCommand(request.header);
 }
 
 bool Mgmt::setPowered(bool newState) {
-    return setState(HciAdapter::CMD_SET_POWERED, controllerIndex, newState ? 1 : 0);
+    struct {
+        uint8_t type;    // HCI Command packet type = 0x01
+        uint16_t opcode; // OGF = 0x03 (Controller & Baseband), OCF = 0x0003 (Reset)
+        uint8_t plen;    // Parameter length
+        uint8_t state;   // Power state
+    } __attribute__((packed)) cmd;
+
+    cmd.type = 0x01;  // HCI Command
+    cmd.opcode = htole16(0x0C03);  // OGF = 0x03, OCF = 0x0003
+    cmd.plen = 1;
+    cmd.state = newState ? 1 : 0;
+
+    return hciAdapter.getSocket().write(reinterpret_cast<uint8_t*>(&cmd), sizeof(cmd));
 }
 
 bool Mgmt::setBredr(bool newState) {

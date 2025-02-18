@@ -35,8 +35,8 @@ public:
 private:
     bool setState(uint16_t commandCode, uint16_t controllerId, uint8_t newState);
     
-    uint16_t controllerIndex;
     HciAdapter& hciAdapter;  // unique_ptr 대신 참조로 변경
+    uint16_t controllerIndex;
 };
 
 } // namespace ggk
