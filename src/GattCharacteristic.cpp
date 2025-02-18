@@ -2,6 +2,7 @@
 #include "GattService.h"
 #include "GattDescriptor.h"
 #include "Logger.h"
+#include "DBusMethod.h"
 
 namespace ggk {
 
@@ -20,50 +21,51 @@ GattCharacteristic::GattCharacteristic(const GattUuid& uuid, GattService* servic
 
 void GattCharacteristic::setupProperties() {
     // UUID property
-    addProperty("UUID", "s", true, false,
-                [this](void) -> GVariant* {
-                    return g_variant_new_string(uuid.toString128().c_str());
-                },
-                nullptr);
+    addDBusProperty("UUID", "s", true, false,
+        [](void* userData) -> GVariant* {
+            auto* self = static_cast<GattCharacteristic*>(userData);
+            return g_variant_new_string(self->uuid.toString128().c_str());
+        }, nullptr);
 
     // Service property
-    addProperty("Service", "o", true, false,
-                [this](void) -> GVariant* {
-                    return g_variant_new_object_path(service->getPath().c_str());
-                },
-                nullptr);
+    addDBusProperty("Service", "o", true, false,
+        [](void* userData) -> GVariant* {
+            auto* self = static_cast<GattCharacteristic*>(userData);
+            return g_variant_new_object_path(self->service->getPath().c_str());
+        }, nullptr);
 
-    // Properties (flags) property
-    addProperty("Flags", "as", true, false,
-                [this](void) -> GVariant* {
-                    return g_variant_new_string(getPropertyFlags().c_str());
-                },
-                nullptr);
+    // Flags property
+    addDBusProperty("Flags", "as", true, false,
+        [](void* userData) -> GVariant* {
+            auto* self = static_cast<GattCharacteristic*>(userData);
+            return g_variant_new_string(self->getPropertyFlags().c_str());
+        }, nullptr);
 
     // Notifying property
-    addProperty("Notifying", "b", true, false,
-                [this](void) -> GVariant* {
-                    return g_variant_new_boolean(notifying);
-                },
-                nullptr);
+    addDBusProperty("Notifying", "b", true, false,
+        [](void* userData) -> GVariant* {
+            auto* self = static_cast<GattCharacteristic*>(userData);
+            return g_variant_new_boolean(self->notifying);
+        }, nullptr);
 }
 
+
 void GattCharacteristic::setupMethods() {
-    const char* readValueInArgs[] = { "a{sv}", nullptr };  // options dictionary
-    const char* readValueOutArgs = "ay";  // byte array
-    addMethod("ReadValue", readValueInArgs, readValueOutArgs, onReadValue);
+    // ReadValue method
+    const char* readValueInArgs[] = { "a{sv}", nullptr };
+    addDBusMethod("ReadValue", readValueInArgs, "ay", onReadValue);
 
-    const char* writeValueInArgs[] = { "ay", "a{sv}", nullptr };  // value + options
-    const char* writeValueOutArgs = "";
-    addMethod("WriteValue", writeValueInArgs, writeValueOutArgs, onWriteValue);
+    // WriteValue method
+    const char* writeValueInArgs[] = { "ay", "a{sv}", nullptr };
+    addDBusMethod("WriteValue", writeValueInArgs, "", onWriteValue);
 
+    // StartNotify method
     const char* startNotifyInArgs[] = { nullptr };
-    const char* startNotifyOutArgs = "";
-    addMethod("StartNotify", startNotifyInArgs, startNotifyOutArgs, onStartNotify);
+    addDBusMethod("StartNotify", startNotifyInArgs, "", onStartNotify);
 
+    // StopNotify method
     const char* stopNotifyInArgs[] = { nullptr };
-    const char* stopNotifyOutArgs = "";
-    addMethod("StopNotify", stopNotifyInArgs, stopNotifyOutArgs, onStopNotify);
+    addDBusMethod("StopNotify", stopNotifyInArgs, "", onStopNotify);
 }
 
 bool GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
@@ -79,12 +81,36 @@ bool GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
     return false;
 }
 
-void GattCharacteristic::addProperty(GattProperty::Flags flag) {
+void GattCharacteristic::addFlag(GattProperty::Flags flag) {
     properties.set(flag);
 }
 
-bool GattCharacteristic::hasProperty(GattProperty::Flags flag) const {
+bool GattCharacteristic::hasFlag(GattProperty::Flags flag) const {
     return properties.test(flag);
+}
+
+std::string GattCharacteristic::getPropertyFlags() const {
+    std::vector<std::string> flags;
+    
+    if (hasFlag(GattProperty::Flags::BROADCAST))
+        flags.push_back("broadcast");
+    if (hasFlag(GattProperty::Flags::READ))
+        flags.push_back("read");
+    if (hasFlag(GattProperty::Flags::WRITE_WITHOUT_RESPONSE))
+        flags.push_back("write-without-response");
+    if (hasFlag(GattProperty::Flags::WRITE))
+        flags.push_back("write");
+    if (hasFlag(GattProperty::Flags::NOTIFY))
+        flags.push_back("notify");
+    if (hasFlag(GattProperty::Flags::INDICATE))
+        flags.push_back("indicate");
+    
+    std::string result;
+    for (size_t i = 0; i < flags.size(); ++i) {
+        if (i > 0) result += ",";
+        result += flags[i];
+    }
+    return result;
 }
 
 bool GattCharacteristic::addDescriptor(std::shared_ptr<GattDescriptor> descriptor) {
@@ -114,6 +140,22 @@ std::shared_ptr<GattDescriptor> GattCharacteristic::getDescriptor(const GattUuid
         }
     }
     return nullptr;
+}
+
+void GattCharacteristic::addDBusProperty(const char* name,
+        const char* type, bool readable, bool writable, GVariant* (*getter)(void*),
+        void (*setter)(GVariant*, void*)) {
+    auto property = std::make_shared<DBusProperty>(name, type, readable,
+                writable, getter, setter, this);
+    DBusInterface::addProperty(property);
+}
+
+void GattCharacteristic::addDBusMethod(const char* name,
+    const char** inArgs,
+    const char* outArgs,
+    DBusMethod::Callback callback) {
+    auto method = std::make_shared<DBusMethod>(this, name, inArgs, outArgs, callback);
+    DBusInterface::addMethod(method);
 }
 
 void GattCharacteristic::onReadValue(const DBusInterface& interface,

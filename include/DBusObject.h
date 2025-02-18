@@ -5,9 +5,13 @@
 #include <list>
 #include <memory>
 #include <stdexcept>
+#include "DBusInterface.h"
 #include "DBusObjectPath.h"
 
 namespace ggk {
+
+class GattApplication;
+class GattService;
 
 class DBusObjectError : public std::runtime_error {
 public:
@@ -123,7 +127,6 @@ protected:
 
 private:
     State state;
-    bool publish;
     DBusObjectPath path;
     InterfaceList interfaces;
     ChildList children;

@@ -16,37 +16,15 @@ struct GattUuid
 	static constexpr const char *kGattStandardUuidPart1Prefix = "0000";
 	static constexpr const char *kGattStandardUuidSuffix = "-0000-1000-8000-00805f9b34fb";
 
-	// Construct a GattUuid from a partial or complete string UUID
-	//
-	// This constructor will do the best it can with the data it is given. It will first clean the input by removing all non-hex
-	// characters (see `clean`) and the remaining characters are processed in the following way:
-	//
-	//     4-character string is treated as a 16-bit UUID
-	//     8-character string is treated as a 32-bit UUID
-	//     32-character string is treated as a 128-bit UUID
-	//
-	// If the input string is not one of the above lengths, the  UUID will be left uninitialized as an empty string with a bit
-	// count of 0.
-	//
-	// Finally, dashes are inserted into the string at the appropriate locations (see `dashify`).
 	GattUuid(const char *strUuid)
 	{
 		*this = GattUuid(std::string(strUuid));
 	}
 
-	// Construct a GattUuid from a partial or complete string UUID
-	//
-	// This constructor will do the best it can with the data it is given. It will first clean the input by removing all non-hex
-	// characters (see `clean`) and the remaining characters are processed in the following way:
-	//
-	//     4-character string is treated as a 16-bit UUID
-	//     8-character string is treated as a 32-bit UUID
-	//     32-character string is treated as a 128-bit UUID
-	//
-	// If the input string is not one of the above lengths, the  UUID will be left uninitialized as an empty string with a bit
-	// count of 0.
-	//
-	// Finally, dashes are inserted into the string at the appropriate locations (see `dashify`).
+	bool operator==(const GattUuid& other) const {
+		return value == other.value;
+	}
+
 	GattUuid(std::string strUuid)
 	{
 		// Clean the string

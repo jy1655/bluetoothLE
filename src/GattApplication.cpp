@@ -24,7 +24,7 @@ bool GattApplication::addService(std::shared_ptr<GattService> service) {
         return false;
     }
 
-    const std::string& uuid = service->getUUID();
+    const std::string uuid = service->getUUID().toString();
     if (services.find(uuid) != services.end()) {
         Logger::error("Service with UUID " + uuid + " already exists");
         return false;

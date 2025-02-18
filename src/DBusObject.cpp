@@ -1,24 +1,23 @@
 #include "DBusObject.h"
 #include "DBusInterface.h"
 #include "GattApplication.h"
+#include "GattService.h"
 #include "Logger.h"
 
 namespace ggk {
 
-DBusObject::DBusObject(const DBusObjectPath& path, bool publish)
-    : publish(publish)
+    DBusObject::DBusObject(const DBusObjectPath& path, bool shouldPublish)
+    : state(shouldPublish ? State::INITIALIZED : State::ERROR)
     , path(path)
-    , pParent(nullptr) {
+    , pParent(nullptr)
+    , dbusConnection(nullptr) {
 }
 
 DBusObject::DBusObject(DBusObject* pParent, const DBusObjectPath& pathElement)
-    : publish(false)
+    : state(State::INITIALIZED)
     , path(pathElement)
-    , pParent(pParent) {
-}
-
-bool DBusObject::isPublished() const {
-    return publish;
+    , pParent(pParent)
+    , dbusConnection(nullptr) {
 }
 
 const DBusObjectPath& DBusObject::getPathNode() const {
@@ -90,11 +89,9 @@ GattApplication* DBusObject::findGattApplication() const {
 }
 
 GattService& DBusObject::gattServiceBegin(const std::string& pathElement, const GattUuid& uuid) {
-    // GattApplication을 통해 서비스를 등록하도록 수정
-    DBusObject& serviceObject = addChild(pathElement);
+    DBusObject& serviceObject = addChild(DBusObjectPath(pathElement));  // DBusObjectPath로 변환
     auto service = std::make_shared<GattService>(uuid);
     
-    // GattApplication에도 서비스 등록
     if (auto app = findGattApplication()) {
         app->addService(service);
     }

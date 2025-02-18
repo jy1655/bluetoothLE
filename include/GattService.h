@@ -40,6 +40,9 @@ public:
     // D-Bus 프로퍼티 관리
     void addManagedObjectProperties(GVariantBuilder* builder);
 
+    // D-Bus 경로 관리
+    virtual DBusObjectPath getPath() const;
+
 private:
     GattUuid uuid;  // GattUuid 사용
     Type type;
