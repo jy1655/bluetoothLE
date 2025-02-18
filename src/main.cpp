@@ -3,66 +3,85 @@
 #include <thread>
 #include <chrono>
 
-#include "BLEPeripheralManager.h"
+#include "Server.h"
+#include "GattService.h"
+#include "GattCharacteristic.h"
 
 static volatile bool running = true;
 
 void signalHandler(int signum) {
-    if (signum == SIGINT || signum == SIGTERM) {
-        running = false;
-    }
+   if (signum == SIGINT || signum == SIGTERM) {
+       running = false;
+   }
 }
 
 class SimpleLogger {
 public:
-    static void log(const char* message) {
-        std::cout << "[BLE] " << message << std::endl;
-    }
+   static void log(const char* message) {
+       std::cout << "[BLE] " << message << std::endl;
+   }
 };
 
 int main() {
-    // Set up signal handling
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
+   // 시그널 핸들링 설정
+   signal(SIGINT, signalHandler);
+   signal(SIGTERM, signalHandler);
 
-    // Set up logging
-    ggk::Logger::registerDebugReceiver([](const char* msg) { SimpleLogger::log(msg); });
-    ggk::Logger::registerInfoReceiver([](const char* msg) { SimpleLogger::log(msg); });
-    ggk::Logger::registerErrorReceiver([](const char* msg) { 
-        std::cerr << "[BLE ERROR] " << msg << std::endl; 
-    });
+   // 로깅 설정
+   ggk::Logger::registerDebugReceiver([](const char* msg) { SimpleLogger::log(msg); });
+   ggk::Logger::registerInfoReceiver([](const char* msg) { SimpleLogger::log(msg); });
+   ggk::Logger::registerErrorReceiver([](const char* msg) { 
+       std::cerr << "[BLE ERROR] " << msg << std::endl; 
+   });
 
-    // Create and initialize BLE peripheral
-    ggk::BLEPeripheralManager peripheral;
-    
-    if (!peripheral.initialize()) {
-        std::cerr << "Failed to initialize BLE peripheral" << std::endl;
-        return 1;
-    }
+   // 서버 생성
+   ggk::TheServer = std::make_shared<ggk::Server>(
+       "testdevice",          // 서비스 이름
+       "TestDevice",          // 광고 이름
+       "TestDev",             // 광고 짧은 이름
+       nullptr,               // 데이터 getter
+       nullptr               // 데이터 setter
+   );
 
-    // Set up advertisement data
-    ggk::BLEPeripheralManager::AdvertisementData advData;
-    advData.name = "TestDevice";
-    advData.serviceUUIDs = {"180D"}; // Heart Rate Service
-    
-    if (!peripheral.setAdvertisementData(advData)) {
-        std::cerr << "Failed to set advertisement data" << std::endl;
-        return 1;
-    }
+   // 서버 초기화
+   if (!ggk::TheServer->initialize()) {
+       std::cerr << "Failed to initialize BLE server" << std::endl;
+       return 1;
+   }
 
-    // Start advertising
-    if (!peripheral.startAdvertising()) {
-        std::cerr << "Failed to start advertising" << std::endl;
-        return 1;
-    }
+   // GATT 서비스 설정
+   auto app = ggk::TheServer->getGattApplication();
+   auto service = std::make_shared<ggk::GattService>(
+       ggk::GattUuid("180D"),  // Heart Rate Service UUID
+       ggk::GattService::Type::PRIMARY
+   );
 
-    std::cout << "BLE peripheral is running. Press Ctrl+C to stop." << std::endl;
+   // 서비스에 특성 추가 (예: Heart Rate Measurement)
+   auto characteristic = std::make_shared<ggk::GattCharacteristic>(
+       ggk::GattUuid("2A37"),  // Heart Rate Measurement UUID
+       service.get()
+   );
+   characteristic->addProperty(ggk::GattProperty::Flags::NOTIFY);
+   service->addCharacteristic(characteristic);
 
-    // Main loop
-    while (running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
+   // GATT 서비스 등록
+   app->addService(service);
 
-    std::cout << "Shutting down..." << std::endl;
-    return 0;
+   // 서버 시작
+   ggk::TheServer->start();
+
+   std::cout << "BLE server is running. Press Ctrl+C to stop." << std::endl;
+
+   // 메인 루프
+   while (running) {
+       std::this_thread::sleep_for(std::chrono::milliseconds(100));
+   }
+
+   std::cout << "Shutting down..." << std::endl;
+   
+   // 서버 중지
+   ggk::TheServer->stop();
+   ggk::TheServer.reset();
+
+   return 0;
 }
