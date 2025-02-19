@@ -10,39 +10,27 @@
 
 namespace ggk {
 
-class GattApplication;
-class GattService;
-
 class DBusObjectError : public std::runtime_error {
 public:
     explicit DBusObjectError(const std::string& what) : std::runtime_error(what) {}
 };
-
-struct GattProperty;
-struct GattService;
-struct GattUuid;
-struct DBusInterface;
 
 class DBusObject {
 public:
     using InterfaceList = std::list<std::shared_ptr<DBusInterface>>;
     using ChildList = std::list<DBusObject>;
 
-    // D-Bus 객체 상태
     enum class State {
         INITIALIZED,
         PUBLISHED,
         ERROR
     };
 
-    // 생성자
     explicit DBusObject(const DBusObjectPath& path, bool publish = true);
     DBusObject(DBusObject* pParent, const DBusObjectPath& pathElement);
-    
-    // 소멸자에서 자동 정리
-    ~DBusObject();
+    virtual ~DBusObject();
 
-    // 복사 및 이동 생성자/대입 연산자 삭제
+    // 복사 및 이동
     DBusObject(const DBusObject&) = delete;
     DBusObject& operator=(const DBusObject&) = delete;
     DBusObject(DBusObject&&) = default;
@@ -74,8 +62,13 @@ public:
         if (!interface) {
             throw DBusObjectError("Null interface pointer");
         }
-        interfaces.push_back(interface);
-        return std::static_pointer_cast<T>(interfaces.back());
+        auto baseInterface = std::static_pointer_cast<DBusInterface>(interface);
+        if (!baseInterface) {
+            throw DBusObjectError("Interface must inherit from DBusInterface");
+        }
+        interfaces.push_back(baseInterface);
+        onInterfaceAdded(baseInterface);
+        return interface;
     }
 
     template<typename T>
@@ -88,19 +81,13 @@ public:
         return nullptr;
     }
 
-    // 인트로스펙션 지원
-    std::string generateIntrospectionXML(int depth = 0) const;
-
-    // GATT 서비스 관리
-    GattService& gattServiceBegin(const std::string& pathElement, const GattUuid& uuid);
-    bool gattServiceEnd();
-
-    // 메서드 호출 처리
+    // 인터페이스 검색
     std::shared_ptr<const DBusInterface> findInterface(
         const DBusObjectPath& path,
         const std::string& interfaceName,
         const DBusObjectPath& basePath = DBusObjectPath()) const;
 
+    // 메서드 호출
     bool callMethod(
         const DBusObjectPath& path,
         const std::string& interfaceName,
@@ -111,7 +98,6 @@ public:
         gpointer pUserData,
         const DBusObjectPath& basePath = DBusObjectPath()) const;
 
-
     // 시그널 발신
     void emitSignal(
         GDBusConnection* pBusConnection,
@@ -119,8 +105,10 @@ public:
         const std::string& signalName,
         GVariant* pParameters);
 
+    // 인트로스펙션
+    std::string generateIntrospectionXML(int depth = 0) const;
+
 protected:
-    // 내부 상태 변경 알림
     virtual void onStateChanged(State oldState, State newState);
     virtual void onInterfaceAdded(const std::shared_ptr<DBusInterface>& interface);
     virtual void onChildAdded(DBusObject& child);
@@ -136,7 +124,6 @@ private:
     void setState(State newState);
     bool validatePath() const;
     void cleanup();
-    GattApplication* findGattApplication() const;
 };
 
-}; // namespace ggk
+} // namespace ggk

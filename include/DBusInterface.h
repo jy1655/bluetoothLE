@@ -32,8 +32,12 @@ public:
     virtual ~DBusInterface() = default;
 
     // 인터페이스 이름 관리
-    const std::string& getName() const { return name; }
+    virtual const std::string& getName() const { return name; }
     void setName(const std::string& newName) { name = newName; }
+    virtual GVariant* getObjectsManaged() { return nullptr; }
+
+    // D-Bus 객체 경로 관리
+    virtual DBusObjectPath getPath() const = 0;  // 순수 가상 함수로 선언
 
     // 메서드 관리
     void addMethod(const std::shared_ptr<DBusMethod>& method);

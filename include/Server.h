@@ -116,6 +116,11 @@ private:
     static void onNameLost(GDBusConnection* connection,
                           const gchar* name,
                           gpointer userData);
+
+    // BlueZ 어댑터 관리를 위한 추가
+    std::string adapterPath{"/org/bluez/hci0"};  // 기본 어댑터 경로
+    bool setAdapterProperty(const char* property, GVariant* value);
+    bool getAdapterProperty(const char* property, GVariant** value);
 };
 
 // 전역 서버 인스턴스

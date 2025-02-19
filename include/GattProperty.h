@@ -1,7 +1,9 @@
 #pragma once
+
 #include <gio/gio.h>
 #include <string>
 #include <bitset>
+#include "DBusInterface.h"
 
 namespace ggk {
 
@@ -17,7 +19,6 @@ public:
         INDICATE = 5,
         AUTHENTICATED_SIGNED_WRITES = 6,
         EXTENDED_PROPERTIES = 7,
-        // BlueZ 특화 플래그
         RELIABLE_WRITE = 8,
         WRITABLE_AUXILIARIES = 9,
         ENCRYPT_READ = 10,
@@ -26,44 +27,46 @@ public:
         ENCRYPT_AUTHENTICATED_WRITE = 13,
         SECURE_READ = 14,
         SECURE_WRITE = 15,
-        MAX_FLAGS
+        MAX_FLAGS = 16
     };
 
-    // 기존 생성자 유지
     GattProperty(const std::string& name, 
-                GVariant* pValue,
-                GDBusInterfaceGetPropertyFunc getter = nullptr,
-                GDBusInterfaceSetPropertyFunc setter = nullptr);
+                const std::string& type,
+                bool readable,
+                bool writable);
+    
+    virtual ~GattProperty() = default;
 
-    // 플래그 관리를 위한 메서드 추가
+    // GATT 특화 기능
     void setFlag(Flags flag, bool value = true) {
-        flags.set(flag, value);
+        flags.set(static_cast<size_t>(flag), value);
     }
     
     bool hasFlag(Flags flag) const {
-        return flags.test(flag);
+        return flags.test(static_cast<size_t>(flag));
     }
 
-    // BlueZ 프로퍼티 플래그 문자열 생성
-    std::string getPropertyFlags() const;
+    // Getter/Setter 관리
+    void setGetter(GVariant* (*getter)(void*), void* userData);
+    void setSetter(void (*setter)(GVariant*, void*), void* userData);
 
-    // 기존 메서드들 유지
-    const std::string& getName() const;
-    GattProperty& setName(const std::string& name);
-    const GVariant* getValue() const;
-    GattProperty& setValue(GVariant* pValue);
-    GDBusInterfaceGetPropertyFunc getGetterFunc() const;
-    GattProperty& setGetterFunc(GDBusInterfaceGetPropertyFunc func);
-    GDBusInterfaceSetPropertyFunc getSetterFunc() const;
-    GattProperty& setSetterFunc(GDBusInterfaceSetPropertyFunc func);
-    std::string generateIntrospectionXML(int depth) const;
+    // DBus 인터페이스 통합
+    void addToInterface(DBusInterface& interface) const;
+
+    // 플래그 문자열 생성
+    std::string getPropertyFlags() const;
 
 private:
     std::string name;
-    GVariant* pValue;
-    GDBusInterfaceGetPropertyFunc getterFunc;
-    GDBusInterfaceSetPropertyFunc setterFunc;
+    std::string type;
+    bool readable;
+    bool writable;
     std::bitset<MAX_FLAGS> flags;
+
+    GVariant* (*getterFunc)(void*) = nullptr;
+    void (*setterFunc)(GVariant*, void*) = nullptr;
+    void* getterUserData = nullptr;
+    void* setterUserData = nullptr;
 };
 
 } // namespace ggk

@@ -16,13 +16,14 @@ struct GattUuid
 	static constexpr const char *kGattStandardUuidPart1Prefix = "0000";
 	static constexpr const char *kGattStandardUuidSuffix = "-0000-1000-8000-00805f9b34fb";
 
+
 	GattUuid(const char *strUuid)
 	{
 		*this = GattUuid(std::string(strUuid));
 	}
 
 	bool operator==(const GattUuid& other) const {
-		return value == other.value;
+		return uuid == other.uuid; 
 	}
 
 	GattUuid(std::string strUuid)

@@ -1,18 +1,14 @@
 #include "GattCharacteristic.h"
-#include "GattService.h"
-#include "GattDescriptor.h"
 #include "Logger.h"
-#include "DBusMethod.h"
 
 namespace ggk {
 
 const char* GattCharacteristic::INTERFACE_NAME = "org.bluez.GattCharacteristic1";
 
-GattCharacteristic::GattCharacteristic(const GattUuid& uuid, GattService* service)
+GattCharacteristic::GattCharacteristic(const GattUuid& uuid, const DBusObjectPath& path)
     : DBusInterface(INTERFACE_NAME)
     , uuid(uuid)
-    , service(service)
-    , notifying(false) {
+    , objectPath(path) {
     
     setupProperties();
     setupMethods();
@@ -21,90 +17,104 @@ GattCharacteristic::GattCharacteristic(const GattUuid& uuid, GattService* servic
 
 void GattCharacteristic::setupProperties() {
     // UUID property
-    addDBusProperty("UUID", "s", true, false,
-        [](void* userData) -> GVariant* {
-            auto* self = static_cast<GattCharacteristic*>(userData);
-            return g_variant_new_string(self->uuid.toString128().c_str());
-        }, nullptr);
+    addProperty("UUID", "s", true, false,
+        [this]() -> GVariant* {
+            return g_variant_new_string(uuid.toString128().c_str());
+        },
+        nullptr);
 
-    // Service property
-    addDBusProperty("Service", "o", true, false,
-        [](void* userData) -> GVariant* {
-            auto* self = static_cast<GattCharacteristic*>(userData);
-            return g_variant_new_object_path(self->service->getPath().c_str());
-        }, nullptr);
+    // Flags property (read-only)
+    addProperty("Flags", "as", true, false,
+        [this]() -> GVariant* {
+            return g_variant_new_string(getPropertyFlags().c_str());
+        },
+        nullptr);
 
-    // Flags property
-    addDBusProperty("Flags", "as", true, false,
-        [](void* userData) -> GVariant* {
-            auto* self = static_cast<GattCharacteristic*>(userData);
-            return g_variant_new_string(self->getPropertyFlags().c_str());
-        }, nullptr);
-
-    // Notifying property
-    addDBusProperty("Notifying", "b", true, false,
-        [](void* userData) -> GVariant* {
-            auto* self = static_cast<GattCharacteristic*>(userData);
-            return g_variant_new_boolean(self->notifying);
-        }, nullptr);
+    // Notifying property (read-only)
+    addProperty("Notifying", "b", true, false,
+        [this]() -> GVariant* {
+            return g_variant_new_boolean(notifying);
+        },
+        nullptr);
 }
-
 
 void GattCharacteristic::setupMethods() {
     // ReadValue method
     const char* readValueInArgs[] = { "a{sv}", nullptr };
-    addDBusMethod("ReadValue", readValueInArgs, "ay", onReadValue);
+    addMethod(std::make_shared<DBusMethod>(
+        this,
+        "ReadValue",
+        readValueInArgs,
+        "ay",
+        onReadValue
+    ));
 
     // WriteValue method
     const char* writeValueInArgs[] = { "ay", "a{sv}", nullptr };
-    addDBusMethod("WriteValue", writeValueInArgs, "", onWriteValue);
+    addMethod(std::make_shared<DBusMethod>(
+        this,
+        "WriteValue",
+        writeValueInArgs,
+        "",
+        onWriteValue
+    ));
 
     // StartNotify method
-    const char* startNotifyInArgs[] = { nullptr };
-    addDBusMethod("StartNotify", startNotifyInArgs, "", onStartNotify);
+    addMethod(std::make_shared<DBusMethod>(
+        this,
+        "StartNotify",
+        nullptr,
+        "",
+        onStartNotify
+    ));
 
     // StopNotify method
-    const char* stopNotifyInArgs[] = { nullptr };
-    addDBusMethod("StopNotify", stopNotifyInArgs, "", onStopNotify);
+    addMethod(std::make_shared<DBusMethod>(
+        this,
+        "StopNotify",
+        nullptr,
+        "",
+        onStopNotify
+    ));
 }
 
-bool GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
-    if (value != newValue) {
-        value = newValue;
-        onValueChanged(value);
-        
-        if (notifying) {
-            sendNotification();
+void GattCharacteristic::addProperty(Property prop) {
+    properties.set(static_cast<size_t>(prop));
+    
+    // Notify/Indicate가 추가되면 CCCD 생성
+    if ((prop == Property::NOTIFY || prop == Property::INDICATE) && 
+        !getDescriptor(GattDescriptor::TYPE_TO_UUID.at(GattDescriptor::Type::CLIENT_CHAR_CONFIG))) {
+        auto cccd = createCCCD();
+        if (cccd) {
+            addDescriptor(cccd);
         }
-        return true;
     }
-    return false;
 }
 
-void GattCharacteristic::addFlag(GattProperty::Flags flag) {
-    properties.set(flag);
-}
-
-bool GattCharacteristic::hasFlag(GattProperty::Flags flag) const {
-    return properties.test(flag);
+bool GattCharacteristic::hasProperty(Property prop) const {
+    return properties.test(static_cast<size_t>(prop));
 }
 
 std::string GattCharacteristic::getPropertyFlags() const {
     std::vector<std::string> flags;
     
-    if (hasFlag(GattProperty::Flags::BROADCAST))
+    if (hasProperty(Property::BROADCAST))
         flags.push_back("broadcast");
-    if (hasFlag(GattProperty::Flags::READ))
+    if (hasProperty(Property::READ))
         flags.push_back("read");
-    if (hasFlag(GattProperty::Flags::WRITE_WITHOUT_RESPONSE))
+    if (hasProperty(Property::WRITE_WITHOUT_RESPONSE))
         flags.push_back("write-without-response");
-    if (hasFlag(GattProperty::Flags::WRITE))
+    if (hasProperty(Property::WRITE))
         flags.push_back("write");
-    if (hasFlag(GattProperty::Flags::NOTIFY))
+    if (hasProperty(Property::NOTIFY))
         flags.push_back("notify");
-    if (hasFlag(GattProperty::Flags::INDICATE))
+    if (hasProperty(Property::INDICATE))
         flags.push_back("indicate");
-    
+    if (hasProperty(Property::SIGNED_WRITE))
+        flags.push_back("authenticated-signed-writes");
+    if (hasProperty(Property::EXTENDED_PROPERTIES))
+        flags.push_back("extended-properties");
+
     std::string result;
     for (size_t i = 0; i < flags.size(); ++i) {
         if (i > 0) result += ",";
@@ -113,23 +123,31 @@ std::string GattCharacteristic::getPropertyFlags() const {
     return result;
 }
 
+bool GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
+    if (value != newValue) {
+        value = newValue;
+        onValueChanged(value);
+        return true;
+    }
+    return false;
+}
+
 bool GattCharacteristic::addDescriptor(std::shared_ptr<GattDescriptor> descriptor) {
     if (!descriptor) {
-        Logger::error("Attempted to add null descriptor to characteristic: " + uuid.toString());
+        Logger::error("Attempted to add null descriptor");
         return false;
     }
 
+    // 이미 존재하는 UUID인지 확인
     for (const auto& existing : descriptors) {
         if (existing->getUUID() == descriptor->getUUID()) {
-            Logger::error("Descriptor with UUID " + descriptor->getUUID().toString() + 
-                         " already exists in characteristic: " + uuid.toString());
+            Logger::error("Descriptor with UUID " + descriptor->getUUID().toString() + " already exists");
             return false;
         }
     }
 
     descriptors.push_back(descriptor);
-    Logger::debug("Added descriptor " + descriptor->getUUID().toString() + 
-                 " to characteristic: " + uuid.toString());
+    Logger::debug("Added descriptor: " + descriptor->getUUID().toString());
     return true;
 }
 
@@ -142,22 +160,45 @@ std::shared_ptr<GattDescriptor> GattCharacteristic::getDescriptor(const GattUuid
     return nullptr;
 }
 
-void GattCharacteristic::addDBusProperty(const char* name,
-        const char* type, bool readable, bool writable, GVariant* (*getter)(void*),
-        void (*setter)(GVariant*, void*)) {
-    auto property = std::make_shared<DBusProperty>(name, type, readable,
-                writable, getter, setter, this);
-    DBusInterface::addProperty(property);
+void GattCharacteristic::startNotify() {
+    if (!hasProperty(Property::NOTIFY) && !hasProperty(Property::INDICATE)) {
+        Logger::error("Characteristic does not support notifications or indications");
+        return;
+    }
+
+    if (!notifying) {
+        notifying = true;
+        onNotifyingChanged(true);
+    }
 }
 
-void GattCharacteristic::addDBusMethod(const char* name,
-    const char** inArgs,
-    const char* outArgs,
-    DBusMethod::Callback callback) {
-    auto method = std::make_shared<DBusMethod>(this, name, inArgs, outArgs, callback);
-    DBusInterface::addMethod(method);
+void GattCharacteristic::stopNotify() {
+    if (notifying) {
+        notifying = false;
+        onNotifyingChanged(false);
+    }
 }
 
+void GattCharacteristic::onCCCDChanged(bool notificationEnabled, bool indicationEnabled) {
+    if (notificationEnabled || indicationEnabled) {
+        startNotify();
+    } else {
+        stopNotify();
+    }
+}
+
+std::shared_ptr<GattDescriptor> GattCharacteristic::createCCCD() {
+    auto cccd = std::make_shared<GattDescriptor>(
+        GattDescriptor::Type::CLIENT_CHAR_CONFIG,
+        objectPath + "/desc0"
+    );
+    cccd->setCCCDCallback([this](bool notify, bool indicate) {
+        onCCCDChanged(notify, indicate);
+    });
+    return cccd;
+}
+
+// D-Bus 메서드 핸들러 구현
 void GattCharacteristic::onReadValue(const DBusInterface& interface,
                                    GDBusConnection* connection,
                                    const std::string& methodName,
@@ -173,7 +214,15 @@ void GattCharacteristic::onReadValue(const DBusInterface& interface,
         return;
     }
 
-    const std::vector<uint8_t>& value = characteristic->getValue();
+    if (!characteristic->hasProperty(Property::READ)) {
+        g_dbus_method_invocation_return_error_literal(invocation,
+                                                     G_IO_ERROR,
+                                                     G_IO_ERROR_NOT_SUPPORTED,
+                                                     "Read not permitted");
+        return;
+    }
+
+    const auto& value = characteristic->getValue();
     GVariant* result = g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE,
                                                value.data(),
                                                value.size(),
@@ -196,6 +245,15 @@ void GattCharacteristic::onWriteValue(const DBusInterface& interface,
         return;
     }
 
+    if (!characteristic->hasProperty(Property::WRITE) &&
+        !characteristic->hasProperty(Property::WRITE_WITHOUT_RESPONSE)) {
+        g_dbus_method_invocation_return_error_literal(invocation,
+                                                     G_IO_ERROR,
+                                                     G_IO_ERROR_NOT_SUPPORTED,
+                                                     "Write not permitted");
+        return;
+    }
+
     GVariant* valueVariant;
     GVariant* optionsVariant;
     g_variant_get(parameters, "(@ay@a{sv})", &valueVariant, &optionsVariant);
@@ -206,12 +264,17 @@ void GattCharacteristic::onWriteValue(const DBusInterface& interface,
     std::vector<uint8_t> newValue(static_cast<const uint8_t*>(data),
                                  static_cast<const uint8_t*>(data) + n_elements);
 
-    characteristic->setValue(newValue);
+    if (characteristic->setValue(newValue)) {
+        g_dbus_method_invocation_return_value(invocation, nullptr);
+    } else {
+        g_dbus_method_invocation_return_error_literal(invocation,
+                                                     G_IO_ERROR,
+                                                     G_IO_ERROR_FAILED,
+                                                     "Failed to set value");
+    }
     
     g_variant_unref(valueVariant);
     g_variant_unref(optionsVariant);
-
-    g_dbus_method_invocation_return_value(invocation, nullptr);
 }
 
 void GattCharacteristic::onStartNotify(const DBusInterface& interface,
@@ -229,8 +292,7 @@ void GattCharacteristic::onStartNotify(const DBusInterface& interface,
         return;
     }
 
-    characteristic->notifying = true;
-    characteristic->onNotifyingChanged(true);
+    characteristic->startNotify();
     g_dbus_method_invocation_return_value(invocation, nullptr);
 }
 
@@ -249,72 +311,16 @@ void GattCharacteristic::onStopNotify(const DBusInterface& interface,
         return;
     }
 
-    characteristic->notifying = false;
-    characteristic->onNotifyingChanged(false);
+    characteristic->stopNotify();
     g_dbus_method_invocation_return_value(invocation, nullptr);
 }
 
-void GattCharacteristic::sendNotification() {
-    if (!isNotifying()) return;
-
-    GVariantBuilder builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
-    g_variant_builder_add(&builder, "{sv}", "Value", 
-        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, 
-                                value.data(), 
-                                value.size(), 
-                                sizeof(uint8_t)));
-
-    // DBus 시그널 발생
-    emitSignal("PropertiesChanged", 
-               g_variant_new("(sa{sv}as)", 
-                           INTERFACE_NAME,
-                           &builder,
-                           nullptr));
-}
-
-void GattCharacteristic::addManagedObjectProperties(GVariantBuilder* builder) {
-    if (!builder) return;
-
-    // 특성 인터페이스 프로퍼티 추가
-    GVariantBuilder interfaceBuilder;
-    g_variant_builder_init(&interfaceBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
-
-    // GattCharacteristic1 인터페이스
-    GVariantBuilder propsBuilder;
-    g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
-
-    // UUID
-    g_variant_builder_add(&propsBuilder, "{sv}", "UUID",
-                         g_variant_new_string(uuid.toString128().c_str()));
-
-    // Service
-    g_variant_builder_add(&propsBuilder, "{sv}", "Service",
-                         g_variant_new_object_path(service->getPath().c_str()));
-
-    // Flags
-    g_variant_builder_add(&propsBuilder, "{sv}", "Flags",
-                         g_variant_new_string(getPropertyFlags().c_str()));
-
-    // Notifying
-    g_variant_builder_add(&propsBuilder, "{sv}", "Notifying",
-                         g_variant_new_boolean(notifying));
-
-    g_variant_builder_add(&interfaceBuilder, "{sa{sv}}",
-                         INTERFACE_NAME,
-                         &propsBuilder);
-
-    g_variant_builder_add(builder, "a{sa{sv}}", &interfaceBuilder);
-}
-
 void GattCharacteristic::onValueChanged(const std::vector<uint8_t>& newValue) {
-    // 기본 구현은 아무것도 하지 않음
-    // 하위 클래스에서 필요한 경우 오버라이드
+    // 기본 구현은 비어있음 - 하위 클래스에서 필요에 따라 구현
 }
 
 void GattCharacteristic::onNotifyingChanged(bool isNotifying) {
-    // 기본 구현은 아무것도 하지 않음
-    // 하위 클래스에서 필요한 경우 오버라이드
+    // 기본 구현은 비어있음 - 하위 클래스에서 필요에 따라 구현
 }
 
 } // namespace ggk

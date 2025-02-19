@@ -3,95 +3,78 @@
 #include <gio/gio.h>
 #include <memory>
 #include <vector>
-#include <bitset>
+#include <map>
 #include "DBusInterface.h"
-#include "DBusProperty.h" 
 #include "GattUuid.h"
 #include "GattProperty.h"
+#include "GattDescriptor.h"
 
 namespace ggk {
-
-class GattDescriptor;
-class GattService;
 
 class GattCharacteristic : public DBusInterface {
 public:
     static const char* INTERFACE_NAME;    // "org.bluez.GattCharacteristic1"
 
-    GattCharacteristic(const GattUuid& uuid, 
-                      GattService* service);
+    // 특성 속성 플래그
+    enum class Property {
+        BROADCAST = 0,
+        READ = 1,
+        WRITE_WITHOUT_RESPONSE = 2,
+        WRITE = 3,
+        NOTIFY = 4,
+        INDICATE = 5,
+        SIGNED_WRITE = 6,
+        EXTENDED_PROPERTIES = 7
+    };
+
+    // 생성자
+    GattCharacteristic(const GattUuid& uuid, const DBusObjectPath& path);
     virtual ~GattCharacteristic() = default;
+
+    // DBusInterface 구현
+    virtual DBusObjectPath getPath() const override { return objectPath; }
 
     // 특성 속성
     const GattUuid& getUUID() const { return uuid; }
-    GattService* getService() { return service; }
+    void addProperty(Property prop);
+    bool hasProperty(Property prop) const;
+    std::string getPropertyFlags() const;
 
     // 값 관리
     const std::vector<uint8_t>& getValue() const { return value; }
     bool setValue(const std::vector<uint8_t>& newValue);
     
-    // BLE 속성 관리
-    void addFlag(GattProperty::Flags flag);  // addProperty 대신 addFlag로 변경
-    bool hasFlag(GattProperty::Flags flag) const;
-    std::string getPropertyFlags() const;  // 추가
-
     // 디스크립터 관리
     bool addDescriptor(std::shared_ptr<GattDescriptor> descriptor);
     std::shared_ptr<GattDescriptor> getDescriptor(const GattUuid& uuid);
-    const std::vector<std::shared_ptr<GattDescriptor>>& getDescriptors() const {
-        return descriptors;
+    const std::vector<std::shared_ptr<GattDescriptor>>& getDescriptors() const { 
+        return descriptors; 
     }
 
-    // 알림 관리
+    // 알림/인디케이션 관리
     bool isNotifying() const { return notifying; }
-    void sendNotification();  // 선언 추가
-    void addManagedObjectProperties(GVariantBuilder* builder);  // 선언 추가
+    void startNotify();
+    void stopNotify();
 
-    // DBusObject 트리에서의 경로 관리
-    virtual DBusObjectPath getPath() const override {
-        if (service) {
-            return service->getPath() + "/char" + std::to_string(getIndex());
-        }
-        return DBusObjectPath("/");
-    }
-
-    // D-Bus 프로퍼티 헬퍼 메서드
-    void addDBusProperty(const char* name, 
-                        const char* type, 
-                        bool readable, 
-                        bool writable,
-                        GVariant* (*getter)(void*),
-                        void (*setter)(GVariant*, void*));
-
-    // D-Bus 메서드 헬퍼
-    void addDBusMethod(const char* name,
-                      const char** inArgs,
-                      const char* outArgs,
-                      DBusMethod::Callback callback);
-
-    // 객체 관리를 위한 메서드 추가
-    void setIndex(size_t idx) { characteristicIndex = idx; }
-    size_t getIndex() const { return characteristicIndex; }
+    // CCCD 관리
+    void onCCCDChanged(bool notificationEnabled, bool indicationEnabled);
 
 protected:
-    virtual void onValueChanged(const std::vector<uint8_t>& newValue);  // 선언 추가
-    virtual void onNotifyingChanged(bool isNotifying);  // 선언 추가
-
-    // GattService의 getPath 메서드 필요
-    virtual DBusObjectPath getPath() const;  // 선언 추          
-
+    virtual void onValueChanged(const std::vector<uint8_t>& newValue);
+    virtual void onNotifyingChanged(bool isNotifying);
 
 private:
     GattUuid uuid;
-    GattService* service;
+    DBusObjectPath objectPath;
     std::vector<uint8_t> value;
-    std::bitset<GattProperty::MAX_FLAGS> properties;
+    std::bitset<8> properties;
     std::vector<std::shared_ptr<GattDescriptor>> descriptors;
-    bool notifying;
-    size_t characteristicIndex;
-    
+    bool notifying{false};
+
     void setupProperties();
     void setupMethods();
+    bool validateProperties() const;
+    std::shared_ptr<GattDescriptor> createCCCD();
 
     // D-Bus 메서드 핸들러
     static void onReadValue(const DBusInterface& interface,

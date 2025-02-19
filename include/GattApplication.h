@@ -35,7 +35,10 @@ public:
     const DBusObject& getRootObject() const { return rootObject; }
 
     // DBusInterface 메서드 구현
-    virtual std::string getName() const override { return INTERFACE_NAME; }
+    virtual const std::string& getName() const override { 
+        static const std::string name = INTERFACE_NAME;
+        return name; 
+    }
     virtual GVariant* getObjectsManaged() override;
 
 protected:
@@ -65,6 +68,10 @@ private:
 
     // 내부 유틸리티 메서드
     void buildManagedObjects(GVariantBuilder* builder);
+
+    bool isRegistered() const;
+    void cleanup();
+    DBusObjectPath getPath() const { return rootObject.getPath(); }
 };
 
 } // namespace ggk

@@ -25,6 +25,7 @@ set(SOURCES
     src/GattApplication.cpp
     src/GattCharacteristic.cpp
     src/GattDescriptor.cpp
+    src/GattObject.cpp
     src/GattProperty.cpp
     src/GattService.cpp
     src/HciAdapter.cpp

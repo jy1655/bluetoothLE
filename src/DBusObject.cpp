@@ -1,12 +1,9 @@
 #include "DBusObject.h"
-#include "DBusInterface.h"
-#include "GattApplication.h"
-#include "GattService.h"
 #include "Logger.h"
 
 namespace ggk {
 
-    DBusObject::DBusObject(const DBusObjectPath& path, bool shouldPublish)
+DBusObject::DBusObject(const DBusObjectPath& path, bool shouldPublish)
     : state(shouldPublish ? State::INITIALIZED : State::ERROR)
     , path(path)
     , pParent(nullptr)
@@ -20,6 +17,40 @@ DBusObject::DBusObject(DBusObject* pParent, const DBusObjectPath& pathElement)
     , dbusConnection(nullptr) {
 }
 
+DBusObject::~DBusObject() {
+    cleanup();
+}
+
+bool DBusObject::publish(GDBusConnection* connection) {
+    if (!connection) {
+        Logger::error("Cannot publish DBusObject: null connection");
+        return false;
+    }
+
+    if (state == State::PUBLISHED) {
+        return true;
+    }
+
+    if (!validatePath()) {
+        Logger::error("Cannot publish DBusObject: invalid path");
+        return false;
+    }
+
+    dbusConnection = connection;
+    setState(State::PUBLISHED);
+    return true;
+}
+
+bool DBusObject::unpublish() {
+    if (state != State::PUBLISHED) {
+        return true;
+    }
+
+    setState(State::INITIALIZED);
+    dbusConnection = nullptr;
+    return true;
+}
+
 const DBusObjectPath& DBusObject::getPathNode() const {
     return path;
 }
@@ -28,75 +59,50 @@ DBusObjectPath DBusObject::getPath() const {
     if (pParent == nullptr) {
         return path;
     }
-    
     return pParent->getPath() + path;
 }
 
 DBusObject& DBusObject::getParent() {
     if (pParent == nullptr) {
-        throw std::runtime_error("No parent object");
+        throw DBusObjectError("No parent object");
     }
     return *pParent;
 }
 
-const std::list<DBusObject>& DBusObject::getChildren() const {
+const DBusObject& DBusObject::getParent() const {
+    if (pParent == nullptr) {
+        throw DBusObjectError("No parent object");
+    }
+    return *pParent;
+}
+
+const DBusObject::ChildList& DBusObject::getChildren() const {
     return children;
 }
 
 DBusObject& DBusObject::addChild(const DBusObjectPath& pathElement) {
     children.emplace_back(this, pathElement);
+    onChildAdded(children.back());
     return children.back();
 }
 
-const DBusObject::InterfaceList& DBusObject::getInterfaces() const {
-    return interfaces;
-}
-
-std::string DBusObject::generateIntrospectionXML(int depth) const {
-    std::string indent(depth * 2, ' ');
-    std::string xml;
-
-    // 노드 시작
-    xml += indent + "<node name=\"" + path.toString() + "\">\n";
-
-    // 인터페이스 XML 생성
-    for (const auto& interface : interfaces) {
-        xml += interface->generateIntrospectionXML(depth + 1);
-    }
-
-    // 자식 노드 XML 생성
-    for (const auto& child : children) {
-        xml += child.generateIntrospectionXML(depth + 1);
-    }
-
-    // 노드 종료
-    xml += indent + "</node>\n";
-
-    return xml;
-}
-
-GattApplication* DBusObject::findGattApplication() const {
-    DBusObject* current = pParent;
-    while (current) {
-        for (const auto& interface : current->interfaces) {
-            if (auto app = dynamic_cast<GattApplication*>(interface.get())) {
-                return app;
-            }
+DBusObject* DBusObject::findChild(const DBusObjectPath& path) {
+    for (auto& child : children) {
+        if (child.getPathNode() == path) {
+            return &child;
         }
-        current = current->pParent;
     }
     return nullptr;
 }
 
-GattService& DBusObject::gattServiceBegin(const std::string& pathElement, const GattUuid& uuid) {
-    DBusObject& serviceObject = addChild(DBusObjectPath(pathElement));  // DBusObjectPath로 변환
-    auto service = std::make_shared<GattService>(uuid);
-    
-    if (auto app = findGattApplication()) {
-        app->addService(service);
-    }
-    
-    return *serviceObject.addInterface(service);
+void DBusObject::removeChild(const DBusObjectPath& path) {
+    children.remove_if([&path](const DBusObject& child) {
+        return child.getPathNode() == path;
+    });
+}
+
+const DBusObject::InterfaceList& DBusObject::getInterfaces() const {
+    return interfaces;
 }
 
 std::shared_ptr<const DBusInterface> DBusObject::findInterface(
@@ -106,9 +112,7 @@ std::shared_ptr<const DBusInterface> DBusObject::findInterface(
 
     DBusObjectPath fullPath = basePath + getPath();
     
-    // 현재 객체의 경로가 찾고자 하는 경로와 일치하는지 확인
     if (fullPath == path) {
-        // 인터페이스 찾기
         for (const auto& interface : interfaces) {
             if (interface->getName() == interfaceName) {
                 return interface;
@@ -117,7 +121,6 @@ std::shared_ptr<const DBusInterface> DBusObject::findInterface(
         return nullptr;
     }
 
-    // 자식 객체들에서 재귀적으로 검색
     for (const auto& child : children) {
         auto result = child.findInterface(path, interfaceName, basePath);
         if (result) {
@@ -161,11 +164,11 @@ void DBusObject::emitSignal(
     GError* pError = nullptr;
     g_dbus_connection_emit_signal(
         pBusConnection,
-        nullptr,                    // 대상 지정하지 않음 (브로드캐스트)
-        getPath().c_str(),         // 객체 경로
-        interfaceName.c_str(),     // 인터페이스 이름
-        signalName.c_str(),        // 시그널 이름
-        pParameters,               // 시그널 파라미터
+        nullptr,
+        getPath().c_str(),
+        interfaceName.c_str(),
+        signalName.c_str(),
+        pParameters,
         &pError
     );
 
@@ -174,5 +177,48 @@ void DBusObject::emitSignal(
         g_error_free(pError);
     }
 }
+
+std::string DBusObject::generateIntrospectionXML(int depth) const {
+    std::string indent(depth * 2, ' ');
+    std::string xml;
+
+    xml += indent + "<node name=\"" + path.toString() + "\">\n";
+
+    for (const auto& interface : interfaces) {
+        xml += interface->generateIntrospectionXML(depth + 1);
+    }
+
+    for (const auto& child : children) {
+        xml += child.generateIntrospectionXML(depth + 1);
+    }
+
+    xml += indent + "</node>\n";
+
+    return xml;
+}
+
+void DBusObject::setState(State newState) {
+    if (state != newState) {
+        State oldState = state;
+        state = newState;
+        onStateChanged(oldState, newState);
+    }
+}
+
+bool DBusObject::validatePath() const {
+    return !path.toString().empty() && path.toString()[0] == '/';
+}
+
+void DBusObject::cleanup() {
+    interfaces.clear();
+    children.clear();
+    dbusConnection = nullptr;
+    state = State::ERROR;
+}
+
+// Protected virtual methods의 기본 구현
+void DBusObject::onStateChanged(State oldState, State newState) {}
+void DBusObject::onInterfaceAdded(const std::shared_ptr<DBusInterface>& interface) {}
+void DBusObject::onChildAdded(DBusObject& child) {}
 
 } // namespace ggk
