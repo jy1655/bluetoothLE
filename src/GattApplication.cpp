@@ -4,6 +4,7 @@
 
 namespace ggk {
 
+const char* GattApplication::INTERFACE_NAME = "org.freedesktop.DBus.ObjectManager";
 const char* GattApplication::BLUEZ_GATT_MANAGER_IFACE = "org.bluez.GattManager1";
 const char* GattApplication::BLUEZ_SERVICE_NAME = "org.bluez";
 const char* GattApplication::BLUEZ_OBJECT_PATH = "/org/bluez/hci0";
@@ -34,10 +35,17 @@ bool GattApplication::addService(std::shared_ptr<GattService> service) {
     
     // 서비스를 D-Bus 객체 트리에 추가
     std::string path = "/service" + std::to_string(services.size());
-    rootObject.addChild(DBusObjectPath(path));
+    auto& serviceObject = rootObject.addChild(DBusObjectPath(path));
+    serviceObject.addInterface(service);
 
-    onServiceAdded(service);
-    Logger::info("Added GATT service: " + uuid);
+    // 서비스의 특성들도 DBusObject 트리에 추가
+    for (size_t i = 0; i < service->getCharacteristics().size(); i++) {
+        auto& characteristic = service->getCharacteristics()[i];
+        std::string charPath = path + "/char" + std::to_string(i);
+        auto& charObject = serviceObject.addChild(DBusObjectPath(charPath));
+        charObject.addInterface(characteristic);
+    }
+
     return true;
 }
 
@@ -114,23 +122,9 @@ void GattApplication::unregisterApplication() {
 GVariant* GattApplication::getObjectsManaged() {
     GVariantBuilder builder;
     g_variant_builder_init(&builder, G_VARIANT_TYPE("a{oa{sa{sv}}}"));
-
-    // 각 서비스에 대한 객체 경로와 인터페이스 정보 추가
-    for (const auto& pair : services) {
-        const auto& service = pair.second;
-        std::string path = applicationPath + "/service" + pair.first;
-
-        GVariantBuilder interfaceBuilder;
-        g_variant_builder_init(&interfaceBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
-
-        // 서비스 프로퍼티 추가
-        service->addManagedObjectProperties(&interfaceBuilder);
-
-        g_variant_builder_add(&builder, "{oa{sa{sv}}}", 
-                            path.c_str(),
-                            &interfaceBuilder);
-    }
-
+    
+    buildManagedObjects(&builder);
+    
     return g_variant_builder_end(&builder);
 }
 
@@ -191,6 +185,19 @@ void GattApplication::cleanup() {
     dbusConnection = nullptr;
     applicationPath.clear();
     services.clear();
+}
+
+void GattApplication::buildManagedObjects(GVariantBuilder* builder) {
+    // Root 객체의 인터페이스 추가
+    g_variant_builder_open(builder, G_VARIANT_TYPE("{oa{sa{sv}}}"));
+    g_variant_builder_add(builder, "o", getPath().c_str());
+    
+    // 서비스 객체들의 인터페이스 추가
+    for (const auto& [uuid, service] : services) {
+        service->addManagedObjectProperties(builder);
+    }
+    
+    g_variant_builder_close(builder);
 }
 
 // 보호된 가상 메서드의 기본 구현

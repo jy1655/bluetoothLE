@@ -162,4 +162,12 @@ void GattDescriptor::onValueChanged(const std::vector<uint8_t>& newValue) {
     // 하위 클래스에서 필요한 경우 오버라이드
 }
 
+void GattDescriptor::setupProperties() {
+        addProperty("UUID", "s", true, false,
+            [this](void) -> GVariant* {
+                return g_variant_new_string(uuid.toString().c_str());
+            },
+            nullptr);
+    }
+
 } // namespace ggk

@@ -47,6 +47,14 @@ public:
     void sendNotification();  // 선언 추가
     void addManagedObjectProperties(GVariantBuilder* builder);  // 선언 추가
 
+    // DBusObject 트리에서의 경로 관리
+    virtual DBusObjectPath getPath() const override {
+        if (service) {
+            return service->getPath() + "/char" + std::to_string(getIndex());
+        }
+        return DBusObjectPath("/");
+    }
+
     // D-Bus 프로퍼티 헬퍼 메서드
     void addDBusProperty(const char* name, 
                         const char* type, 
@@ -60,6 +68,10 @@ public:
                       const char** inArgs,
                       const char* outArgs,
                       DBusMethod::Callback callback);
+
+    // 객체 관리를 위한 메서드 추가
+    void setIndex(size_t idx) { characteristicIndex = idx; }
+    size_t getIndex() const { return characteristicIndex; }
 
 protected:
     virtual void onValueChanged(const std::vector<uint8_t>& newValue);  // 선언 추가
@@ -76,6 +88,7 @@ private:
     std::bitset<GattProperty::MAX_FLAGS> properties;
     std::vector<std::shared_ptr<GattDescriptor>> descriptors;
     bool notifying;
+    size_t characteristicIndex;
     
     void setupProperties();
     void setupMethods();

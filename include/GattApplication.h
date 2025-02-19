@@ -11,11 +11,12 @@ namespace ggk {
 
 class GattService;
 
-class GattApplication {
+class GattApplication : public DBusInterface {
 public:
-    static const char* BLUEZ_GATT_MANAGER_IFACE;    // "org.bluez.GattManager1"
-    static const char* BLUEZ_SERVICE_NAME;          // "org.bluez"
-    static const char* BLUEZ_OBJECT_PATH;           // "/org/bluez/hci0"
+    static const char* INTERFACE_NAME;          // "org.freedesktop.DBus.ObjectManager"
+    static const char* BLUEZ_GATT_MANAGER_IFACE;// "org.bluez.GattManager1"
+    static const char* BLUEZ_SERVICE_NAME;      // "org.bluez"
+    static const char* BLUEZ_OBJECT_PATH;       // "/org/bluez/hci0"
 
     GattApplication();
     virtual ~GattApplication();
@@ -33,10 +34,11 @@ public:
     DBusObject& getRootObject() { return rootObject; }
     const DBusObject& getRootObject() const { return rootObject; }
 
+    // DBusInterface 메서드 구현
+    virtual std::string getName() const override { return INTERFACE_NAME; }
+    virtual GVariant* getObjectsManaged() override;
+
 protected:
-    // D-Bus 객체 트리 생성
-    virtual GVariant* getObjectsManaged();
-    
     // 이벤트 핸들러
     virtual void onApplicationRegistered();
     virtual void onApplicationUnregistered();
@@ -56,14 +58,13 @@ private:
     static void onRegisterApplicationReply(GObject* source,
                                          GAsyncResult* res,
                                          gpointer user_data);
-                                         
+    
     static void onUnregisterApplicationReply(GObject* source,
                                            GAsyncResult* res,
                                            gpointer user_data);
 
     // 내부 유틸리티 메서드
-    bool isRegistered() const;
-    void cleanup();
+    void buildManagedObjects(GVariantBuilder* builder);
 };
 
 } // namespace ggk

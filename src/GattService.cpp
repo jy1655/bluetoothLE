@@ -6,7 +6,7 @@ namespace ggk {
 
 const char* GattService::INTERFACE_NAME = "org.bluez.GattService1";
 
-GattService::GattService(const UUID& uuid, Type type)
+GattService::GattService(const GattUuid& uuid, Type type)
     : DBusInterface(INTERFACE_NAME)
     , uuid(uuid)
     , type(type) {

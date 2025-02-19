@@ -255,20 +255,19 @@ void GattCharacteristic::onStopNotify(const DBusInterface& interface,
 }
 
 void GattCharacteristic::sendNotification() {
-    if (!notifying) return;
+    if (!isNotifying()) return;
 
     GVariantBuilder builder;
     g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
-    g_variant_builder_add(&builder, "{sv}", "Value",
-                         g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE,
-                                                value.data(),
-                                                value.size(),
-                                                sizeof(uint8_t)));
+    g_variant_builder_add(&builder, "{sv}", "Value", 
+        g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE, 
+                                value.data(), 
+                                value.size(), 
+                                sizeof(uint8_t)));
 
-    emitSignal(getConnection(),
-               INTERFACE_NAME,
-               "PropertiesChanged",
-               g_variant_new("(sa{sv}as)",
+    // DBus 시그널 발생
+    emitSignal("PropertiesChanged", 
+               g_variant_new("(sa{sv}as)", 
                            INTERFACE_NAME,
                            &builder,
                            nullptr));

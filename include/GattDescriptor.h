@@ -22,8 +22,7 @@ public:
     static const GattUuid UUID_CHARAC_PRESENTATION_FORMAT;  // 0x2904
     static const GattUuid UUID_CHARAC_AGGREGATE_FORMAT;     // 0x2905
 
-    GattDescriptor(const GattUuid& uuid,
-                  GattCharacteristic* characteristic);
+    GattDescriptor(const GattUuid& uuid, GattCharacteristic* characteristic);
     virtual ~GattDescriptor() = default;
 
     // 디스크립터 속성
@@ -52,6 +51,16 @@ public:
     // D-Bus 프로퍼티 관리
     void addManagedObjectProperties(GVariantBuilder* builder);
 
+    virtual DBusObjectPath getPath() const override {
+        if (characteristic) {
+            return characteristic->getPath() + "/desc" + std::to_string(getIndex());
+        }
+        return DBusObjectPath("/");
+    }
+
+    void setIndex(size_t idx) { descriptorIndex = idx; }
+    size_t getIndex() const { return descriptorIndex; }
+
 protected:
     virtual void onValueChanged(const std::vector<uint8_t>& newValue);
 
@@ -59,9 +68,11 @@ private:
     GattUuid uuid;
     GattCharacteristic* characteristic;
     std::vector<uint8_t> value;
+    size_t descriptorIndex;
 
     void setupProperties();
     void setupMethods();
+    void setupProperties();
 };
 
 } // namespace ggk
