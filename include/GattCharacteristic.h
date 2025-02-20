@@ -59,6 +59,13 @@ public:
     // CCCD 관리
     void onCCCDChanged(bool notificationEnabled, bool indicationEnabled);
 
+    void addDBusProperty(const char* name,
+        const char* type,
+        bool readable,
+        bool writable,
+        std::function<GVariant*(void*)> getter = nullptr,
+        std::function<void(GVariant*, void*)> setter = nullptr);
+
 protected:
     virtual void onValueChanged(const std::vector<uint8_t>& newValue);
     virtual void onNotifyingChanged(bool isNotifying);

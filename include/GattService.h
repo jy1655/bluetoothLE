@@ -1,61 +1,79 @@
 #pragma once
 
 #include <gio/gio.h>
-#include <map>
 #include <memory>
+#include <vector>
 #include "DBusInterface.h"
-#include "GattService.h"
+#include "GattUuid.h"
+#include "GattCharacteristic.h"
 
 namespace ggk {
 
-class GattApplication : public DBusInterface {
+class GattService : public DBusInterface {
 public:
-    static const char* INTERFACE_NAME;          // "org.freedesktop.DBus.ObjectManager"
-    static const char* BLUEZ_GATT_MANAGER_IFACE;// "org.bluez.GattManager1"
-    static const char* BLUEZ_SERVICE_NAME;      // "org.bluez"
-    static const char* BLUEZ_OBJECT_PATH;       // "/org/bluez/hci0"
+    static const char* INTERFACE_NAME;    // "org.bluez.GattService1"
 
-    GattApplication();
-    virtual ~GattApplication();
+    // Primary/Secondary 서비스 구분
+    enum class Type {
+        PRIMARY,
+        SECONDARY
+    };
+
+    GattService(const GattUuid& uuid, const DBusObjectPath& path, Type type = Type::PRIMARY);
+    virtual ~GattService() = default;
 
     // DBusInterface 구현
     virtual DBusObjectPath getPath() const override { return objectPath; }
 
-    // GATT 서비스 관리
-    bool addService(std::shared_ptr<GattService> service);
-    std::shared_ptr<GattService> getService(const GattUuid& uuid);
-    void removeService(const GattUuid& uuid);
+    // 서비스 속성
+    const GattUuid& getUUID() const { return uuid; }
+    Type getType() const { return type; }
+    bool isPrimary() const { return type == Type::PRIMARY; }
 
-    // GattManager1에 애플리케이션 등록
-    bool registerApplication(GDBusConnection* connection);
-    void unregisterApplication();
+    // Characteristic 관리
+    bool addCharacteristic(std::shared_ptr<GattCharacteristic> characteristic);
+    std::shared_ptr<GattCharacteristic> getCharacteristic(const GattUuid& uuid);
+    const std::vector<std::shared_ptr<GattCharacteristic>>& getCharacteristics() const { 
+        return characteristics; 
+    }
 
-    // ObjectManager 인터페이스 메서드
-    GVariant* getManagedObjects();
+    // D-Bus 객체 관리
+    bool isRegistered() const { return registered; }
+    void setRegistered(bool reg) { registered = reg; }
+    std::string getUUIDString() const;
+    
+private:
+    // 정적 멤버 변수로 현재 서비스 포인터 저장
+    static GattService* currentService;
+
+    // getter 함수들을 static 멤버 함수로 정의
+    static GVariant* getUUIDProperty() {
+        if (currentService) {
+            return g_variant_new_string(currentService->uuid.toString128().c_str());
+        }
+        return nullptr;
+    }
+
+    static GVariant* getPrimaryProperty() {
+        if (currentService) {
+            return g_variant_new_boolean(currentService->type == Type::PRIMARY);
+        }
+        return nullptr;
+    }
 
 protected:
-    virtual void onApplicationRegistered();
-    virtual void onApplicationUnregistered();
-    virtual void onServiceAdded(const std::shared_ptr<GattService>& service);
-    virtual void onServiceRemoved(const std::shared_ptr<GattService>& service);
+    virtual void onCharacteristicAdded(const std::shared_ptr<GattCharacteristic>& characteristic);
+    virtual void onCharacteristicRemoved(const std::shared_ptr<GattCharacteristic>& characteristic);
 
 private:
+    GattUuid uuid;
     DBusObjectPath objectPath;
-    GDBusConnection* dbusConnection;
-    std::map<std::string, std::shared_ptr<GattService>> services;
+    Type type;
+    std::vector<std::shared_ptr<GattCharacteristic>> characteristics;
+    bool registered{false};
 
-    // DBus 메서드 핸들러
-    static void onRegisterApplicationReply(GObject* source,
-                                         GAsyncResult* res,
-                                         gpointer user_data);
-    
-    static void onUnregisterApplicationReply(GObject* source,
-                                           GAsyncResult* res,
-                                           gpointer user_data);
-
-    // 내부 유틸리티
-    void buildManagedObjects(GVariantBuilder* builder);
-    bool isRegistered() const { return dbusConnection != nullptr; }
+    void setupProperties();
+    bool validateCharacteristic(const std::shared_ptr<GattCharacteristic>& characteristic) const;
 };
 
 } // namespace ggk

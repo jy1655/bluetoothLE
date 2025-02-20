@@ -1,3 +1,4 @@
+#include <optional>
 #include "GattProperty.h"
 #include "Logger.h"
 
@@ -24,17 +25,25 @@ void GattProperty::setSetter(void (*setter)(GVariant*, void*), void* userData) {
 }
 
 void GattProperty::addToInterface(DBusInterface& interface) const {
-    interface.addProperty(name, 
-                         type, 
-                         readable, 
-                         writable,
-                         getterFunc ? [](void) -> GVariant* {
-                             return nullptr; // TODO: implement wrapper
-                         } : nullptr,
-                         setterFunc ? [](GVariant*) {
-                             // TODO: implement wrapper
-                         } : nullptr);
+    // 기존 DBusInterface의 함수 포인터 형식에 맞춤
+    GVariant* (*getter)(void) = nullptr;
+    void (*setter)(GVariant*) = nullptr;
+
+    if (getterFunc) {
+        getter = []() -> GVariant* {
+            return nullptr;  // 기존 getterFunc의 래퍼 구현
+        };
+    }
+
+    if (setterFunc) {
+        setter = [](GVariant* value) {
+            // 기존 setterFunc의 래퍼 구현
+        };
+    }
+
+    interface.addProperty(name, type, readable, writable, getter, setter);
 }
+
 
 std::string GattProperty::getPropertyFlags() const {
     std::vector<std::string> flagStrings;

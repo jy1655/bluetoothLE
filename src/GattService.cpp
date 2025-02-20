@@ -1,4 +1,6 @@
 #include "GattService.h"
+#include "GattCharacteristic.h"
+#include "GattDescriptor.h"
 #include "Logger.h"
 
 namespace ggk {
@@ -16,20 +18,15 @@ GattService::GattService(const GattUuid& uuid, const DBusObjectPath& path, Type 
                  (type == Type::PRIMARY ? " (Primary)" : " (Secondary)"));
 }
 
-void GattService::setupProperties() {
-    // UUID property
-    addProperty("UUID", "s", true, false,
-        [this]() -> GVariant* {
-            return g_variant_new_string(uuid.toString128().c_str());
-        },
-        nullptr);
+GattService* GattService::currentService = nullptr;
 
-    // Primary property
-    addProperty("Primary", "b", true, false,
-        [this]() -> GVariant* {
-            return g_variant_new_boolean(type == Type::PRIMARY);
-        },
-        nullptr);
+void GattService::setupProperties() {
+    // 현재 서비스 설정
+    currentService = this;
+
+    // 속성 추가
+    addProperty("UUID", "s", true, false, &GattService::getUUIDProperty, nullptr);
+    addProperty("Primary", "b", true, false, &GattService::getPrimaryProperty, nullptr);
 }
 
 bool GattService::addCharacteristic(std::shared_ptr<GattCharacteristic> characteristic) {
@@ -101,6 +98,10 @@ bool GattService::validateCharacteristic(const std::shared_ptr<GattCharacteristi
     }
 
     return true;
+}
+
+std::string GattService::getUUIDString() const {
+    return getUUID().toString();
 }
 
 void GattService::onCharacteristicAdded(const std::shared_ptr<GattCharacteristic>& characteristic) {

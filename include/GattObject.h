@@ -4,11 +4,10 @@
 #include <map>
 #include "DBusObject.h"
 #include "GattUuid.h"
+#include "GattService.h"
 
 namespace ggk {
 
-// forward declarations만 사용
-class GattService;
 
 class GattObject {
 public:

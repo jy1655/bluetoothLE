@@ -6,72 +6,60 @@
 #include <string>
 #include "DBusObject.h"
 #include "DBusInterface.h"
+#include "GattUuid.h"
 
 namespace ggk {
 
 class GattService;
 
 class GattApplication : public DBusInterface {
-public:
-    static const char* INTERFACE_NAME;          // "org.freedesktop.DBus.ObjectManager"
-    static const char* BLUEZ_GATT_MANAGER_IFACE;// "org.bluez.GattManager1"
-    static const char* BLUEZ_SERVICE_NAME;      // "org.bluez"
-    static const char* BLUEZ_OBJECT_PATH;       // "/org/bluez/hci0"
-
-    GattApplication();
-    virtual ~GattApplication();
-
-    // GATT 서비스 관리
-    bool addService(std::shared_ptr<GattService> service);
-    std::shared_ptr<GattService> getService(const std::string& uuid);
-    void removeService(const std::string& uuid);
-
-    // GattManager1에 등록
-    bool registerApplication(GDBusConnection* connection, const char* path);
-    void unregisterApplication();
-
-    // D-Bus 객체 접근
-    DBusObject& getRootObject() { return rootObject; }
-    const DBusObject& getRootObject() const { return rootObject; }
-
-    // DBusInterface 메서드 구현
-    virtual const std::string& getName() const override { 
-        static const std::string name = INTERFACE_NAME;
-        return name; 
-    }
-    virtual GVariant* getObjectsManaged() override;
-
-protected:
-    // 이벤트 핸들러
-    virtual void onApplicationRegistered();
-    virtual void onApplicationUnregistered();
-    virtual void onServiceAdded(const std::shared_ptr<GattService>& service);
-    virtual void onServiceRemoved(const std::shared_ptr<GattService>& service);
-
-private:
-    // D-Bus 연결 관리
-    GDBusConnection* dbusConnection;
-    std::string applicationPath;
+    public:
+        static const char* INTERFACE_NAME;
+        static const char* BLUEZ_GATT_MANAGER_IFACE;
+        static const char* BLUEZ_SERVICE_NAME;
+        static const char* BLUEZ_OBJECT_PATH;
     
-    // 객체 트리 관리
-    DBusObject rootObject;
-    std::map<std::string, std::shared_ptr<GattService>> services;
-
-    // GattManager1 인터페이스와의 통신
-    static void onRegisterApplicationReply(GObject* source,
-                                         GAsyncResult* res,
-                                         gpointer user_data);
+        GattApplication();
+        virtual ~GattApplication();
     
-    static void onUnregisterApplicationReply(GObject* source,
-                                           GAsyncResult* res,
-                                           gpointer user_data);
+        // DBusInterface 구현
+        virtual const std::string& getName() const override { return name; }
+        virtual DBusObjectPath getPath() const override { return objectPath; }
+        virtual GVariant* getObjectsManaged() override;
+    
+        // GATT 서비스 관리
+        bool addService(std::shared_ptr<GattService> service);
+        std::shared_ptr<GattService> getService(const GattUuid& uuid);  // string -> GattUuid
+        void removeService(const GattUuid& uuid);  // string -> GattUuid
+    
+        // GattManager1에 등록
+        bool registerApplication(GDBusConnection* connection);  // path 파라미터 제거
+    
+        void unregisterApplication();
 
-    // 내부 유틸리티 메서드
-    void buildManagedObjects(GVariantBuilder* builder);
-
-    bool isRegistered() const;
-    void cleanup();
-    DBusObjectPath getPath() const { return rootObject.getPath(); }
-};
-
-} // namespace ggk
+        // 상태 확인
+        bool isRegistered() const { return dbusConnection != nullptr; }
+        GVariant* getManagedObjects();
+    
+    protected:
+        virtual void onApplicationRegistered();
+        virtual void onApplicationUnregistered();
+        virtual void onServiceAdded(const std::shared_ptr<GattService>& service);
+        virtual void onServiceRemoved(const std::shared_ptr<GattService>& service);
+    
+    private:
+        DBusObjectPath objectPath;  // 추가
+        GDBusConnection* dbusConnection;
+        std::map<std::string, std::shared_ptr<GattService>> services;
+    
+        static void onRegisterApplicationReply(GObject* source,
+                                             GAsyncResult* res,
+                                             gpointer user_data);
+        
+        static void onUnregisterApplicationReply(GObject* source,
+                                               GAsyncResult* res,
+                                               gpointer user_data);
+    
+        void buildManagedObjects(GVariantBuilder* builder);
+    };
+}

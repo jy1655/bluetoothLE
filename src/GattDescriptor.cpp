@@ -1,3 +1,4 @@
+#include <map>
 #include "GattDescriptor.h"
 #include "Logger.h"
 
@@ -29,6 +30,7 @@ const std::map<GattDescriptor::Type, GattDescriptor::Requirement> GattDescriptor
 GattDescriptor::GattDescriptor(Type type, const DBusObjectPath& path)
    : DBusInterface(INTERFACE_NAME)
    , objectPath(path)
+   , uuid(TYPE_TO_UUID.at(type))
    , type(type) {
    
    auto it = TYPE_TO_UUID.find(type);
@@ -67,11 +69,10 @@ bool GattDescriptor::isConditionallyRequired(bool hasNotify, bool hasIndicate) c
 
 void GattDescriptor::setupProperties() {
    // UUID property
-   addProperty("UUID", "s", true, false,
-       [this]() -> GVariant* {
-           return g_variant_new_string(uuid.toString128().c_str());
-       },
-       nullptr);
+   addDBusProperty("UUID", "s", true, false,
+    std::function<GVariant*(void*)>([this](void*) -> GVariant* {
+        return g_variant_new_string(uuid.toString128().c_str());
+    }));
 }
 
 void GattDescriptor::setupMethods() {
@@ -218,6 +219,33 @@ bool GattDescriptor::isIndicationEnabled() const {
    }
    const auto& cccd = value.value();
    return cccd.size() >= 2 && (cccd[0] & 0x02);
+}
+
+void GattDescriptor::addDBusProperty(const char* name,
+    const char* type,
+    bool readable,
+    bool writable,
+    std::function<GVariant*(void*)> getter,
+    std::function<void(GVariant*, void*)> setter) {
+    // 정적 함수로 변환
+    GVariant* (*getterPtr)() = nullptr;
+    void (*setterPtr)(GVariant*) = nullptr;
+
+    if (getter) {
+        static std::function<GVariant*(void*)> staticGetter = getter;
+        getterPtr = []() -> GVariant* {
+            return staticGetter(nullptr);
+    };
+    }
+
+    if (setter) {
+        static std::function<void(GVariant*, void*)> staticSetter = setter;
+        setterPtr = [](GVariant* value) {
+            staticSetter(value, nullptr);
+        };
+    }
+
+    addProperty(name, type, readable, writable, getterPtr, setterPtr);
 }
 
 } // namespace ggk

@@ -5,6 +5,7 @@
 #include <list>
 #include <string>
 #include "DBusObject.h"
+#include "GattProperty.h"
 #include "GattApplication.h"
 #include "Logger.h"
 

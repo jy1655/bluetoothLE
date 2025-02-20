@@ -66,13 +66,13 @@ public:
     virtual std::string generateIntrospectionXML(int depth = 0) const;
 
 protected:
+    std::string name;
     // XML 생성 헬퍼 함수
     std::string generateMethodXML(const DBusMethod& method, int depth) const;
     std::string generateSignalXML(const Signal& signal, int depth) const;
     std::string generatePropertyXML(const Property& property, int depth) const;
 
 private:
-    std::string name;
     std::list<std::shared_ptr<DBusMethod>> methods;
     std::list<Signal> signals;
     std::list<Property> properties;

@@ -1,4 +1,7 @@
 #include "GattApplication.h"
+#include "GattService.h"
+#include "GattCharacteristic.h"
+#include "GattDescriptor.h"
 #include "Logger.h"
 
 namespace ggk {
@@ -288,5 +291,14 @@ void GattApplication::onApplicationRegistered() {}
 void GattApplication::onApplicationUnregistered() {}
 void GattApplication::onServiceAdded(const std::shared_ptr<GattService>&) {}
 void GattApplication::onServiceRemoved(const std::shared_ptr<GattService>&) {}
+
+GVariant* GattApplication::getObjectsManaged() {
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{oa{sa{sv}}}"));
+    
+    buildManagedObjects(&builder);
+    
+    return g_variant_builder_end(&builder);
+}
 
 } // namespace ggk

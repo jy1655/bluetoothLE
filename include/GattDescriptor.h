@@ -81,6 +81,21 @@ public:
     bool isRegistered() const { return registered; }
     void setRegistered(bool reg) { registered = reg; }
 
+    // 표준 UUID 매핑
+    static const std::map<Type, GattUuid> TYPE_TO_UUID;
+    static const std::map<Type, Requirement> TYPE_TO_REQUIREMENT;
+
+    static const std::map<Type, GattUuid>& getTypeToUuidMap() {
+        return TYPE_TO_UUID;
+    }
+
+    void addDBusProperty(const char* name,
+        const char* type,
+        bool readable,
+        bool writable,
+        std::function<GVariant*(void*)> getter = nullptr,
+        std::function<void(GVariant*, void*)> setter = nullptr);
+
 private:
     GattUuid uuid;
     DBusObjectPath objectPath;
@@ -92,10 +107,6 @@ private:
     ValueChangedCallback onValueChangedCallback;
     CCCDCallback onCCCDCallback;
 
-    // 표준 UUID 매핑
-    static const std::map<Type, GattUuid> TYPE_TO_UUID;
-    static const std::map<Type, Requirement> TYPE_TO_REQUIREMENT;
-    
     void setupProperties();
     void setupMethods();
     bool validateValue(const std::vector<uint8_t>& newValue) const;

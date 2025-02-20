@@ -17,25 +17,22 @@ GattCharacteristic::GattCharacteristic(const GattUuid& uuid, const DBusObjectPat
 
 void GattCharacteristic::setupProperties() {
     // UUID property
-    addProperty("UUID", "s", true, false,
-        [this]() -> GVariant* {
+    addDBusProperty("UUID", "s", true, false,
+        std::function<GVariant*(void*)>([this](void*) -> GVariant* {
             return g_variant_new_string(uuid.toString128().c_str());
-        },
-        nullptr);
+        }));
 
-    // Flags property (read-only)
-    addProperty("Flags", "as", true, false,
-        [this]() -> GVariant* {
+    // Flags property
+    addDBusProperty("Flags", "as", true, false,
+        std::function<GVariant*(void*)>([this](void*) -> GVariant* {
             return g_variant_new_string(getPropertyFlags().c_str());
-        },
-        nullptr);
+        }));
 
-    // Notifying property (read-only)
-    addProperty("Notifying", "b", true, false,
-        [this]() -> GVariant* {
+    // Notifying property
+    addDBusProperty("Notifying", "b", true, false,
+        std::function<GVariant*(void*)>([this](void*) -> GVariant* {
             return g_variant_new_boolean(notifying);
-        },
-        nullptr);
+        }));
 }
 
 void GattCharacteristic::setupMethods() {
@@ -321,6 +318,33 @@ void GattCharacteristic::onValueChanged(const std::vector<uint8_t>& newValue) {
 
 void GattCharacteristic::onNotifyingChanged(bool isNotifying) {
     // 기본 구현은 비어있음 - 하위 클래스에서 필요에 따라 구현
+}
+
+void GattCharacteristic::addDBusProperty(const char* name,
+    const char* type,
+    bool readable,
+    bool writable,
+    std::function<GVariant*(void*)> getter,
+    std::function<void(GVariant*, void*)> setter) {
+    GVariant* (*getterPtr)() = nullptr;
+    void (*setterPtr)(GVariant*) = nullptr;
+
+    if (getter) {
+        static std::function<GVariant*(void*)> staticGetter = getter;
+        getterPtr = []() -> GVariant* {
+            return staticGetter(nullptr);
+        };
+    }
+
+    if (setter) {
+        static std::function<void(GVariant*, void*)> staticSetter = setter;
+        setterPtr = [](GVariant* value) {
+            staticSetter(value, nullptr);
+        };
+    }
+
+    // DBusInterface::addProperty를 직접 호출
+    DBusInterface::addProperty(name, type, readable, writable, getterPtr, setterPtr);
 }
 
 } // namespace ggk

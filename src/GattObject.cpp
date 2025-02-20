@@ -25,7 +25,7 @@ bool GattObject::registerService(const DBusObjectPath& path, std::shared_ptr<Gat
         return false;
     }
 
-    const std::string uuid = service->getUUID().toString();
+    const std::string uuid = service->getUUIDString();
     if (services.find(uuid) != services.end()) {
         Logger::error("Service with UUID " + uuid + " already exists");
         return false;
