@@ -1,10 +1,13 @@
+// DBusInterface.h
 #pragma once
 
 #include <gio/gio.h>
 #include <string>
-#include <list>
+#include <map>
 #include <memory>
 #include <vector>
+#include <functional>
+#include "DBusTypes.h"
 #include "DBusMethod.h"
 #include "DBusObjectPath.h"
 
@@ -12,70 +15,69 @@ namespace ggk {
 
 class DBusInterface {
 public:
-    // 시그널 정의를 위한 구조체
-    struct Signal {
-        std::string name;
-        std::vector<std::string> arguments;
-    };
-
-    // 프로퍼티 정의를 위한 구조체
-    struct Property {
-        std::string name;
-        std::string type;
-        bool readable;
-        bool writable;
-        GVariant* (*getter)(void);
-        void (*setter)(GVariant*);
-    };
-
     explicit DBusInterface(const std::string& name);
     virtual ~DBusInterface() = default;
 
-    // 인터페이스 이름 관리
+    // 기본 접근자
     virtual const std::string& getName() const { return name; }
-    void setName(const std::string& newName) { name = newName; }
-    virtual GVariant* getObjectsManaged() { return nullptr; }
-
-    // D-Bus 객체 경로 관리
-    virtual DBusObjectPath getPath() const = 0;  // 순수 가상 함수로 선언
+    virtual DBusObjectPath getPath() const = 0;
 
     // 메서드 관리
-    void addMethod(const std::shared_ptr<DBusMethod>& method);
-    bool callMethod(const std::string& methodName,
-                   GDBusConnection* pConnection,
-                   GVariant* pParameters,
-                   GDBusMethodInvocation* pInvocation,
-                   gpointer pUserData) const;
-
+    void addMethod(std::shared_ptr<DBusMethod> method);
+    void removeMethod(const std::string& methodName);
+    std::shared_ptr<DBusMethod> findMethod(const std::string& methodName) const;
+    bool invokeMethod(const DBusMethodCall& call) const;
+    
     // 시그널 관리
-    void addSignal(const std::string& name, const std::vector<std::string>& arguments);
-    void emitSignal(GDBusConnection* pConnection,
-                   const DBusObjectPath& path,
-                   const std::string& signalName,
-                   GVariant* pParameters) const;
-
+    void addSignal(const DBusSignal& signal);
+    void removeSignal(const std::string& signalName);
+    void emitSignal(const DBusSignalEmission& emission) const;
+    
     // 프로퍼티 관리
-    void addProperty(const std::string& name,
-                    const std::string& type,
-                    bool readable,
-                    bool writable,
-                    GVariant* (*getter)(void) = nullptr,
-                    void (*setter)(GVariant*) = nullptr);
-
-    // 인트로스펙션 지원
-    virtual std::string generateIntrospectionXML(int depth = 0) const;
+    void addProperty(const DBusProperty& property);
+    void removeProperty(const std::string& propertyName);
+    GVariant* getProperty(const std::string& propertyName) const;
+    bool setProperty(const std::string& propertyName, 
+                    GVariant* value,
+                    const std::string& sender);
+    
+    // 인트로스펙션
+    virtual std::string generateIntrospectionXML(
+        const DBusIntrospection& config) const;
 
 protected:
-    std::string name;
-    // XML 생성 헬퍼 함수
-    std::string generateMethodXML(const DBusMethod& method, int depth) const;
-    std::string generateSignalXML(const Signal& signal, int depth) const;
-    std::string generatePropertyXML(const Property& property, int depth) const;
+    // 이벤트 핸들러
+    virtual void onPropertyChanged(const std::string& propertyName,
+                                 GVariant* oldValue,
+                                 GVariant* newValue) const;
+    virtual void onMethodCalled(const DBusMethodCall& call) const;
+    virtual void onSignalEmitted(const DBusSignalEmission& emission) const;
+
+    // 유틸리티 메서드
+    void notifyPropertyChanged(const std::string& propertyName,
+                             GVariant* oldValue,
+                             GVariant* newValue) const;
+    bool validatePropertyAccess(const std::string& propertyName,
+                              const std::string& sender,
+                              bool isWrite) const;
 
 private:
-    std::list<std::shared_ptr<DBusMethod>> methods;
-    std::list<Signal> signals;
-    std::list<Property> properties;
+    std::string name;
+    std::map<std::string, std::shared_ptr<DBusMethod>> methods;
+    std::map<std::string, DBusSignal> signals;
+    std::map<std::string, DBusProperty> properties;
+
+    // XML 이스케이프 유틸리티
+    static std::string escapeXml(const std::string& str);
+    // XML 생성 헬퍼
+    std::string generateMethodsXML(const DBusIntrospection& config) const;
+    std::string generateSignalsXML(const DBusIntrospection& config) const;
+    std::string generatePropertiesXML(const DBusIntrospection& config) const;
+    
+
+    // 에러 처리
+    void handleError(const std::string& errorName,
+                    const std::string& errorMessage) const;
 };
 
 } // namespace ggk

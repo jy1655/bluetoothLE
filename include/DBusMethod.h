@@ -1,104 +1,192 @@
-#pragma once
-
-#include <gio/gio.h>
-#include <string>
-#include <vector>
-#include "DBusObjectPath.h"
-#include "Logger.h"
+// DBusMethod.cpp
+#include "DBusMethod.h"
+#include "DBusInterface.h"
 
 namespace ggk {
 
-struct DBusInterface;
+DBusMethod::DBusMethod(const DBusInterface* owner,
+                      const std::string& name,
+                      const std::vector<DBusArgument>& args,
+                      Callback callback)
+    : owner(owner)
+    , name(name)
+    , arguments(args)
+    , callback(callback) {
+    
+    if (!owner) {
+        throw std::invalid_argument("DBusMethod owner cannot be null");
+    }
+    if (name.empty()) {
+        throw std::invalid_argument("DBusMethod name cannot be empty");
+    }
+    if (!callback) {
+        throw std::invalid_argument("DBusMethod callback cannot be null");
+    }
+}
 
-class DBusMethod {
-public:
-    // 메서드 콜백 delegate
-    using Callback = void (*)(const DBusInterface& self,
-                            GDBusConnection* pConnection,
-                            const std::string& methodName,
-                            GVariant* pParameters,
-                            GDBusMethodInvocation* pInvocation,
-                            void* pUserData);
-
-    // 비동기 콜백 지원
-    using AsyncCallback = void (*)(GObject* source,
-                                 GAsyncResult* result,
-                                 gpointer user_data);
-
-    // 생성자
-    DBusMethod(const DBusInterface* pOwner,
-               const std::string& name,
-               const char* pInArgs[],
-               const char* pOutArgs,
-               Callback callback);
-
-    // 소멸자
-    ~DBusMethod() = default;
-
-    // 복사 생성자와 대입 연산자 비활성화
-    DBusMethod(const DBusMethod&) = delete;
-    DBusMethod& operator=(const DBusMethod&) = delete;
-
-    // 이동 생성자와 대입 연산자는 허용
-    DBusMethod(DBusMethod&&) = default;
-    DBusMethod& operator=(DBusMethod&&) = default;
-
-    // Accessors
-    const std::string& getName() const { return name; }
-    const std::vector<std::string>& getInArgs() const { return inArgs; }
-    const std::string& getOutArgs() const { return outArgs; }
-
-    // 메서드 호출
-    template<typename T>
-    void call(GDBusConnection* pConnection,
-              const DBusObjectPath& path,
-              const std::string& interfaceName,
-              const std::string& methodName,
-              GVariant* pParameters,
-              GDBusMethodInvocation* pInvocation,
-              void* pUserData) const {
-        if (!callback) {
-            Logger::error("DBusMethod contains no callback: [" + path.toString() + 
-                         "]:[" + interfaceName + "]:[" + methodName + "]");
-            g_dbus_method_invocation_return_dbus_error(
-                pInvocation,
-                "org.bluez.Error.NotImplemented",
-                "This method is not implemented");
-            return;
+std::vector<DBusArgument> DBusMethod::getInputArguments() const {
+    std::vector<DBusArgument> inputs;
+    for (const auto& arg : arguments) {
+        if (arg.direction == "in") {
+            inputs.push_back(arg);
         }
+    }
+    return inputs;
+}
 
-        Logger::debug("Calling method: [" + path.toString() + 
-                     "]:[" + interfaceName + "]:[" + methodName + "]");
-        
-        callback(*static_cast<const T*>(pOwner),
-                pConnection,
-                methodName,
-                pParameters,
-                pInvocation,
-                pUserData);
+std::vector<DBusArgument> DBusMethod::getOutputArguments() const {
+    std::vector<DBusArgument> outputs;
+    for (const auto& arg : arguments) {
+        if (arg.direction == "out") {
+            outputs.push_back(arg);
+        }
+    }
+    return outputs;
+}
+
+bool DBusMethod::validateArguments(GVariant* parameters) const {
+    if (!parameters) {
+        return getInputArguments().empty();
+    }
+    return checkArgumentTypes(parameters);
+}
+
+void DBusMethod::invoke(const DBusMethodCall& call) const {
+    logMethodInvocation(call);
+    
+    if (!validateArguments(call.parameters)) {
+        handleError(call.invocation, 
+                   "org.bluez.Error.InvalidArguments",
+                   "Invalid method arguments");
+        return;
     }
 
-    // 비동기 호출
-    void callAsync(GDBusConnection* pConnection,
-                  const DBusObjectPath& path,
-                  const std::string& interfaceName,
-                  GVariant* pParameters,
-                  AsyncCallback callback,
-                  gpointer user_data) const;
+    try {
+        callback(call);
+    } catch (const std::exception& e) {
+        handleError(call.invocation,
+                   "org.bluez.Error.Failed",
+                   std::string("Method execution failed: ") + e.what());
+    }
+}
 
-    // 인트로스펙션 XML 생성
-    std::string generateIntrospectionXML(int depth) const;
+void DBusMethod::invokeAsync(GDBusConnection* connection,
+                           const DBusObjectPath& path,
+                           const std::string& interfaceName,
+                           GVariant* parameters,
+                           AsyncCallback callback,
+                           gpointer userData,
+                           uint32_t timeoutMs) const {
+    if (!connection) {
+        Logger::error("Cannot make async call: null connection");
+        return;
+    }
 
-private:
-    const DBusInterface* pOwner;
-    std::string name;
-    std::vector<std::string> inArgs;
-    std::string outArgs;
-    Callback callback;
+    GError* error = nullptr;
+    g_dbus_connection_call(connection,
+                          "org.bluez",
+                          path.c_str(),
+                          interfaceName.c_str(),
+                          name.c_str(),
+                          parameters,
+                          nullptr,
+                          G_DBUS_CALL_FLAGS_NONE,
+                          timeoutMs,
+                          nullptr,
+                          reinterpret_cast<GAsyncReadyCallback>(callback),
+                          userData);
 
-    // 로깅 헬퍼
-    void logMethodCall(const std::string& methodName,
-                      GVariant* parameters) const;
-};
+    if (error) {
+        Logger::error("Async call failed: " + std::string(error->message));
+        g_error_free(error);
+    }
+}
+
+std::string DBusMethod::generateIntrospectionXML(const DBusIntrospection& config) const {
+    std::string xml;
+    xml += "<method name=\"" + name + "\">\n";
+    
+    // 입력 인자
+    xml += formatArgumentsForXML(getInputArguments(), 1);
+    
+    // 출력 인자
+    xml += formatArgumentsForXML(getOutputArguments(), 1);
+    
+    // 애노테이션 추가
+    if (config.includeStandardInterfaces) {
+        for (const auto& annotation : config.annotations) {
+            xml += "  <annotation name=\"" + annotation.first + 
+                   "\" value=\"" + annotation.second + "\"/>\n";
+        }
+    }
+    
+    xml += "</method>\n";
+    return xml;
+}
+
+bool DBusMethod::checkArgumentTypes(GVariant* parameters) const {
+    auto inputs = getInputArguments();
+    if (inputs.empty()) {
+        return true;
+    }
+
+    const GVariantType* paramType = g_variant_get_type(parameters);
+    bool isValid = true;
+
+    // Type checking logic here
+    // This would need to match the DBus type system rules
+
+    return isValid;
+}
+
+void DBusMethod::logMethodInvocation(const DBusMethodCall& call) const {
+    std::string paramStr;
+    if (call.parameters) {
+        gchar* params = g_variant_print(call.parameters, TRUE);
+        if (params) {
+            paramStr = params;
+            g_free(params);
+        }
+    }
+
+    Logger::debug("Method invocation: " + name +
+                 " [Sender: " + call.sender +
+                 "] [Interface: " + call.interface + "]" +
+                 (paramStr.empty() ? "" : " Parameters: " + paramStr));
+}
+
+std::string DBusMethod::formatArgumentsForXML(const std::vector<DBusArgument>& args,
+                                            int indentLevel) const {
+    std::string indent(indentLevel * 2, ' ');
+    std::string xml;
+    
+    for (const auto& arg : args) {
+        xml += indent + "<arg";
+        if (!arg.name.empty()) {
+            xml += " name=\"" + arg.name + "\"";
+        }
+        xml += " type=\"" + arg.signature + "\"";
+        xml += " direction=\"" + arg.direction + "\"";
+        if (!arg.description.empty()) {
+            xml += ">\n";
+            xml += indent + "  <annotation name=\"org.freedesktop.DBus.Description\"";
+            xml += " value=\"" + arg.description + "\"/>\n";
+            xml += indent + "</arg>\n";
+        } else {
+            xml += "/>\n";
+        }
+    }
+    
+    return xml;
+}
+
+void DBusMethod::handleError(GDBusMethodInvocation* invocation,
+                           const std::string& errorName,
+                           const std::string& errorMessage) const {
+    Logger::error(errorMessage);
+    g_dbus_method_invocation_return_dbus_error(invocation,
+                                              errorName.c_str(),
+                                              errorMessage.c_str());
+}
 
 } // namespace ggk
