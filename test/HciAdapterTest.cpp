@@ -3,6 +3,37 @@
 
 using namespace ggk;
 
+class HciAdapterTest : public ::testing::Test {
+protected:
+    HciAdapter adapter;
+
+    // BLE 초기 상태 저장
+    bool initialPowered;
+    bool initialLEEnabled;
+    bool initialAdvertisingEnabled;
+    std::string initialAdapterName;
+    
+    void SetUp() override {
+        ASSERT_TRUE(adapter.initialize()) << "HciAdapter 초기화 실패!";
+    
+        // ✅ BLE 현재 상태 저장
+        initialPowered = adapter.setPowered(true);  // 전원 상태 저장
+        initialLEEnabled = adapter.setLEEnabled(true);  // LE 모드 상태 저장
+        initialAdvertisingEnabled = adapter.setAdvertisingEnabled(false);  // 광고 상태 저장
+        initialAdapterName = "JetsonBLE";  // 원래 이름 (필요시 hciconfig로 읽을 수도 있음)
+    }
+    
+    void TearDown() override {
+        // ✅ 테스트 후 BLE 상태 원래대로 복구
+        adapter.setPowered(initialPowered);
+        adapter.setLEEnabled(initialLEEnabled);
+        adapter.setAdvertisingEnabled(initialAdvertisingEnabled);
+        adapter.setAdapterName(initialAdapterName);
+    
+        sleep(1);  // 변경 사항이 반영될 시간을 확보
+    }
+};
+
 // ✅ 1. `initialize()` 테스트 (BLE 인터페이스 초기화)
 TEST(HciAdapterTest, InitializeTest) {
     HciAdapter adapter;

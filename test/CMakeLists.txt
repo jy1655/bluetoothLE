@@ -32,29 +32,36 @@ include_directories(${PROJECT_INCLUDE_DIR})  # include 폴더 추가
 # 특정 헤더 파일만 추가
 set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/DBusObjectPath.h
+    ${PROJECT_INCLUDE_DIR}/Utils.h
+    ${PROJECT_INCLUDE_DIR}/Logger.h
+    # HCI
     ${PROJECT_INCLUDE_DIR}/HciAdapter.h
     ${PROJECT_INCLUDE_DIR}/HciSocket.h
-    #${PROJECT_INCLUDE_DIR}/GattApplication.h
-    #${PROJECT_INCLUDE_DIR}/GattService.h
-    #${PROJECT_INCLUDE_DIR}/GattCharacteristic.h
-    #${PROJECT_INCLUDE_DIR}/GattDescriptor.h
-    #${PROJECT_INCLUDE_DIR}/GattObject.h
     ${PROJECT_INCLUDE_DIR}/Mgmt.h
-    ${PROJECT_INCLUDE_DIR}/Utils.h
+    # DBus
+    #${PROJECT_INCLUDE_DIR}/GattService.h
+    ${PROJECT_INCLUDE_DIR}/DBusTypes.h
+    ${PROJECT_INCLUDE_DIR}/DBusXml.h
+    
+    # GATT
+    
+    
 )
 
 # 테스트할 대상 소스 파일 추가
 set(TEST_SOURCES
-    #${PROJECT_SRC_DIR}/DBusObject.cpp
-    #${PROJECT_SRC_DIR}/DBusInterface.cpp
-    #${PROJECT_SRC_DIR}/GattApplication.cpp
+    ${PROJECT_SRC_DIR}/Utils.cpp    
+    ${PROJECT_SRC_DIR}/Logger.cpp
+    # HCI
     ${PROJECT_SRC_DIR}/HciAdapter.cpp
     ${PROJECT_SRC_DIR}/HciSocket.cpp
-    ${PROJECT_SRC_DIR}/Logger.cpp
-    #${PROJECT_SRC_DIR}/GattDescriptor.cpp
-    #${PROJECT_SRC_DIR}/GattObject.cpp
     ${PROJECT_SRC_DIR}/Mgmt.cpp
-    ${PROJECT_SRC_DIR}/Utils.cpp
+    # DBus
+    ${PROJECT_SRC_DIR}/DBusXml.cpp
+
+    # GATT
+    
+    
 )
 
 include_directories(${GIO_INCLUDE_DIRS})
@@ -64,14 +71,17 @@ add_executable(run_tests
     ${TEST_SOURCES}
     ${TEST_HEADERS}
     main.cpp
-    # HCI Test
+    #-- Util Test -- (약 1ms 소요)
     DBusObjectPathTest.cpp
-    HciAdapterTest.cpp
-    HciSocketTest.cpp
-    MgmtTest.cpp
     UtilsTest.cpp
-    # DBus Test
-
+    LoggerTest.cpp
+    #-- HCI Test -- (약 30000ms 소요)
+    HciSocketTest.cpp
+    HciAdapterTest.cpp
+    MgmtTest.cpp
+    #-- DBus Test --
+    #DBusXmlTest.cpp
+    
     # GATT Test
 
     # Server Test

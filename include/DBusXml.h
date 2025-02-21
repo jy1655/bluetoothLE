@@ -7,6 +7,7 @@
 
 namespace ggk {
 
+
 class DBusXml {
 public:
     // D-Bus 인터페이스 XML 생성 관련 메서드
@@ -46,6 +47,7 @@ private:
     static std::string escape(const std::string& str);
     static std::string indent(int level);
     static constexpr int INDENT_SIZE = 2;
+
 };
 
 } // namespace ggk
