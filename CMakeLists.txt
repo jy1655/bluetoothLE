@@ -60,15 +60,3 @@ target_link_libraries(ble_peripheral
         bluetooth
         pthread
 )
-
-# Installation
-install(TARGETS ble_peripheral
-    RUNTIME DESTINATION bin
-)
-
-# Testing (optional)
-option(BUILD_TESTING "Build the testing tree." OFF)
-if(BUILD_TESTING)
-    enable_testing()
-    add_subdirectory(tests)
-endif()

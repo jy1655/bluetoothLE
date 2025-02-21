@@ -1,47 +1,5 @@
-```
-ble_peripheral/
-├── CMakeLists.txt
-├── include/
-│   ├── DBusInterface.h
-│   ├── DBusMethod.h
-│   ├── DBusObject.h
-│   ├── DBusObjectPath.h
-│   ├── GattApplication.h
-│   ├── GattCharacteristic.h
-│   ├── GattDescriptor.h
-│   ├── GattObject.h
-│   ├── GattProperty.h
-│   ├── GattService.h
-│   ├── GattUuid.h
-│   ├── HciAdapter.h
-│   ├── HciSocket.h
-│   ├── Logger.h
-│   ├── Mgmt.h
-│   ├── Server.h
-│   ├── Utils.h
-├── src/
-│   ├── DBusInterface.cpp
-│   ├── DBusMethod.cpp
-│   ├── DBusObject.cpp
-│   ├── DBusObjectPath.cpp
-│   ├── GattApplication.cpp
-│   ├── GattCharacteristic.cpp
-│   ├── GattDescriptor.cpp
-│   ├── GattObject.cpp
-│   ├── GattProperty.cpp
-│   ├── GattService.cpp
-│   ├── HciAdapter.cpp
-│   ├── HciSocket.cpp
-│   ├── Logger.cpp
-│   ├── main.cpp
-│   ├── Mgmt.cpp
-│   ├── Server.cpp
-│   ├── Utils.cpp
-│   └── main.cpp
-├── .gitignore
-├── CMakeLists.txt
-└── README.md
-```
+# BluetoothLE
+
 <br>
 
 ```bash
@@ -99,3 +57,42 @@ Opcode는 16비트로 구성:
 `0x03 = 00000011` (OCF = 3) <br>
 OGF 3은 Controller & Baseband commands를 의미<br>
 OCF 3은 Reset 명령을 의미<br>
+
+
+
+
+
+# TEST
+
+### 1. GTest 설치 (Ubuntu/Linux)
+
+ > GTest는 libgtest-dev 패키지를 설치한 후, 수동으로 빌드
+
+
+- libgtest-dev 패키지 설치
+```sh
+sudo apt-get update
+sudo apt-get install libgtest-dev
+```
+- GTest 수동 빌드 (CMake 기본 제공 라이브러리 없음)
+```sh
+cd /usr/src/gtest
+sudo cmake CMakeLists.txt
+sudo make
+sudo cp lib/*.a /usr/lib
+```
+
+
+
+
+### 0. 테스트 빌드 및 실행
+
+test/CMakeLists.txt (테스트 전용)
+
+```sh
+mkdir test_build && cd test_build
+cmake ../test
+make
+sudo ./run_tests  # 테스트 실행
+```
+
