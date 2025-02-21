@@ -44,8 +44,26 @@ ble_peripheral/
 ```
 <br>
 
-`sudo ./ble_peripheral`
+```bash
+mkdir build
+cd build
+cmake ..
+make
+```
 
+```bash
+sudo ./ble_peripheral
+```
+
+
+#### For Debug
+```bash
+sudo GLIB_DEBUG=all ./ble_peripheral
+```
+other terminal
+```bash
+journalctl -f | grep bluetooth
+```
 
 
 Tested on Ubuntu 22.04 on Jetson Orin Nano (JetPack6.2)<br>
@@ -77,48 +95,7 @@ Opcode는 16비트로 구성:
 
 예를 들어 CMD_SET_POWERED (0x0C03)를 분석해보면:
 
-`0x0C = 00001100` (OGF = 3)
-`0x03 = 00000011` (OCF = 3)
-OGF 3은 Controller & Baseband commands를 의미
-OCF 3은 Reset 명령을 의미
-
-
-
-
-
-
-
-
-
-
-NRFCONNECT를 사용해서 테스트하는 것이 가장 일반적이고 편리한 방법이 맞습니다. 하지만 개발 과정에서 유용할 수 있는 몇 가지 추가적인 테스트/디버깅 방법이 있습니다:
-
-1. D-Bus 인터페이스 검사:
-```bash
-# BlueZ의 D-Bus 인터페이스 상태 확인
-$ busctl introspect org.bluez /org/bluez
-
-# 우리가 등록한 GATT 서비스 확인
-$ busctl introspect com.myperipheral /service0
-```
-
-2. bluetoothctl 사용:
-```bash
-$ bluetoothctl
-[bluetooth]# show
-[bluetooth]# scan on
-[bluetooth]# list
-```
-
-3. btmon을 사용한 블루투스 패킷 모니터링:
-```bash
-$ btmon
-```
-
-하지만 실제 기능 테스트는 NRFCONNECT가 가장 실용적입니다:
-1. 서비스/특성/디스크립터 구조 확인
-2. 실시간 읽기/쓰기 테스트
-3. 알림 구독 테스트
-4. MTU 크기 협상 확인
-
-이러한 도구들은 문제가 발생했을 때 어느 계층에서 문제가 있는지 파악하는데 도움이 될 수 있습니다.
+`0x0C = 00001100` (OGF = 3) <br>
+`0x03 = 00000011` (OCF = 3) <br>
+OGF 3은 Controller & Baseband commands를 의미<br>
+OCF 3은 Reset 명령을 의미<br>

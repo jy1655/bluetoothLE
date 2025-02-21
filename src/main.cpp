@@ -149,6 +149,9 @@ private:
 };
 
 int main() {
+    Logger::setLogLevel(Logger::Level::DEBUG);  // 또는 TRACE
+    Logger::info("Starting BLE Peripheral application...");
+
    try {
        // GLib 메인 루프 초기화
        GMainLoop* loop = g_main_loop_new(nullptr, FALSE);
