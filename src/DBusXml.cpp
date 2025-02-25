@@ -1,149 +1,168 @@
 // DBusXml.cpp
 #include "DBusXml.h"
+#include "Logger.h"
+#include <sstream>
 
 namespace ggk {
 
-std::string DBusXml::createInterface(const std::string& name,
-                                  const std::string& content,
-                                  int indentLevel) {
-   std::string xml = indent(indentLevel) + "<interface name=\"" + escape(name) + "\">\n";
-   xml += content;
-   xml += indent(indentLevel) + "</interface>\n";
-   return xml;
+std::string DBusXml::createInterface(
+    const std::string& name,
+    const std::vector<DBusProperty>& properties,
+    const std::vector<DBusMethodCall>& methods,
+    const std::vector<DBusSignal>& signals,
+    int indentLevel)
+{
+    try {
+        std::ostringstream xml;
+        
+        xml << indent(indentLevel) << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+        xml << indent(indentLevel) << "<node>\n";
+        
+        xml << indent(indentLevel + 1) << "<interface name='" << escape(name) << "'>\n";
+    
+        // Properties
+        for (const auto& prop : properties) {
+            xml << createProperty(prop, indentLevel + 2);
+        }
+    
+        // Methods
+        for (const auto& method : methods) {
+            xml << createMethod(method.method, {}, {}, indentLevel + 2);
+        }
+    
+        // Signals
+        for (const auto& signal : signals) {
+            xml << createSignal(signal, indentLevel + 2);
+        }
+    
+        xml << indent(indentLevel + 1) << "</interface>\n";
+        xml << indent(indentLevel) << "</node>";
+    
+        return xml.str();
+    }
+    catch (const std::exception& e) {
+        Logger::error(SSTR << "Failed to create interface XML: " << e.what());
+        return "";
+    }
 }
 
-std::string DBusXml::createMethod(const std::string& name,
-                               const std::map<std::string, std::string>& args,
-                               const std::string& description,
-                               int indentLevel) {
-   std::string xml = indent(indentLevel) + "<method name=\"" + escape(name) + "\">\n";
-   
-   // 인자 추가
-   for (const auto& [argName, argType] : args) {
-       xml += createArgument(argType, "in", argName, "", indentLevel + 1);
-   }
-   
-   // 설명 추가
-   if (!description.empty()) {
-       xml += createAnnotation("org.freedesktop.DBus.Description",
-                             description,
-                             indentLevel + 1);
-   }
-   
-   xml += indent(indentLevel) + "</method>\n";
-   return xml;
+std::string DBusXml::createProperty(
+    const DBusProperty& property,
+    int indentLevel)
+{
+    try {
+        std::ostringstream xml;
+        xml << indent(indentLevel) << "<property name='" << escape(property.name)
+            << "' type='" << escape(property.signature)
+            << "' access='";
+
+        if (property.readable && property.writable) {
+            xml << "readwrite";
+        } else if (property.readable) {
+            xml << "read";
+        } else if (property.writable) {
+            xml << "write";
+        }
+        xml << "'";
+
+        if (property.emitsChangedSignal) {
+            xml << ">\n";
+            xml << indent(indentLevel + 1) 
+                << "<annotation name='org.freedesktop.DBus.Property.EmitsChangedSignal' value='true'/>\n";
+            xml << indent(indentLevel) << "</property>\n";
+        } else {
+            xml << "/>\n";
+        }
+
+        return xml.str();
+    }
+    catch (const std::exception& e) {
+        Logger::error(SSTR << "Failed to create property XML: " << e.what());
+        return "";
+    }
 }
 
-std::string DBusXml::createSignal(const std::string& name,
-                               const std::map<std::string, std::string>& args,
-                               const std::string& description,
-                               int indentLevel) {
-   std::string xml = indent(indentLevel) + "<signal name=\"" + escape(name) + "\">\n";
-   
-   // 인자 추가
-   for (const auto& [argName, argType] : args) {
-       xml += createArgument(argType, "", argName, "", indentLevel + 1);
-   }
-   
-   // 설명 추가
-   if (!description.empty()) {
-       xml += createAnnotation("org.freedesktop.DBus.Description",
-                             description,
-                             indentLevel + 1);
-   }
-   
-   xml += indent(indentLevel) + "</signal>\n";
-   return xml;
+std::string DBusXml::createMethod(
+    const std::string& name,
+    const std::vector<DBusArgument>& inArgs,
+    const std::vector<DBusArgument>& outArgs,
+    int indentLevel)
+{
+    try {
+        std::ostringstream xml;
+        xml << indent(indentLevel) << "<method name='" << escape(name) << "'>\n";
+
+        // Input arguments
+        for (const auto& arg : inArgs) {
+            xml << indent(indentLevel + 1)
+                << "<arg name='" << escape(arg.name)
+                << "' type='" << escape(arg.signature)
+                << "' direction='in'/>\n";
+        }
+
+        // Output arguments
+        for (const auto& arg : outArgs) {
+            xml << indent(indentLevel + 1)
+                << "<arg name='" << escape(arg.name)
+                << "' type='" << escape(arg.signature)
+                << "' direction='out'/>\n";
+        }
+
+        xml << indent(indentLevel) << "</method>\n";
+        return xml.str();
+    }
+    catch (const std::exception& e) {
+        Logger::error(SSTR << "Failed to create method XML: " << e.what());
+        return "";
+    }
 }
 
-std::string DBusXml::createProperty(const std::string& name,
-                                 const std::string& type,
-                                 const std::string& access,
-                                 bool emitsChanged,
-                                 const std::string& description,
-                                 int indentLevel) {
-   std::string xml = indent(indentLevel) + "<property name=\"" + escape(name) +
-                    "\" type=\"" + escape(type) +
-                    "\" access=\"" + escape(access) + "\"";
-   
-   if (!description.empty() || emitsChanged) {
-       xml += ">\n";
-       
-       if (!description.empty()) {
-           xml += createAnnotation("org.freedesktop.DBus.Description",
-                                 description,
-                                 indentLevel + 1);
-       }
-       
-       if (emitsChanged) {
-           xml += createAnnotation("org.freedesktop.DBus.Property.EmitsChangedSignal",
-                                 "true",
-                                 indentLevel + 1);
-       }
-       
-       xml += indent(indentLevel) + "</property>\n";
-   } else {
-       xml += "/>\n";
-   }
-   
-   return xml;
+std::string DBusXml::createSignal(
+    const DBusSignal& signal,
+    int indentLevel)
+{
+    try {
+        std::ostringstream xml;
+        xml << indent(indentLevel) << "<signal name='" << escape(signal.name) << "'>\n";
+
+        for (const auto& arg : signal.arguments) {
+            xml << indent(indentLevel + 1)
+                << "<arg name='" << escape(arg.name)
+                << "' type='" << escape(arg.signature)
+                << "'/>\n";
+        }
+
+        xml << indent(indentLevel) << "</signal>\n";
+        return xml.str();
+    }
+    catch (const std::exception& e) {
+        Logger::error(SSTR << "Failed to create signal XML: " << e.what());
+        return "";
+    }
 }
 
-std::string DBusXml::createArgument(const std::string& type,
-                                 const std::string& direction,
-                                 const std::string& name,
-                                 const std::string& description,
-                                 int indentLevel) {
-   std::string xml = indent(indentLevel) + "<arg type=\"" + escape(type) + "\"";
-   
-   if (!name.empty()) {
-       xml += " name=\"" + escape(name) + "\"";
-   }
-   
-   if (!direction.empty()) {
-       xml += " direction=\"" + escape(direction) + "\"";
-   }
-   
-   if (!description.empty()) {
-       xml += ">\n";
-       xml += createAnnotation("org.freedesktop.DBus.Description",
-                             description,
-                             indentLevel + 1);
-       xml += indent(indentLevel) + "</arg>\n";
-   } else {
-       xml += "/>\n";
-   }
-   
-   return xml;
+std::string DBusXml::escape(const std::string& str)
+{
+    std::string result;
+    result.reserve(str.length());
+    
+    for (char c : str) {
+        switch (c) {
+            case '&':  result += "&amp;"; break;
+            case '\'': result += "&apos;"; break;
+            case '"':  result += "&quot;"; break;
+            case '<':  result += "&lt;"; break;
+            case '>':  result += "&gt;"; break;
+            default:   result += c; break;
+        }
+    }
+    
+    return result;
 }
 
-std::string DBusXml::createAnnotation(const std::string& name,
-                                   const std::string& value,
-                                   int indentLevel) {
-   return indent(indentLevel) + "<annotation name=\"" + escape(name) +
-          "\" value=\"" + escape(value) + "\"/>\n";
-}
-
-std::string DBusXml::escape(const std::string& str) {
-   std::string escaped;
-   escaped.reserve(str.length());
-   
-   for (char c : str) {
-       switch (c) {
-           case '&':  escaped += "&amp;"; break;
-           case '<':  escaped += "&lt;"; break;
-           case '>':  escaped += "&gt;"; break;
-           case '"':  escaped += "&quot;"; break;
-           case '\'': escaped += "&apos;"; break;
-           default:   escaped += c; break;
-       }
-   }
-   
-   return escaped;
-}
-
-std::string DBusXml::indent(int level) {
-   return std::string(level * INDENT_SIZE, ' ');
+std::string DBusXml::indent(int level)
+{
+    return std::string(level * 2, ' ');
 }
 
 } // namespace ggk
