@@ -4,56 +4,46 @@
 
 using namespace ggk;
 
-// DBusError 생성자 테스트
 TEST(DBusErrorTest, ConstructorTest) {
-    DBusError error(DBusErrorCode::FAILED, "Test error message");
-
-    EXPECT_EQ(error.code(), DBusErrorCode::FAILED);
-    EXPECT_EQ(error.name(), "org.freedesktop.DBus.Error.Failed");
-    EXPECT_EQ(error.message(), "Test error message");
+    DBusError error(DBusError::ERROR_FAILED, "Test error message");
+    EXPECT_EQ(error.getName(), DBusError::ERROR_FAILED);
+    EXPECT_EQ(error.getMessage(), "Test error message");
 }
 
-// DBusError::fromGError 테스트
 TEST(DBusErrorTest, FromGErrorTest) {
-    // GError 객체 생성
-    GError* gerror = g_error_new_literal(
-        g_quark_from_string("org.freedesktop.DBus.Error.Failed"),
-        static_cast<gint>(DBusErrorCode::FAILED),
-        "Simulated DBus error"
+    GErrorPtr gerror(
+        g_error_new_literal(
+            g_quark_from_string(DBusError::ERROR_FAILED),
+            0,
+            "Simulated DBus error"
+        ), 
+        &g_error_free
     );
 
-    DBusError error = DBusError::fromGError(gerror);
+    DBusError error(gerror.get());
 
-    EXPECT_EQ(error.code(), DBusErrorCode::FAILED);
-    EXPECT_EQ(error.name(), "org.freedesktop.DBus.Error.Failed");
-    EXPECT_EQ(error.message(), "Simulated DBus error");
-
-    // GError 객체 해제
-    g_error_free(gerror);
+    EXPECT_EQ(error.getName(), DBusError::ERROR_FAILED);
+    EXPECT_EQ(error.getMessage(), "Simulated DBus error");
 }
 
-// DBusError::toGError 테스트
+TEST(DBusErrorTest, FromNullGErrorTest) {
+    DBusError error(nullptr);
+    EXPECT_EQ(error.getName(), DBusError::ERROR_FAILED);
+    EXPECT_EQ(error.getMessage(), "Unknown error");
+}
+
 TEST(DBusErrorTest, ToGErrorTest) {
-    DBusError error(DBusErrorCode::FAILED, "Test GError conversion");
+    DBusError error(DBusError::ERROR_FAILED, "Test GError conversion");
+    GErrorPtr gerror = error.toGError();
 
-    GError* gerror = error.toGError();
-
+    ASSERT_NE(gerror, nullptr);
     EXPECT_STREQ(gerror->message, "Test GError conversion");
-    EXPECT_EQ(std::string(g_quark_to_string(gerror->domain)), "org.freedesktop.DBus.Error.Failed");
-
-    // GError 객체 해제
-    g_error_free(gerror);
+    EXPECT_EQ(std::string(g_quark_to_string(gerror->domain)), DBusError::ERROR_FAILED);
 }
 
-// DBusError 에러 코드 ↔ 이름 변환 테스트
-TEST(DBusErrorTest, ErrorCodeToNameTest) {
-    DBusError error1(DBusErrorCode::FAILED, "Test 1");
-    EXPECT_EQ(error1.name(), "org.freedesktop.DBus.Error.Failed");
+TEST(DBusErrorTest, ToStringTest) {
+    DBusError error(DBusError::ERROR_UNKNOWN_METHOD, "Unknown method called");
+    std::string expected = std::string(DBusError::ERROR_UNKNOWN_METHOD) + ": Unknown method called";
 
-    DBusError error2(DBusErrorCode::NO_MEMORY, "Test 2");
-    EXPECT_EQ(error2.name(), "org.freedesktop.DBus.Error.NoMemory");
-
-    DBusError error3(DBusErrorCode::BLUEZ_FAILED, "Test 3");
-    EXPECT_EQ(error3.name(), "org.bluez.Error.Failed");
+    EXPECT_EQ(error.toString(), expected);
 }
-

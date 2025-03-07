@@ -3,94 +3,79 @@
 #include "../include/DBusTypes.h"
 #include <gio/gio.h>
 
-// GLib 환경 초기화 코드
+using namespace ggk;
+
+using namespace ggk;
+
 class GLibEnvironment : public ::testing::Environment {
 public:
     void SetUp() override {
-        // GLib/GIO 초기화 (필요한 경우)
+        // GLib/GIO 초기화 (필요 시)
     }
 };
 
-// DBusXml::createProperty() 테스트
-TEST(DBusXmlTest, CreatePropertyTest) {
-    ggk::DBusProperty property = {"TestProperty", "s", true, false, true, nullptr, nullptr};
-    std::string expectedXml =
+TEST(DBusXmlTest, CreateProperty) {
+    DBusProperty prop{"TestProperty", "s", true, false, true, nullptr, nullptr};
+    std::string expected =
         "  <property name='TestProperty' type='s' access='read'>\n"
         "    <annotation name='org.freedesktop.DBus.Property.EmitsChangedSignal' value='true'/>\n"
         "  </property>\n";
 
-    std::string generatedXml = ggk::DBusXml::createProperty(property, 1);
-    EXPECT_EQ(generatedXml, expectedXml);
+    auto result = DBusXml::createProperty(prop, 1);
+    EXPECT_EQ(result, expected);
 }
 
-// DBusXml::createMethod() 테스트
-TEST(DBusXmlTest, CreateMethodTest) {
-    std::vector<ggk::DBusArgument> inArgs = {
-        {"i", "arg1", "in"},
-        {"s", "arg2", "in"}
-    };
-    std::vector<ggk::DBusArgument> outArgs = {
-        {"b", "result", "out"}
-    };
+TEST(DBusXmlTest, CreateMethod) {
+    std::vector<DBusArgument> inArgs = { {"s", "inputArg", "in"} };
+    std::vector<DBusArgument> outArgs = { {"i", "outputArg", "out"} };
 
-    std::string expectedXml =
+    std::string expected =
         "  <method name='TestMethod'>\n"
-        "    <arg name='arg1' type='i' direction='in'/>\n"
-        "    <arg name='arg2' type='s' direction='in'/>\n"
-        "    <arg name='result' type='b' direction='out'/>\n"
+        "    <arg name='inputArg' type='s' direction='in'/>\n"
+        "    <arg name='outputArg' type='i' direction='out'/>\n"
         "  </method>\n";
 
-    std::string generatedXml = ggk::DBusXml::createMethod("TestMethod", inArgs, outArgs, 1);
-    EXPECT_EQ(generatedXml, expectedXml);
+    auto result = DBusXml::createMethod("TestMethod", inArgs, outArgs, 1);
+    EXPECT_EQ(result, expected);
 }
 
-// DBusXml::createSignal() 테스트
-TEST(DBusXmlTest, CreateSignalTest) {
-    ggk::DBusSignal signal = {
-        "TestSignal",
-        {{"i", "arg1", ""}, {"s", "arg2", ""}} // direction 필드가 필요 없음
-    };
+TEST(DBusXmlTest, CreateSignal) {
+    DBusSignal signal{"TestSignal", { {"s", "signalArg", ""} }};
 
-    std::string expectedXml =
+    std::string expected =
         "  <signal name='TestSignal'>\n"
-        "    <arg name='arg1' type='i'/>\n"
-        "    <arg name='arg2' type='s'/>\n"
+        "    <arg name='signalArg' type='s'/>\n"
         "  </signal>\n";
 
-    std::string generatedXml = ggk::DBusXml::createSignal(signal, 1);
-    EXPECT_EQ(generatedXml, expectedXml);
+    auto result = DBusXml::createSignal(signal, 1);
+    EXPECT_EQ(result, expected);
 }
 
-// DBusXml::createInterface() 테스트
-TEST(DBusXmlTest, CreateInterfaceTest) {
-    std::vector<ggk::DBusProperty> properties = {
-        {"TestProperty", "s", true, false, true, nullptr, nullptr}
-    };
+TEST(DBusXmlTest, CreateInterface) {
+    DBusProperty prop{"InterfaceProperty", "i", true, true, false, nullptr, nullptr};
 
-    std::vector<ggk::DBusMethodCall> methods = {
-        {"TestSender", "org.example.Interface", "TestMethod", nullptr, nullptr}
-    };
+    std::vector<DBusMethodCall> methods;
+    methods.push_back(DBusMethodCall{
+        "", "", "InterfaceMethod",
+        GVariantPtr(nullptr, g_variant_unref),
+        GDBusMethodInvocationPtr(nullptr, g_object_unref)
+    });
 
-    std::vector<ggk::DBusSignal> signals = {
-        {"TestSignal", {{"i", "arg1", ""}, {"s", "arg2", ""}}}
-    };
+    DBusSignal signal{"InterfaceSignal", {{"s", "interfaceArg", ""}}};
 
-    std::string expectedXml =
-        "<interface name='org.example.TestInterface'>\n"
-        "  <property name='TestProperty' type='s' access='read'>\n"
-        "    <annotation name='org.freedesktop.DBus.Property.EmitsChangedSignal' value='true'/>\n"
-        "  </property>\n"
-        "  <method name='TestMethod'>\n"
-        "  </method>\n"
-        "  <signal name='TestSignal'>\n"
-        "    <arg name='arg1' type='i'/>\n"
-        "    <arg name='arg2' type='s'/>\n"
-        "  </signal>\n"
-        "</interface>";
+    std::string result = DBusXml::createInterface(
+        "org.example.Interface",
+        {prop},
+        std::move(methods),
+        {signal},
+        0
+    );
 
-    std::string generatedXml = ggk::DBusXml::createInterface(
-        "org.example.TestInterface", properties, methods, signals, 0);
-
-    EXPECT_EQ(generatedXml, expectedXml);
+    EXPECT_NE(result.find("<interface name='org.example.Interface'>"), std::string::npos);
+    EXPECT_NE(result.find("<property name='InterfaceProperty' type='i' access='readwrite'/>"), std::string::npos);
+    EXPECT_NE(result.find("<method name='InterfaceMethod'>"), std::string::npos);
+    EXPECT_NE(result.find("<signal name='InterfaceSignal'>"), std::string::npos);
 }
+
+
 

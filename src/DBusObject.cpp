@@ -1,224 +1,231 @@
 #include "DBusObject.h"
+#include "DBusXml.h"
 #include "Logger.h"
 
 namespace ggk {
 
-DBusObject::DBusObject(const DBusObjectPath& path, bool shouldPublish)
-    : state(shouldPublish ? State::INITIALIZED : State::ERROR)
+DBusObject::DBusObject(DBusConnection& connection, const DBusObjectPath& path)
+    : connection(connection)
     , path(path)
-    , pParent(nullptr)
-    , dbusConnection(nullptr) {
-}
-
-DBusObject::DBusObject(DBusObject* pParent, const DBusObjectPath& pathElement)
-    : state(State::INITIALIZED)
-    , path(pathElement)
-    , pParent(pParent)
-    , dbusConnection(nullptr) {
+    , registered(false) {
 }
 
 DBusObject::~DBusObject() {
-    cleanup();
+    unregisterObject();
 }
 
-bool DBusObject::publish(GDBusConnection* connection) {
-    if (!connection) {
-        Logger::error("Cannot publish DBusObject: null connection");
-        return false;
-    }
-
-    if (state == State::PUBLISHED) {
-        return true;
-    }
-
-    if (!validatePath()) {
-        Logger::error("Cannot publish DBusObject: invalid path");
-        return false;
-    }
-
-    dbusConnection = connection;
-    setState(State::PUBLISHED);
-    return true;
-}
-
-bool DBusObject::unpublish() {
-    if (state != State::PUBLISHED) {
-        return true;
-    }
-
-    setState(State::INITIALIZED);
-    dbusConnection = nullptr;
-    return true;
-}
-
-const DBusObjectPath& DBusObject::getPathNode() const {
-    return path;
-}
-
-DBusObjectPath DBusObject::getPath() const {
-    if (pParent == nullptr) {
-        return path;
-    }
-    return pParent->getPath() + path;
-}
-
-DBusObject& DBusObject::getParent() {
-    if (pParent == nullptr) {
-        throw DBusObjectError("No parent object");
-    }
-    return *pParent;
-}
-
-const DBusObject& DBusObject::getParent() const {
-    if (pParent == nullptr) {
-        throw DBusObjectError("No parent object");
-    }
-    return *pParent;
-}
-
-const DBusObject::ChildList& DBusObject::getChildren() const {
-    return children;
-}
-
-DBusObject& DBusObject::addChild(const DBusObjectPath& pathElement) {
-    children.emplace_back(this, pathElement);
-    onChildAdded(children.back());
-    return children.back();
-}
-
-DBusObject* DBusObject::findChild(const DBusObjectPath& path) {
-    for (auto& child : children) {
-        if (child.getPathNode() == path) {
-            return &child;
-        }
-    }
-    return nullptr;
-}
-
-void DBusObject::removeChild(const DBusObjectPath& path) {
-    children.remove_if([&path](const DBusObject& child) {
-        return child.getPathNode() == path;
-    });
-}
-
-const DBusObject::InterfaceList& DBusObject::getInterfaces() const {
-    return interfaces;
-}
-
-std::shared_ptr<const DBusInterface> DBusObject::findInterface(
-    const DBusObjectPath& path,
-    const std::string& interfaceName,
-    const DBusObjectPath& basePath) const {
-
-    DBusObjectPath fullPath = basePath + getPath();
+bool DBusObject::addInterface(const std::string& interface, const std::vector<DBusProperty>& properties) {
+    std::lock_guard<std::mutex> lock(mutex);
     
-    if (fullPath == path) {
-        for (const auto& interface : interfaces) {
-            if (interface->getName() == interfaceName) {
-                return interface;
+    if (registered) {
+        Logger::warn("Cannot add interface to already registered object: " + path.toString());
+        return false;
+    }
+    
+    interfaces[interface] = properties;
+    Logger::debug("Added interface: " + interface + " to object: " + path.toString());
+    return true;
+}
+
+bool DBusObject::addMethod(const std::string& interface, const std::string& method, DBusConnection::MethodHandler handler) {
+    std::lock_guard<std::mutex> lock(mutex);
+    
+    if (registered) {
+        Logger::warn("Cannot add method to already registered object: " + path.toString());
+        return false;
+    }
+    
+    // 인터페이스가 존재하지 않으면 자동 생성
+    if (interfaces.find(interface) == interfaces.end()) {
+        interfaces[interface] = {};
+    }
+    
+    methodHandlers[interface][method] = handler;
+    Logger::debug("Added method: " + interface + "." + method + " to object: " + path.toString());
+    return true;
+}
+
+bool DBusObject::setProperty(const std::string& interface, const std::string& name, GVariantPtr value) {
+    std::lock_guard<std::mutex> lock(mutex);
+    
+    auto ifaceIt = interfaces.find(interface);
+    if (ifaceIt == interfaces.end()) {
+        Logger::error("Interface not found: " + interface);
+        return false;
+    }
+    
+    // 속성 찾기
+    for (auto& prop : ifaceIt->second) {
+        if (prop.name == name) {
+            if (!prop.writable) {
+                Logger::error("Property is not writable: " + interface + "." + name);
+                return false;
+            }
+            
+            if (prop.setter) {
+                return prop.setter(value.get());
+            } else {
+                Logger::error("No setter for property: " + interface + "." + name);
+                return false;
             }
         }
-        return nullptr;
     }
+    
+    Logger::error("Property not found: " + interface + "." + name);
+    return false;
+}
 
-    for (const auto& child : children) {
-        auto result = child.findInterface(path, interfaceName, basePath);
-        if (result) {
-            return result;
+GVariantPtr DBusObject::getProperty(const std::string& interface, const std::string& name) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    
+    auto ifaceIt = interfaces.find(interface);
+    if (ifaceIt == interfaces.end()) {
+        Logger::error("Interface not found: " + interface);
+        return makeNullGVariantPtr();
+    }
+    
+    // 속성 찾기
+    for (const auto& prop : ifaceIt->second) {
+        if (prop.name == name) {
+            if (!prop.readable) {
+                Logger::error("Property is not readable: " + interface + "." + name);
+                return makeNullGVariantPtr();
+            }
+            
+            if (prop.getter) {
+                GVariant* value = prop.getter();
+                if (value) {
+                    return GVariantPtr(value, &g_variant_unref);
+                }
+            } else {
+                Logger::error("No getter for property: " + interface + "." + name);
+            }
+            
+            return makeNullGVariantPtr();
         }
     }
-
-    return nullptr;
+    
+    Logger::error("Property not found: " + interface + "." + name);
+    return makeNullGVariantPtr();
 }
 
-bool DBusObject::callMethod(
-    const DBusObjectPath& path,
-    const std::string& interfaceName,
-    const std::string& methodName,
-    GDBusConnection* pConnection,
-    GVariant* pParameters,
-    GDBusMethodInvocation* pInvocation,
-    gpointer pUserData,
-    const DBusObjectPath& basePath) const {
-
-    auto interface = findInterface(path, interfaceName, basePath);
-    if (!interface) {
-        Logger::error("Interface not found: " + interfaceName + " at path: " + path.toString());
+bool DBusObject::emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value) {
+    if (!registered) {
+        Logger::error("Cannot emit signals on unregistered object: " + path.toString());
         return false;
     }
-
-    return interface->callMethod(methodName, pConnection, pParameters, pInvocation, pUserData);
-}
-
-void DBusObject::emitSignal(
-    GDBusConnection* pBusConnection,
-    const std::string& interfaceName,
-    const std::string& signalName,
-    GVariant* pParameters) {
     
-    if (!pBusConnection) {
-        Logger::error("No bus connection for signal emission");
-        return;
-    }
-
-    GError* pError = nullptr;
-    g_dbus_connection_emit_signal(
-        pBusConnection,
-        nullptr,
-        getPath().c_str(),
-        interfaceName.c_str(),
-        signalName.c_str(),
-        pParameters,
-        &pError
-    );
-
-    if (pError) {
-        Logger::error("Failed to emit signal: " + std::string(pError->message));
-        g_error_free(pError);
-    }
+    // 속성 변경 시그널 발생
+    return connection.emitPropertyChanged(path, interface, name, std::move(value));
 }
 
-std::string DBusObject::generateIntrospectionXML(int depth) const {
-    std::string indent(depth * 2, ' ');
-    std::string xml;
-
-    xml += indent + "<node name=\"" + path.toString() + "\">\n";
-
-    for (const auto& interface : interfaces) {
-        xml += interface->generateIntrospectionXML(depth + 1);
+bool DBusObject::emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters) {
+    if (!registered) {
+        Logger::error("Cannot emit signals on unregistered object: " + path.toString());
+        return false;
     }
+    
+    // 시그널 발생
+    return connection.emitSignal(path, interface, name, std::move(parameters));
+}
 
-    for (const auto& child : children) {
-        xml += child.generateIntrospectionXML(depth + 1);
+bool DBusObject::registerObject() {
+    std::lock_guard<std::mutex> lock(mutex);
+    
+    if (registered) {
+        Logger::debug("Object already registered: " + path.toString());
+        return true;
     }
+    
+    if (!connection.isConnected()) {
+        Logger::error("D-Bus connection not available");
+        return false;
+    }
+    
+    // 인트로스펙션 XML 생성
+    std::string xml = generateIntrospectionXml();
+    Logger::debug("Registering object with XML:\n" + xml);
+    
+    // 객체 등록
+    registered = connection.registerObject(
+        path,
+        xml,
+        methodHandlers,
+        interfaces
+    );
+    
+    if (registered) {
+        Logger::info("Registered D-Bus object: " + path.toString());
+    } else {
+        Logger::error("Failed to register D-Bus object: " + path.toString());
+    }
+    
+    return registered;
+}
 
-    xml += indent + "</node>\n";
+bool DBusObject::unregisterObject() {
+    std::lock_guard<std::mutex> lock(mutex);
+    
+    if (!registered) {
+        return true;
+    }
+    
+    registered = !connection.unregisterObject(path);
+    if (!registered) {
+        Logger::info("Unregistered D-Bus object: " + path.toString());
+    } else {
+        Logger::error("Failed to unregister D-Bus object: " + path.toString());
+    }
+    
+    return !registered;
+}
 
+std::string DBusObject::generateIntrospectionXml() const {
+    // 메서드 목록 수집
+    std::vector<std::pair<std::string, std::string>> methods; // 인터페이스와 메서드 이름만 저장
+    for (const auto& ifaceMethods : methodHandlers) {
+        for (const auto& method : ifaceMethods.second) {
+            methods.push_back({ifaceMethods.first, method.first});
+        }
+    }
+    
+    // 시그널 목록은 현재 지원하지 않음
+    std::vector<DBusSignal> signals;
+    
+    // 각 인터페이스에 대한 XML 생성
+    std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<node>\n";
+    
+    for (const auto& iface : interfaces) {
+        // 해당 인터페이스의 메서드 필터링
+        std::vector<DBusMethodCall> ifaceMethods;
+        auto it = methodHandlers.find(iface.first);
+        if (it != methodHandlers.end()) {
+            for (const auto& method : it->second) {
+                // 복사 대신 직접 생성자 호출
+                DBusMethodCall call(
+                    "",  // sender
+                    iface.first,  // interface
+                    method.first,  // method
+                    makeNullGVariantPtr(),  // parameters
+                    makeNullGDBusMethodInvocationPtr()  // invocation
+                );
+                // 이동(move) 사용하여 복사 방지
+                ifaceMethods.push_back(std::move(call));
+            }
+        }
+        
+        // 인터페이스 XML 생성
+        xml += DBusXml::createInterface(
+            iface.first,
+            iface.second,
+            ifaceMethods,
+            signals,
+            1  // 들여쓰기 레벨
+        );
+    }
+    
+    xml += "</node>";
     return xml;
 }
-
-void DBusObject::setState(State newState) {
-    if (state != newState) {
-        State oldState = state;
-        state = newState;
-        onStateChanged(oldState, newState);
-    }
-}
-
-bool DBusObject::validatePath() const {
-    return !path.toString().empty() && path.toString()[0] == '/';
-}
-
-void DBusObject::cleanup() {
-    interfaces.clear();
-    children.clear();
-    dbusConnection = nullptr;
-    state = State::ERROR;
-}
-
-// Protected virtual methods의 기본 구현
-void DBusObject::onStateChanged(State oldState, State newState) {}
-void DBusObject::onInterfaceAdded(const std::shared_ptr<DBusInterface>& interface) {}
-void DBusObject::onChildAdded(DBusObject& child) {}
 
 } // namespace ggk

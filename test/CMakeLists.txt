@@ -39,11 +39,12 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/HciSocket.h
     ${PROJECT_INCLUDE_DIR}/Mgmt.h
     # DBus
-    #${PROJECT_INCLUDE_DIR}/GattService.h
     ${PROJECT_INCLUDE_DIR}/DBusTypes.h
     ${PROJECT_INCLUDE_DIR}/DBusXml.h
     ${PROJECT_INCLUDE_DIR}/DBusError.h
+    ${PROJECT_INCLUDE_DIR}/DBusConnection.h
     ${PROJECT_INCLUDE_DIR}/DBusMessage.h
+    ${PROJECT_INCLUDE_DIR}/DBusObject.h
 
     # GATT
     
@@ -61,7 +62,9 @@ set(TEST_SOURCES
     # DBus
     ${PROJECT_SRC_DIR}/DBusXml.cpp
     ${PROJECT_SRC_DIR}/DBusError.cpp
+    ${PROJECT_SRC_DIR}/DBusConnection.cpp
     ${PROJECT_SRC_DIR}/DBusMessage.cpp
+    ${PROJECT_SRC_DIR}/DBusObject.cpp
 
 
     # GATT
@@ -80,7 +83,6 @@ add_executable(run_tests
     
     #DBusObjectPathTest.cpp
     #UtilsTest.cpp
-    #LoggerTest.cpp
     
     #-- HCI Test -- (약 30000ms 소요)
     
@@ -90,9 +92,11 @@ add_executable(run_tests
     
     #-- DBus Test --
     
-    #DBusXmlTest.cpp
-    #DBusErrorTest.cpp
+    DBusXmlTest.cpp
+    DBusErrorTest.cpp
+    DBusConnectionTest.cpp
     DBusMessageTest.cpp
+    DBusObjectTest.cpp
     
     # GATT Test
 

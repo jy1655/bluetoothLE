@@ -1,145 +1,135 @@
-// DBusMessage.cpp
 #include "DBusMessage.h"
 #include "Logger.h"
 
 namespace ggk {
 
-DBusMessage::DBusMessage(GDBusMessage* message)
-    : message(message, g_object_unref)
-{
-    if (!message) {
-        throw DBusError(DBusErrorCode::FAILED, "Failed to create DBus message");
-    }
+// 생성자 - GDBusMessage 래핑
+DBusMessage::DBusMessage(GDBusMessage* message) 
+    : message(message, &g_object_unref) {
 }
 
+// 메서드 호출 메시지 생성
 DBusMessage DBusMessage::createMethodCall(
     const std::string& destination,
     const std::string& path,
     const std::string& interface,
     const std::string& method)
 {
-    GDBusMessage* message = g_dbus_message_new_method_call(
+    GDBusMessage* msg = g_dbus_message_new_method_call(
         destination.c_str(),
         path.c_str(),
         interface.c_str(),
         method.c_str()
     );
-
-    if (!message) {
-        Logger::error(SSTR << "Failed to create method call: " 
-                          << interface << "." << method);
-        throw DBusError(DBusErrorCode::FAILED, "Failed to create method call message");
+    
+    if (!msg) {
+        Logger::error("Failed to create method call message");
+        throw DBusError(DBusError::ERROR_FAILED, "Failed to create method call message");
     }
-
-    return DBusMessage(message);
+    
+    return DBusMessage(msg);
 }
 
-DBusMessage DBusMessage::createMethodReturn(GDBusMethodInvocation* invocation)
+// 메서드 응답 메시지 생성
+DBusMessage DBusMessage::createMethodReturn(const GDBusMethodInvocationPtr& invocation)
 {
-    GDBusMessage* message = g_dbus_message_new_method_reply(
-        g_dbus_method_invocation_get_message(invocation)
+    GDBusMessage* msg = g_dbus_message_new_method_reply(
+        g_dbus_method_invocation_get_message(invocation.get())
     );
-
-    if (!message) {
+    
+    if (!msg) {
         Logger::error("Failed to create method return message");
-        throw DBusError(DBusErrorCode::FAILED, "Failed to create method return message");
+        throw DBusError(DBusError::ERROR_FAILED, "Failed to create method return message");
     }
-
-    return DBusMessage(message);
+    
+    return DBusMessage(msg);
 }
 
+// 시그널 메시지 생성
 DBusMessage DBusMessage::createSignal(
     const std::string& path,
     const std::string& interface,
     const std::string& name)
 {
-    GDBusMessage* message = g_dbus_message_new_signal(
+    GDBusMessage* msg = g_dbus_message_new_signal(
         path.c_str(),
         interface.c_str(),
         name.c_str()
     );
-
-    if (!message) {
-        Logger::error(SSTR << "Failed to create signal: " 
-                          << interface << "." << name);
-        throw DBusError(DBusErrorCode::FAILED, "Failed to create signal message");
+    
+    if (!msg) {
+        Logger::error("Failed to create signal message");
+        throw DBusError(DBusError::ERROR_FAILED, "Failed to create signal message");
     }
-
-    return DBusMessage(message);
+    
+    return DBusMessage(msg);
 }
 
+// 에러 메시지 생성
 DBusMessage DBusMessage::createError(
-    GDBusMethodInvocation* invocation,
+    const GDBusMethodInvocationPtr& invocation,
     const DBusError& error)
 {
-    GDBusMessage* message = g_dbus_message_new_method_error(
-        g_dbus_method_invocation_get_message(invocation),
-        error.name().c_str(),
+    GDBusMessage* msg = g_dbus_message_new_method_error(
+        g_dbus_method_invocation_get_message(invocation.get()),
+        error.getName().c_str(),
         "%s",
-        error.message().c_str()
+        error.getMessage().c_str()
     );
-
-    if (!message) {
-        Logger::error(SSTR << "Failed to create error message: " << error.message());
-        throw DBusError(DBusErrorCode::FAILED, "Failed to create error message");
-    }
-
-    return DBusMessage(message);
-}
-
-void DBusMessage::addArgument(GVariant* variant)
-{
-    if (!variant) {
-        Logger::warn("Attempted to add null variant to DBus message");
-        return;
-    }
-
-    GVariantBuilder builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
-
-    // 기존 body가 있다면 그 내용을 복사
-    GVariant* current_body = g_dbus_message_get_body(message.get());
-    if (current_body) {
-        gsize n_children = g_variant_n_children(current_body);
-        for (gsize i = 0; i < n_children; i++) {
-            GVariant* child = g_variant_get_child_value(current_body, i);
-            g_variant_builder_add_value(&builder, child);
-            g_variant_unref(child);
-        }
-    }
-
-    // 새 인자 추가
-    g_variant_builder_add_value(&builder, variant);
     
-    // 새로운 body 설정
-    GVariant* new_body = g_variant_builder_end(&builder);
-    g_dbus_message_set_body(message.get(), new_body);
-}
-void DBusMessage::addArguments(GVariant* variant, ...)
-{
-    va_list args;
-    va_start(args, variant);
-
-    GVariantBuilder builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
-
-    while (variant) {
-        g_variant_builder_add_value(&builder, variant);
-        variant = va_arg(args, GVariant*);
+    if (!msg) {
+        Logger::error("Failed to create error message");
+        throw DBusError(DBusError::ERROR_FAILED, "Failed to create error message");
     }
+    
+    return DBusMessage(msg);
+}
 
-    va_end(args);
+// 인자 추가
+void DBusMessage::addArgument(const GVariantPtr& variant)
+{
+    GVariant* body = g_dbus_message_get_body(message.get());
+    GVariantBuilder builder;
+    
+    if (body) {
+        // 기존 본문 복사
+        g_variant_builder_init(&builder, g_variant_get_type(body));
+        g_variant_builder_add_value(&builder, body);
+    } else {
+        // 새 튜플 시작
+        g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
+    }
+    
+    // 새 값 추가
+    g_variant_builder_add_value(&builder, variant.get());
+    
+    // 본문 설정
     g_dbus_message_set_body(message.get(), g_variant_builder_end(&builder));
 }
 
-GVariant* DBusMessage::getBody() const
+// 인자 목록 추가
+void DBusMessage::addArgumentsList(const std::vector<GVariantPtr>& variants)
 {
-    return g_dbus_message_get_body(message.get());
+    for (const auto& var : variants) {
+        addArgument(var);
+    }
 }
 
+// 메시지 본문 가져오기
+GVariantPtr DBusMessage::getBody() const
+{
+    GVariant* body = g_dbus_message_get_body(message.get());
+    if (body) {
+        return GVariantPtr(g_variant_ref(body), &g_variant_unref);
+    }
+    return makeNullGVariantPtr();
+}
+
+// 메시지 타입 가져오기
 DBusMessageType DBusMessage::getType() const
 {
     GDBusMessageType type = g_dbus_message_get_message_type(message.get());
+    
     switch (type) {
         case G_DBUS_MESSAGE_TYPE_METHOD_CALL:
             return DBusMessageType::METHOD_CALL;
@@ -150,47 +140,60 @@ DBusMessageType DBusMessage::getType() const
         case G_DBUS_MESSAGE_TYPE_SIGNAL:
             return DBusMessageType::SIGNAL;
         default:
+            // 알 수 없는 타입의 경우 ERROR 반환
             return DBusMessageType::ERROR;
     }
 }
 
+// 인터페이스 이름 가져오기
 std::string DBusMessage::getInterface() const
 {
     const char* interface = g_dbus_message_get_interface(message.get());
     return interface ? interface : "";
 }
 
+// 경로 가져오기
 std::string DBusMessage::getPath() const
 {
     const char* path = g_dbus_message_get_path(message.get());
     return path ? path : "";
 }
 
+// 멤버(메서드/시그널 이름) 가져오기
 std::string DBusMessage::getMember() const
 {
     const char* member = g_dbus_message_get_member(message.get());
     return member ? member : "";
 }
 
+// 목적지 가져오기
 std::string DBusMessage::getDestination() const
 {
-    const char* dest = g_dbus_message_get_destination(message.get());
-    return dest ? dest : "";
+    const char* destination = g_dbus_message_get_destination(message.get());
+    return destination ? destination : "";
 }
 
+// 발신자 가져오기
 std::string DBusMessage::getSender() const
 {
     const char* sender = g_dbus_message_get_sender(message.get());
     return sender ? sender : "";
 }
 
+// 시그니처 가져오기
 std::string DBusMessage::getSignature() const
 {
     GVariant* body = g_dbus_message_get_body(message.get());
-    if (!body) return "";
+    if (!body) {
+        return "";
+    }
     
-    const char* signature = g_variant_get_type_string(body);
-    return signature ? signature : "";
+    const GVariantType* type = g_variant_get_type(body);
+    char* signature = g_variant_type_dup_string(type);
+    std::string result(signature);
+    g_free(signature);
+    
+    return result;
 }
 
 } // namespace ggk

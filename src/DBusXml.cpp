@@ -15,9 +15,6 @@ std::string DBusXml::createInterface(
     try {
         std::ostringstream xml;
         
-        xml << indent(indentLevel) << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
-        xml << indent(indentLevel) << "<node>\n";
-        
         xml << indent(indentLevel + 1) << "<interface name='" << escape(name) << "'>\n";
     
         // Properties
@@ -36,7 +33,6 @@ std::string DBusXml::createInterface(
         }
     
         xml << indent(indentLevel + 1) << "</interface>\n";
-        xml << indent(indentLevel) << "</node>";
     
         return xml.str();
     }
