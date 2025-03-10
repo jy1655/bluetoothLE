@@ -1,116 +1,103 @@
+// GattCharacteristic.h
 #pragma once
 
-#include <gio/gio.h>
-#include <memory>
+#include "GattTypes.h"
+#include "GattCallbacks.h"
+#include "DBusObject.h"
 #include <vector>
 #include <map>
-#include "DBusInterface.h"
-#include "GattUuid.h"
-#include "GattProperty.h"
-#include "GattDescriptor.h"
+#include <memory>
 
 namespace ggk {
 
-class GattCharacteristic : public DBusInterface {
+// 전방 선언 - 필요한 것만
+class GattService;
+class GattDescriptor;
+
+// 파일 내에서만 사용하는 포인터 타입
+using GattDescriptorPtr = std::shared_ptr<GattDescriptor>;
+
+class GattCharacteristic : public DBusObject, public std::enable_shared_from_this<GattCharacteristic> {
 public:
-    static const char* INTERFACE_NAME;    // "org.bluez.GattCharacteristic1"
-
-    // 특성 속성 플래그
-    enum class Property {
-        BROADCAST = 0,
-        READ = 1,
-        WRITE_WITHOUT_RESPONSE = 2,
-        WRITE = 3,
-        NOTIFY = 4,
-        INDICATE = 5,
-        SIGNED_WRITE = 6,
-        EXTENDED_PROPERTIES = 7
-    };
-
     // 생성자
-    GattCharacteristic(const GattUuid& uuid, const DBusObjectPath& path);
-    virtual ~GattCharacteristic() = default;
-
-    // DBusInterface 구현
-    virtual DBusObjectPath getPath() const override { return objectPath; }
-
-    // 특성 속성
-    const GattUuid& getUUID() const { return uuid; }
-    void addProperty(Property prop);
-    bool hasProperty(Property prop) const;
-    std::string getPropertyFlags() const;
-
-    // 값 관리
-    const std::vector<uint8_t>& getValue() const { return value; }
-    bool setValue(const std::vector<uint8_t>& newValue);
+    GattCharacteristic(
+        DBusConnection& connection,
+        const DBusObjectPath& path,
+        const GattUuid& uuid,
+        GattService& service,
+        uint8_t properties,
+        uint8_t permissions
+    );
     
-    // 디스크립터 관리
-    bool addDescriptor(std::shared_ptr<GattDescriptor> descriptor);
-    std::shared_ptr<GattDescriptor> getDescriptor(const GattUuid& uuid);
-    const std::vector<std::shared_ptr<GattDescriptor>>& getDescriptors() const { 
-        return descriptors; 
-    }
-
-    // 알림/인디케이션 관리
+    virtual ~GattCharacteristic() = default;
+    
+    // 속성 접근자
+    const GattUuid& getUuid() const { return uuid; }
+    const std::vector<uint8_t>& getValue() const { return value; }
+    uint8_t getProperties() const { return properties; }
+    uint8_t getPermissions() const { return permissions; }
+    
+    // 값 설정
+    void setValue(const std::vector<uint8_t>& value);
+    
+    // 설명자 관리
+    GattDescriptorPtr createDescriptor(
+        const GattUuid& uuid,
+        uint8_t permissions
+    );
+    
+    GattDescriptorPtr getDescriptor(const GattUuid& uuid) const;
+    const std::map<std::string, GattDescriptorPtr>& getDescriptors() const { return descriptors; }
+    
+    // 알림(Notification) 관리
+    bool startNotify();
+    bool stopNotify();
     bool isNotifying() const { return notifying; }
-    void startNotify();
-    void stopNotify();
-
-    // CCCD 관리
-    void onCCCDChanged(bool notificationEnabled, bool indicationEnabled);
-
-    void addDBusProperty(const char* name,
-        const char* type,
-        bool readable,
-        bool writable,
-        std::function<GVariant*(void*)> getter = nullptr,
-        std::function<void(GVariant*, void*)> setter = nullptr);
-
-protected:
-    virtual void onValueChanged(const std::vector<uint8_t>& newValue);
-    virtual void onNotifyingChanged(bool isNotifying);
-
+    
+    // 콜백 설정
+    void setReadCallback(GattReadCallback callback) { readCallback = callback; }
+    void setWriteCallback(GattWriteCallback callback) { writeCallback = callback; }
+    void setNotifyCallback(GattNotifyCallback callback) { notifyCallback = callback; }
+    
+    // BlueZ D-Bus 인터페이스 설정
+    bool setupDBusInterfaces();
+    
+    
 private:
+    // 상수
+    static constexpr const char* CHARACTERISTIC_INTERFACE = "org.bluez.GattCharacteristic1";
+    
+    // 속성
     GattUuid uuid;
-    DBusObjectPath objectPath;
+    GattService& service;
+    uint8_t properties;
+    uint8_t permissions;
     std::vector<uint8_t> value;
-    std::bitset<8> properties;
-    std::vector<std::shared_ptr<GattDescriptor>> descriptors;
-    bool notifying{false};
-
-    void setupProperties();
-    void setupMethods();
-    bool validateProperties() const;
-    std::shared_ptr<GattDescriptor> createCCCD();
-
-    // D-Bus 메서드 핸들러
-    static void onReadValue(const DBusInterface& interface,
-                          GDBusConnection* connection,
-                          const std::string& methodName,
-                          GVariant* parameters,
-                          GDBusMethodInvocation* invocation,
-                          void* userData);
-
-    static void onWriteValue(const DBusInterface& interface,
-                           GDBusConnection* connection,
-                           const std::string& methodName,
-                           GVariant* parameters,
-                           GDBusMethodInvocation* invocation,
-                           void* userData);
-
-    static void onStartNotify(const DBusInterface& interface,
-                            GDBusConnection* connection,
-                            const std::string& methodName,
-                            GVariant* parameters,
-                            GDBusMethodInvocation* invocation,
-                            void* userData);
-
-    static void onStopNotify(const DBusInterface& interface,
-                           GDBusConnection* connection,
-                           const std::string& methodName,
-                           GVariant* parameters,
-                           GDBusMethodInvocation* invocation,
-                           void* userData);
+    bool notifying;
+    
+    // 설명자 관리
+    std::map<std::string, GattDescriptorPtr> descriptors;
+    
+    // 콜백
+    GattReadCallback readCallback;
+    GattWriteCallback writeCallback;
+    GattNotifyCallback notifyCallback;
+    
+    // D-Bus 메서드 핸들러 - const 참조로 수정
+    void handleReadValue(const DBusMethodCall& call);
+    void handleWriteValue(const DBusMethodCall& call);
+    void handleStartNotify(const DBusMethodCall& call);
+    void handleStopNotify(const DBusMethodCall& call);
+    
+    // D-Bus 프로퍼티 획득
+    GVariant* getUuidProperty();
+    GVariant* getServiceProperty();
+    GVariant* getPropertiesProperty();
+    GVariant* getDescriptorsProperty();
+    GVariant* getNotifyingProperty();
 };
+
+// 스마트 포인터 정의 - 각 헤더에서 자체적으로 정의
+using GattCharacteristicPtr = std::shared_ptr<GattCharacteristic>;
 
 } // namespace ggk

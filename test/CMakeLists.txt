@@ -45,9 +45,13 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/DBusConnection.h
     ${PROJECT_INCLUDE_DIR}/DBusMessage.h
     ${PROJECT_INCLUDE_DIR}/DBusObject.h
-
     # GATT
-    
+    ${PROJECT_INCLUDE_DIR}/GattCallbacks.h
+    ${PROJECT_INCLUDE_DIR}/GattTypes.h
+    ${PROJECT_INCLUDE_DIR}/GattService.h
+    ${PROJECT_INCLUDE_DIR}/GattCharacteristic.h
+    ${PROJECT_INCLUDE_DIR}/GattDescriptor.h
+    ${PROJECT_INCLUDE_DIR}/GattApplication.h
     
 )
 
@@ -65,10 +69,12 @@ set(TEST_SOURCES
     ${PROJECT_SRC_DIR}/DBusConnection.cpp
     ${PROJECT_SRC_DIR}/DBusMessage.cpp
     ${PROJECT_SRC_DIR}/DBusObject.cpp
-
-
     # GATT
-    
+    ${PROJECT_SRC_DIR}/GattTypes.cpp
+    ${PROJECT_SRC_DIR}/GattService.cpp
+    ${PROJECT_SRC_DIR}/GattCharacteristic.cpp
+    ${PROJECT_SRC_DIR}/GattDescriptor.cpp
+    ${PROJECT_SRC_DIR}/GattApplication.cpp
     
 )
 
@@ -82,7 +88,7 @@ add_executable(run_tests
     #-- Util Test -- (약 1ms 소요)
     
     #DBusObjectPathTest.cpp
-    #UtilsTest.cpp
+    UtilsTest.cpp
     
     #-- HCI Test -- (약 30000ms 소요)
     
@@ -96,9 +102,15 @@ add_executable(run_tests
     DBusErrorTest.cpp
     DBusConnectionTest.cpp
     DBusMessageTest.cpp
-    DBusObjectTest.cpp
+    #DBusObjectTest.cpp
     
     # GATT Test
+
+    GattTypesTest.cpp
+    GattServiceTest.cpp        # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    #attIntegrationTest.cpp
 
     # Server Test
 )

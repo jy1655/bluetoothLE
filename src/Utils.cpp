@@ -196,22 +196,22 @@ GVariant *Utils::gvariantFromString(const std::string &str)
 // This is an extension method to the vararg version, which accepts pass-through variable arguments from other mthods.
 GVariant *Utils::gvariantFromStringArray(const char *pStr, va_list args)
 {
-	// Deal with empty arrays
-	if (pStr == 0)
-	{
-		return g_variant_new("as", nullptr);
-	}
+    // 항상 유효한 빌더 사용
+    g_auto(GVariantBuilder) builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
 
-	g_auto(GVariantBuilder) builder;
-	g_variant_builder_init(&builder, G_VARIANT_TYPE_ARRAY);
+    // pStr이 NULL이 아니면 문자열들 추가
+    if (pStr != nullptr)
+    {
+        const char *currentStr = pStr;
+        while (currentStr != nullptr)
+        {
+            g_variant_builder_add(&builder, "s", currentStr);
+            currentStr = va_arg(args, const char *);
+        }
+    }
 
-	while(nullptr != pStr)
-	{
-		g_variant_builder_add(&builder, "s", pStr);
-		pStr = va_arg(args, const char *);
-	}
-
-	return g_variant_builder_end(&builder);
+    return g_variant_builder_end(&builder);
 }
 
 // Returns an array of strings ("as") with one string per variable argument.
@@ -219,41 +219,41 @@ GVariant *Utils::gvariantFromStringArray(const char *pStr, va_list args)
 // The array must be terminated with a nullptr.
 GVariant *Utils::gvariantFromStringArray(const char *pStr, ...)
 {
-	// Deal with empty arrays
-	if (pStr == 0)
-	{
-		return g_variant_new("as", nullptr);
-	}
+    // 항상 유효한 빌더 사용
+    g_auto(GVariantBuilder) builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
 
-	g_auto(GVariantBuilder) builder;
-	g_variant_builder_init(&builder, G_VARIANT_TYPE_ARRAY);
+    // pStr이 NULL이 아니면 문자열들 추가
+    if (pStr != nullptr)
+    {
+        va_list args;
+        va_start(args, pStr);
 
-	va_list args;
-	va_start(args, pStr);
+        const char *currentStr = pStr;
+        while (currentStr != nullptr)
+        {
+            g_variant_builder_add(&builder, "s", currentStr);
+            currentStr = va_arg(args, const char *);
+        }
 
-	GVariant *pResult = gvariantFromStringArray(pStr, args);
+        va_end(args);
+    }
 
-	va_end(args);
-
-	return pResult;
+    return g_variant_builder_end(&builder);
 }
 
 // Returns an array of strings ("as") from an array of strings
 GVariant *Utils::gvariantFromStringArray(const std::vector<std::string> &arr)
 {
-	// Deal with empty arrays
-	if (arr.empty())
-	{
-		return g_variant_new("as", nullptr);
-	}
-
+	// 빌더 초기화 - 항상 유효한 빌더 사용
 	g_auto(GVariantBuilder) builder;
-	g_variant_builder_init(&builder, G_VARIANT_TYPE_ARRAY);
+	g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
 
-	for (std::string str : arr)
-	{
-		g_variant_builder_add(&builder, "s", str.c_str());
-	}
+	// 배열이 비어있어도 문제없이 빈 배열 생성
+    for (const std::string& str : arr)
+    {
+        g_variant_builder_add(&builder, "s", str.c_str());
+    }
 
 	return g_variant_builder_end(&builder);
 }
@@ -261,21 +261,18 @@ GVariant *Utils::gvariantFromStringArray(const std::vector<std::string> &arr)
 // Returns an array of strings ("as") from an array of C strings
 GVariant *Utils::gvariantFromStringArray(const std::vector<const char *> &arr)
 {
-	// Deal with empty arrays
-	if (arr.empty())
-	{
-		return g_variant_new("as", nullptr);
-	}
+    g_auto(GVariantBuilder) builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
 
-	g_auto(GVariantBuilder) builder;
-	g_variant_builder_init(&builder, G_VARIANT_TYPE_ARRAY);
+    for (const char *pStr : arr)
+    {
+        if (pStr != nullptr) // NULL 체크
+        {
+            g_variant_builder_add(&builder, "s", pStr);
+        }
+    }
 
-	for (const char *pStr : arr)
-	{
-		g_variant_builder_add(&builder, "s", pStr);
-	}
-
-	return g_variant_builder_end(&builder);
+    return g_variant_builder_end(&builder);
 }
 
 // Returns an GVariant* containing an object path ("o") from an DBusObjectPath
@@ -305,19 +302,29 @@ GVariant *Utils::gvariantFromInt(gint32 value)
 // Returns an array of bytes ("ay") with the contents of the input C string
 GVariant *Utils::gvariantFromByteArray(const char *pStr)
 {
-	// Deal with empty arrays
-	if (*pStr == 0)
-	{
-		return g_variant_new("ay", nullptr);
-	}
+    if (pStr == nullptr || *pStr == 0)
+    {
+        // 빈 바이트 배열 생성
+        g_auto(GVariantBuilder) builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("ay"));
+        return g_variant_builder_end(&builder);
+    }
 
-	return gvariantFromByteArray(reinterpret_cast<const guint8 *>(pStr), strlen(pStr));
+    return gvariantFromByteArray(reinterpret_cast<const guint8 *>(pStr), strlen(pStr));
 }
 
 // Returns an array of bytes ("ay") with the contents of the input string
 GVariant *Utils::gvariantFromByteArray(const std::string &str)
 {
-	return gvariantFromByteArray(reinterpret_cast<const guint8 *>(str.c_str()), str.length());
+    if (str.empty())
+    {
+        // 빈 바이트 배열 생성
+        g_auto(GVariantBuilder) builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("ay"));
+        return g_variant_builder_end(&builder);
+    }
+
+    return gvariantFromByteArray(reinterpret_cast<const guint8 *>(str.c_str()), str.length());
 }
 
 // Returns an array of bytes ("ay") with the contents of the input array of unsigned 8-bit values
@@ -332,10 +339,18 @@ GVariant *Utils::gvariantFromByteArray(const guint8 *pBytes, int count)
 // Returns an array of bytes ("ay") with the contents of the input array of unsigned 8-bit values
 GVariant *Utils::gvariantFromByteArray(const std::vector<guint8> bytes)
 {
-	GBytes *pGbytes = g_bytes_new(bytes.data(), bytes.size());
-	GVariant *pGVariant = g_variant_new_from_bytes(G_VARIANT_TYPE_BYTESTRING, pGbytes, bytes.size());
-	g_bytes_unref(pGbytes);
-	return pGVariant;
+    if (bytes.empty())
+    {
+        // 빈 바이트 배열 생성
+        g_auto(GVariantBuilder) builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("ay"));
+        return g_variant_builder_end(&builder);
+    }
+
+    GBytes *pGbytes = g_bytes_new(bytes.data(), bytes.size());
+    GVariant *pGVariant = g_variant_new_from_bytes(G_VARIANT_TYPE_BYTESTRING, pGbytes, bytes.size());
+    g_bytes_unref(pGbytes);
+    return pGVariant;
 }
 
 // Returns an array of bytes ("ay") containing a single unsigned 8-bit value

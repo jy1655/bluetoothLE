@@ -1,117 +1,135 @@
 #include "GattService.h"
 #include "GattCharacteristic.h"
-#include "GattDescriptor.h"
 #include "Logger.h"
+#include "Utils.h"
 
 namespace ggk {
 
-const char* GattService::INTERFACE_NAME = "org.bluez.GattService1";
+GattService::GattService(
+    DBusConnection& connection,
+    const DBusObjectPath& path,
+    const GattUuid& uuid,
+    bool isPrimary
+) : DBusObject(connection, path),
+    uuid(uuid),
+    primary(isPrimary) {
+}
 
-GattService::GattService(const GattUuid& uuid, const DBusObjectPath& path, Type type)
-    : DBusInterface(INTERFACE_NAME)
-    , uuid(uuid)
-    , objectPath(path)
-    , type(type) {
+GattCharacteristicPtr GattService::createCharacteristic(
+    const GattUuid& uuid,
+    uint8_t properties,
+    uint8_t permissions
+) {
+    std::string uuidStr = uuid.toString();
     
-    setupProperties();
-    Logger::debug("Created GATT service: " + uuid.toString() + 
-                 (type == Type::PRIMARY ? " (Primary)" : " (Secondary)"));
+    // 이미 존재하는 경우 기존 특성 반환
+    auto it = characteristics.find(uuidStr);
+    if (it != characteristics.end()) {
+        return it->second;
+    }
+    
+    // 새 경로 생성
+    DBusObjectPath charPath = getPath() + "/char" + std::to_string(characteristics.size() + 1);
+    
+    // 특성 생성
+    GattCharacteristicPtr characteristic = std::make_shared<GattCharacteristic>(
+        getConnection(),
+        charPath,
+        uuid,
+        *this,
+        properties,
+        permissions
+    );
+    
+    // 특성 등록
+    if (!characteristic->setupDBusInterfaces()) {
+        Logger::error("Failed to setup characteristic interfaces for: " + uuidStr);
+        return nullptr;
+    }
+    
+    // 맵에 추가
+    characteristics[uuidStr] = characteristic;
+    
+    Logger::info("Created characteristic: " + uuidStr + " at path: " + charPath.toString());
+    return characteristic;
 }
 
-GattService* GattService::currentService = nullptr;
-
-void GattService::setupProperties() {
-    // 현재 서비스 설정
-    currentService = this;
-
-    // 속성 추가
-    addProperty("UUID", "s", true, false, &GattService::getUUIDProperty, nullptr);
-    addProperty("Primary", "b", true, false, &GattService::getPrimaryProperty, nullptr);
-}
-
-bool GattService::addCharacteristic(std::shared_ptr<GattCharacteristic> characteristic) {
-    if (!characteristic) {
-        Logger::error("Attempted to add null characteristic to service: " + uuid.toString());
-        return false;
+GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const {
+    std::string uuidStr = uuid.toString();
+    auto it = characteristics.find(uuidStr);
+    
+    if (it != characteristics.end()) {
+        return it->second;
     }
-
-    if (!validateCharacteristic(characteristic)) {
-        Logger::error("Invalid characteristic for service: " + uuid.toString());
-        return false;
-    }
-
-    // UUID 중복 검사
-    for (const auto& existing : characteristics) {
-        if (existing->getUUID() == characteristic->getUUID()) {
-            Logger::error("Characteristic with UUID " + characteristic->getUUID().toString() + 
-                         " already exists in service: " + uuid.toString());
-            return false;
-        }
-    }
-
-    characteristics.push_back(characteristic);
-    onCharacteristicAdded(characteristic);
-    Logger::debug("Added characteristic " + characteristic->getUUID().toString() + 
-                 " to service: " + uuid.toString());
-    return true;
-}
-
-std::shared_ptr<GattCharacteristic> GattService::getCharacteristic(const GattUuid& uuid) {
-    for (const auto& characteristic : characteristics) {
-        if (characteristic->getUUID() == uuid) {
-            return characteristic;
-        }
-    }
+    
     return nullptr;
 }
 
-bool GattService::validateCharacteristic(const std::shared_ptr<GattCharacteristic>& characteristic) const {
-    if (!characteristic) return false;
-
-    // 경로 유효성 검사
-    if (characteristic->getPath().toString().empty()) {
-        Logger::error("Characteristic has invalid path");
-        return false;
-    }
-
-    // UUID 유효성 검사
-    if (characteristic->getUUID().toString().empty()) {
-        Logger::error("Characteristic has invalid UUID");
-        return false;
-    }
-
-    // 필수 속성 검사
-    bool hasReadOrWrite = false;
-    for (const auto& prop : {
-        GattCharacteristic::Property::READ,
-        GattCharacteristic::Property::WRITE,
-        GattCharacteristic::Property::WRITE_WITHOUT_RESPONSE
-    }) {
-        if (characteristic->hasProperty(prop)) {
-            hasReadOrWrite = true;
-            break;
+bool GattService::setupDBusInterfaces() {
+    // 속성 정의
+    std::vector<DBusProperty> properties = {
+        {
+            "UUID",
+            "s",
+            true,
+            false,
+            false,
+            [this]() { return getUuidProperty(); },
+            nullptr
+        },
+        {
+            "Primary",
+            "b",
+            true,
+            false,
+            false,
+            [this]() { return getPrimaryProperty(); },
+            nullptr
+        },
+        {
+            "Characteristics",
+            "ao",
+            true,
+            false,
+            true,
+            [this]() { return getCharacteristicsProperty(); },
+            nullptr
         }
+    };
+    
+    // 인터페이스 추가
+    if (!addInterface(SERVICE_INTERFACE, properties)) {
+        Logger::error("Failed to add service interface");
+        return false;
     }
-
-    if (!hasReadOrWrite) {
-        Logger::warn("Characteristic has neither read nor write properties");
+    
+    // 서비스는 별도의 메서드가 없음
+    
+    // 객체 등록
+    if (!registerObject()) {
+        Logger::error("Failed to register service object");
+        return false;
     }
-
+    
+    Logger::info("Registered GATT service: " + uuid.toString());
     return true;
 }
 
-std::string GattService::getUUIDString() const {
-    return getUUID().toString();
+GVariant* GattService::getUuidProperty() {
+    return Utils::gvariantFromString(uuid.toBlueZFormat());
 }
 
-void GattService::onCharacteristicAdded(const std::shared_ptr<GattCharacteristic>& characteristic) {
-    // 기본 구현은 비어있음
-    // 하위 클래스에서 필요에 따라 구현 가능
+GVariant* GattService::getPrimaryProperty() {
+    return Utils::gvariantFromBoolean(primary);
 }
 
-void GattService::onCharacteristicRemoved(const std::shared_ptr<GattCharacteristic>& characteristic) {
-    // 기본 구현은 비어있음
-    // 하위 클래스에서 필요에 따라 구현 가능
+GVariant* GattService::getCharacteristicsProperty() {
+    std::vector<std::string> paths;
+    for (const auto& pair : characteristics) {
+        paths.push_back(pair.second->getPath().toString());
+    }
+    
+    return Utils::gvariantFromStringArray(paths);
 }
 
 } // namespace ggk

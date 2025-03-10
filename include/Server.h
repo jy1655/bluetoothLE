@@ -1,130 +1,95 @@
+// BleServer.h
 #pragma once
 
-#include <gio/gio.h>
-#include <memory>
-#include <list>
-#include <string>
-#include "DBusObject.h"
-#include "GattProperty.h"
+#include "DBusConnection.h"
+#include "DBusObjectPath.h"
 #include "GattApplication.h"
-#include "Logger.h"
+#include "HciAdapter.h"
+#include "Mgmt.h"
+#include <memory>
+#include <atomic>
+#include <string>
+#include <map>
 
 namespace ggk {
 
-// 데이터 콜백 타입 정의
-using GGKServerDataGetter = std::function<std::vector<uint8_t>()>;
-using GGKServerDataSetter = std::function<void(const std::vector<uint8_t>&)>;
-
-class Server {
+/**
+ * BleServer - Bluetooth LE 서버 기능을 관리하는 클래스
+ * 
+ * 이 클래스는 어댑터 설정, 광고, 연결 관리 등 서버 관련 기능을 담당합니다.
+ * GattApplication과 함께 작동하여 완전한 BLE 주변 장치를 구현합니다.
+ */
+class BleServer {
 public:
-    // 서버가 관리하는 D-Bus 객체들의 컬렉션
-    using Objects = std::list<DBusObject>;
-
     // 생성자
-    Server(const std::string& serviceName,
-          const std::string& advertisingName,
-          const std::string& advertisingShortName,
-          GGKServerDataGetter getter = nullptr,
-          GGKServerDataSetter setter = nullptr);
+    explicit BleServer(DBusConnection& connection);
     
-    ~Server();
-
-    // 서버 초기화 및 시작/중지
+    // 소멸자
+    ~BleServer();
+    
+    // 초기화 및 정리
     bool initialize();
-    void start();
-    void stop();
-
-    // GATT 서비스 관리
-    bool registerGattApplication();
-    void unregisterGattApplication();
-    GattApplication* getGattApplication() { return gattApp.get(); }
-    const GattApplication* getGattApplication() const { return gattApp.get(); }
-
-    // Accessors
-    const Objects& getObjects() const { return objects; }
-    bool getEnableBREDR() const { return enableBREDR; }
-    bool getEnableSecureConnection() const { return enableSecureConnection; }
-    bool getEnableConnectable() const { return enableConnectable; }
-    bool getEnableDiscoverable() const { return enableDiscoverable; }
-    bool getEnableAdvertising() const { return enableAdvertising; }
-    bool getEnableBondable() const { return enableBondable; }
-    GGKServerDataGetter getDataGetter() const { return dataGetter; }
-    GGKServerDataSetter getDataSetter() const { return dataSetter; }
-    const std::string& getAdvertisingName() const { return advertisingName; }
-    const std::string& getAdvertisingShortName() const { return advertisingShortName; }
-    const std::string& getServiceName() const { return serviceName; }
+    void shutdown();
     
-    // D-Bus 관련
-    std::string getOwnedName() const { return "com." + serviceName; }
+    // 어댑터 관리
+    bool setAdapterName(const std::string& name);
+    bool setPowered(bool powered);
     
-    // D-Bus 객체 및 인터페이스 찾기
-    std::shared_ptr<const DBusInterface> findInterface(
-        const DBusObjectPath& objectPath,
-        const std::string& interfaceName) const;
-
-    bool callMethod(
-        const DBusObjectPath& objectPath,
-        const std::string& interfaceName,
-        const std::string& methodName,
-        GDBusConnection* pConnection,
-        GVariant* pParameters,
-        GDBusMethodInvocation* pInvocation,
-        gpointer pUserData) const;
-
-    const GattProperty* findProperty(
-        const DBusObjectPath& objectPath,
-        const std::string& interfaceName,
-        const std::string& propertyName) const;
-
+    // GATT 애플리케이션 등록
+    bool registerApplication(GattApplication& application);
+    bool unregisterApplication(GattApplication& application);
+    
+    // 광고 제어
+    struct AdvertisingData {
+        std::string localName;
+        std::vector<GattUuid> serviceUuids;
+        std::map<uint16_t, std::vector<uint8_t>> serviceData;
+        std::map<uint16_t, std::vector<uint8_t>> manufacturerData;
+        std::vector<uint8_t> rawData;
+    };
+    
+    bool startAdvertising(const AdvertisingData& advData);
+    bool stopAdvertising();
+    bool isAdvertising() const { return advertising; }
+    
+    // 연결 관리 (옵션)
+    bool isConnected() const { return connected; }
+    bool disconnectClient();
+    
+    // 어댑터 접근
+    HciAdapter* getAdapter() { return hciAdapter.get(); }
+    const std::string& getAdapterPath() const { return adapterPath; }
+    
 private:
-    // D-Bus 객체 관리
-    Objects objects;
-
-    // GATT 애플리케이션
-    std::unique_ptr<GattApplication> gattApp;
-
-    // D-Bus 연결
-    GDBusConnection* dbusConnection;
-    guint ownedNameId;
-    guint registeredObjectId;
-
-    // 블루투스 상태 플래그
-    bool enableBREDR;
-    bool enableSecureConnection;
-    bool enableConnectable;
-    bool enableDiscoverable;
-    bool enableAdvertising;
-    bool enableBondable;
-
-    // 데이터 콜백
-    GGKServerDataGetter dataGetter;
-    GGKServerDataSetter dataSetter;
-
-    // 서버 식별자
-    std::string advertisingName;
-    std::string advertisingShortName;
-    std::string serviceName;
-
-    // 내부 헬퍼 메서드
-    bool setupDBus();
-    void cleanupDBus();
-    static void onBusAcquired(GDBusConnection* connection,
-                             const gchar* name,
-                             gpointer userData);
-    static void onNameAcquired(GDBusConnection* connection,
-                              const gchar* name,
-                              gpointer userData);
-    static void onNameLost(GDBusConnection* connection,
-                          const gchar* name,
-                          gpointer userData);
-
-    // BlueZ 어댑터 관리를 위한 추가
-    std::string adapterPath{"/org/bluez/hci0"};  // 기본 어댑터 경로
-    bool setAdapterProperty(const char* property, GVariant* value);
-    bool getAdapterProperty(const char* property, GVariant** value);
+    // D-Bus 관련
+    DBusConnection& connection;
+    std::string adapterPath;
+    GDBusProxyPtr adapterProxy;
+    GDBusProxyPtr advertisingManagerProxy;
+    
+    // HCI 관련
+    std::unique_ptr<HciAdapter> hciAdapter;
+    std::unique_ptr<Mgmt> mgmt;
+    
+    // 상태 플래그
+    std::atomic<bool> advertising;
+    std::atomic<bool> connected;
+    DBusObjectPath advertisingPath;
+    
+    // 상수
+    static constexpr const char* ADVERTISING_MANAGER_INTERFACE = "org.bluez.LEAdvertisingManager1";
+    static constexpr const char* ADAPTER_INTERFACE = "org.bluez.Adapter1";
+    static constexpr const char* BLUEZ_SERVICE = "org.bluez";
+    static constexpr const char* BLUEZ_OBJECT_PATH = "/org/bluez";
+    
+    // 헬퍼 메서드
+    bool setupBluetooth();
+    bool registerAdvertisement(const AdvertisingData& advData);
+    bool unregisterAdvertisement();
+    
+    // 시그널 핸들러
+    void handleDeviceConnected(const DBusObjectPath& devicePath);
+    void handleDeviceDisconnected(const DBusObjectPath& devicePath);
 };
-
-// 전역 서버 인스턴스
-extern std::shared_ptr<Server> TheServer;
 
 } // namespace ggk

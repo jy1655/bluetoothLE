@@ -1,251 +1,258 @@
-#include <map>
 #include "GattDescriptor.h"
+#include "GattCharacteristic.h"
 #include "Logger.h"
+#include "Utils.h"
 
 namespace ggk {
 
-const char* GattDescriptor::INTERFACE_NAME = "org.bluez.GattDescriptor1";
-
-// 표준 UUID 매핑 정의
-const std::map<GattDescriptor::Type, GattUuid> GattDescriptor::TYPE_TO_UUID = {
-   {Type::EXTENDED_PROPERTIES,    GattUuid("2900")},
-   {Type::USER_DESCRIPTION,       GattUuid("2901")},
-   {Type::CLIENT_CHAR_CONFIG,     GattUuid("2902")},
-   {Type::SERVER_CHAR_CONFIG,     GattUuid("2903")},
-   {Type::PRESENTATION_FORMAT,    GattUuid("2904")},
-   {Type::AGGREGATE_FORMAT,       GattUuid("2905")}
-};
-
-// 디스크립터 타입별 요구사항 매핑
-const std::map<GattDescriptor::Type, GattDescriptor::Requirement> GattDescriptor::TYPE_TO_REQUIREMENT = {
-   {Type::EXTENDED_PROPERTIES,    Requirement::OPTIONAL},
-   {Type::USER_DESCRIPTION,       Requirement::OPTIONAL},
-   {Type::CLIENT_CHAR_CONFIG,     Requirement::CONDITIONAL},
-   {Type::SERVER_CHAR_CONFIG,     Requirement::OPTIONAL},
-   {Type::PRESENTATION_FORMAT,    Requirement::OPTIONAL},
-   {Type::AGGREGATE_FORMAT,       Requirement::OPTIONAL},
-   {Type::CUSTOM,                 Requirement::OPTIONAL}
-};
-
-GattDescriptor::GattDescriptor(Type type, const DBusObjectPath& path)
-   : DBusInterface(INTERFACE_NAME)
-   , objectPath(path)
-   , uuid(TYPE_TO_UUID.at(type))
-   , type(type) {
-   
-   auto it = TYPE_TO_UUID.find(type);
-   if (it != TYPE_TO_UUID.end()) {
-       uuid = it->second;
-       setupProperties();
-       setupMethods();
-       Logger::debug("Created standard GATT descriptor: " + uuid.toString());
-   } else {
-       Logger::error("Invalid descriptor type");
-   }
+GattDescriptor::GattDescriptor(
+    DBusConnection& connection,
+    const DBusObjectPath& path,
+    const GattUuid& uuid,
+    GattCharacteristic& characteristic,
+    uint8_t permissions
+) : DBusObject(connection, path),
+    uuid(uuid),
+    characteristic(characteristic),
+    permissions(permissions) {
 }
 
-GattDescriptor::GattDescriptor(const GattUuid& uuid, const DBusObjectPath& path)
-   : DBusInterface(INTERFACE_NAME)
-   , uuid(uuid)
-   , objectPath(path)
-   , type(Type::CUSTOM) {
-   
-   setupProperties();
-   setupMethods();
-   Logger::debug("Created custom GATT descriptor: " + uuid.toString());
+void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
+    value = newValue;
+    
+    // 값 변경 시 D-Bus 속성 변경 알림
+    if (isRegistered()) {
+        GVariantPtr valueVariant = GVariantPtr(
+            Utils::gvariantFromByteArray(value.data(), value.size()),
+            &g_variant_unref
+        );
+        
+        // 속성 변경 알림
+        emitPropertyChanged(DESCRIPTOR_INTERFACE, "Value", std::move(valueVariant));
+        
+        // 클라이언트 특성 설정 설명자(CCCD)인 경우, 이 값이 알림 활성화/비활성화를 제어
+        if (uuid.toBlueZFormat() == "2902") {
+            if (value.size() >= 2) {
+                // 첫 번째 바이트의 첫 번째 비트는 알림 활성화, 두 번째 비트는 표시(Indication) 활성화
+                bool enableNotify = (value[0] & 0x01) != 0;
+                bool enableIndicate = (value[0] & 0x02) != 0;
+                
+                if (enableNotify || enableIndicate) {
+                    characteristic.startNotify();
+                } else {
+                    characteristic.stopNotify();
+                }
+            }
+        }
+    }
 }
 
-GattDescriptor::Requirement GattDescriptor::getRequirement() const {
-   auto it = TYPE_TO_REQUIREMENT.find(type);
-   return (it != TYPE_TO_REQUIREMENT.end()) ? it->second : Requirement::OPTIONAL;
-}
-
-bool GattDescriptor::isConditionallyRequired(bool hasNotify, bool hasIndicate) const {
-   if (type == Type::CLIENT_CHAR_CONFIG) {
-       return hasNotify || hasIndicate;  // CCCD는 notify나 indicate가 있을 때만 필요
-   }
-   return false;
-}
-
-void GattDescriptor::setupProperties() {
-   // UUID property
-   addDBusProperty("UUID", "s", true, false,
-    std::function<GVariant*(void*)>([this](void*) -> GVariant* {
-        return g_variant_new_string(uuid.toString128().c_str());
-    }));
-}
-
-void GattDescriptor::setupMethods() {
-   // ReadValue method
-   const char* readValueInArgs[] = { "a{sv}", nullptr };
-   addMethod(std::make_shared<DBusMethod>(
-       this,
-       "ReadValue",
-       readValueInArgs,
-       "ay",
-       onReadValue
-   ));
-
-   // WriteValue method
-   const char* writeValueInArgs[] = { "ay", "a{sv}", nullptr };
-   addMethod(std::make_shared<DBusMethod>(
-       this,
-       "WriteValue",
-       writeValueInArgs,
-       "",
-       onWriteValue
-   ));
-}
-
-bool GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
-   if (!validateValue(newValue)) {
-       Logger::error("Invalid value for descriptor: " + uuid.toString());
-       return false;
-   }
-
-   bool changed = !value.has_value() || value.value() != newValue;
-   if (changed) {
-       value = newValue;
-       
-       if (onValueChangedCallback) {
-           onValueChangedCallback(newValue);
-       }
-
-       if (type == Type::CLIENT_CHAR_CONFIG && onCCCDCallback) {
-           onCCCDCallback(isNotificationEnabled(), isIndicationEnabled());
-       }
-   }
-   return changed;
-}
-
-bool GattDescriptor::validateValue(const std::vector<uint8_t>& newValue) const {
-   switch (type) {
-       case Type::CLIENT_CHAR_CONFIG:
-           if (newValue.size() != 2) return false;
-           // CCCD 값 검증: 알려진 비트만 사용
-           return (newValue[0] & 0xFC) == 0 && newValue[1] == 0;
-           
-       case Type::PRESENTATION_FORMAT:
-           return newValue.size() == 7;  // Format + Exponent + Unit + Namespace + Description
-           
-       case Type::EXTENDED_PROPERTIES:
-           return newValue.size() == 2;  // 16-bit flags
-           
-       default:
-           return true;  // 다른 타입은 크기 제한 없음
-   }
-}
-
-void GattDescriptor::onReadValue(const DBusInterface& interface,
-                              GDBusConnection* connection,
-                              const std::string& methodName,
-                              GVariant* parameters,
-                              GDBusMethodInvocation* invocation,
-                              void* userData) {
-   auto* descriptor = static_cast<GattDescriptor*>(userData);
-   if (!descriptor || !descriptor->isRegistered()) {
-       g_dbus_method_invocation_return_error_literal(invocation,
-                                                    G_IO_ERROR,
-                                                    G_IO_ERROR_FAILED,
-                                                    "Invalid descriptor or not registered");
-       return;
-   }
-
-   if (!descriptor->hasValue()) {
-       g_dbus_method_invocation_return_error_literal(invocation,
-                                                    G_IO_ERROR,
-                                                    G_IO_ERROR_NOT_FOUND,
-                                                    "No value available");
-       return;
-   }
-
-   const auto& value = descriptor->getValue().value();
-   GVariant* result = g_variant_new_fixed_array(G_VARIANT_TYPE_BYTE,
-                                              value.data(),
-                                              value.size(),
-                                              sizeof(uint8_t));
-   g_dbus_method_invocation_return_value(invocation, g_variant_new_tuple(&result, 1));
-}
-
-void GattDescriptor::onWriteValue(const DBusInterface& interface,
-                               GDBusConnection* connection,
-                               const std::string& methodName,
-                               GVariant* parameters,
-                               GDBusMethodInvocation* invocation,
-                               void* userData) {
-   auto* descriptor = static_cast<GattDescriptor*>(userData);
-   if (!descriptor || !descriptor->isRegistered()) {
-       g_dbus_method_invocation_return_error_literal(invocation,
-                                                    G_IO_ERROR,
-                                                    G_IO_ERROR_FAILED,
-                                                    "Invalid descriptor or not registered");
-       return;
-   }
-
-   GVariant* valueVariant;
-   GVariant* optionsVariant;
-   g_variant_get(parameters, "(@ay@a{sv})", &valueVariant, &optionsVariant);
-
-   gsize n_elements;
-   const void* data = g_variant_get_fixed_array(valueVariant, &n_elements, sizeof(guchar));
-   
-   std::vector<uint8_t> newValue(static_cast<const uint8_t*>(data),
-                                static_cast<const uint8_t*>(data) + n_elements);
-
-   if (descriptor->setValue(newValue)) {
-       g_dbus_method_invocation_return_value(invocation, nullptr);
-   } else {
-       g_dbus_method_invocation_return_error_literal(invocation,
-                                                    G_IO_ERROR,
-                                                    G_IO_ERROR_INVALID_DATA,
-                                                    "Invalid value for descriptor");
-   }
-   
-   g_variant_unref(valueVariant);
-   g_variant_unref(optionsVariant);
-}
-
-bool GattDescriptor::isNotificationEnabled() const {
-   if (type != Type::CLIENT_CHAR_CONFIG || !value.has_value()) {
-       return false;
-   }
-   const auto& cccd = value.value();
-   return cccd.size() >= 2 && (cccd[0] & 0x01);
-}
-
-bool GattDescriptor::isIndicationEnabled() const {
-   if (type != Type::CLIENT_CHAR_CONFIG || !value.has_value()) {
-       return false;
-   }
-   const auto& cccd = value.value();
-   return cccd.size() >= 2 && (cccd[0] & 0x02);
-}
-
-void GattDescriptor::addDBusProperty(const char* name,
-    const char* type,
-    bool readable,
-    bool writable,
-    std::function<GVariant*(void*)> getter,
-    std::function<void(GVariant*, void*)> setter) {
-    // 정적 함수로 변환
-    GVariant* (*getterPtr)() = nullptr;
-    void (*setterPtr)(GVariant*) = nullptr;
-
-    if (getter) {
-        static std::function<GVariant*(void*)> staticGetter = getter;
-        getterPtr = []() -> GVariant* {
-            return staticGetter(nullptr);
+bool GattDescriptor::setupDBusInterfaces() {
+    // 속성 정의
+    std::vector<DBusProperty> properties = {
+        {
+            "UUID",
+            "s",
+            true,
+            false,
+            false,
+            [this]() { return getUuidProperty(); },
+            nullptr
+        },
+        {
+            "Characteristic",
+            "o",
+            true,
+            false,
+            false,
+            [this]() { return getCharacteristicProperty(); },
+            nullptr
+        },
+        {
+            "Flags",
+            "as",
+            true,
+            false, 
+            false,
+            [this]() { return getPermissionsProperty(); },
+            nullptr
+        }
     };
+    
+    // 인터페이스 추가
+    if (!addInterface(DESCRIPTOR_INTERFACE, properties)) {
+        Logger::error("Failed to add descriptor interface");
+        return false;
+    }
+    
+    // 메서드 핸들러 등록 - const 참조로 수정
+    if (!addMethod(DESCRIPTOR_INTERFACE, "ReadValue", 
+                  [this](const DBusMethodCall& call) { handleReadValue(call); })) {
+        Logger::error("Failed to add ReadValue method");
+        return false;
+    }
+    
+    if (!addMethod(DESCRIPTOR_INTERFACE, "WriteValue", 
+                  [this](const DBusMethodCall& call) { handleWriteValue(call); })) {
+        Logger::error("Failed to add WriteValue method");
+        return false;
+    }
+    
+    // 객체 등록
+    if (!registerObject()) {
+        Logger::error("Failed to register descriptor object");
+        return false;
+    }
+    
+    Logger::info("Registered GATT descriptor: " + uuid.toString());
+    return true;
+}
+
+void GattDescriptor::handleReadValue(const DBusMethodCall& call) {
+    Logger::debug("ReadValue called for descriptor: " + uuid.toString());
+    
+    // 옵션 파라미터 처리 (예: offset)
+    // 실제 구현에서는 이 부분을 확장해야 함
+    
+    std::vector<uint8_t> returnValue;
+    
+    // 콜백이 있으면 호출
+    if (readCallback) {
+        returnValue = readCallback();
+    } else {
+        // 콜백이 없으면 저장된 값 반환
+        returnValue = value;
+    }
+    
+    // 결과 반환
+    GVariantPtr resultVariant = GVariantPtr(
+        Utils::gvariantFromByteArray(returnValue.data(), returnValue.size()),
+        &g_variant_unref
+    );
+    
+    // 메서드 응답 생성 및 전송
+    try {
+        // 여기서 call.invocation은 GDBusMethodInvocationPtr이어야 함
+        if (call.invocation) {
+            g_dbus_method_invocation_return_value(call.invocation.get(), resultVariant.get());
+        } else {
+            Logger::error("Invalid method invocation in ReadValue for descriptor");
+        }
+    } catch (const std::exception& e) {
+        Logger::error(std::string("Exception in ReadValue for descriptor: ") + e.what());
+        if (call.invocation) {
+            // 오류 응답
+            g_dbus_method_invocation_return_error_literal(
+                call.invocation.get(), 
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_FAILED,
+                e.what()
+            );
+        }
+    }
+}
+
+void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
+    Logger::debug("WriteValue called for descriptor: " + uuid.toString());
+    
+    // 파라미터 확인
+    if (!call.parameters) {
+        Logger::error("Missing parameters for WriteValue");
+        
+        // 오류 응답
+        if (call.invocation) {
+            g_dbus_method_invocation_return_error_literal(
+                call.invocation.get(), 
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_INVALID_ARGS,
+                "Missing parameters"
+            );
+        }
+        return;
+    }
+    
+    // 바이트 배열 파라미터 추출
+    try {
+        std::string byteString = Utils::stringFromGVariantByteArray(call.parameters.get());
+        std::vector<uint8_t> newValue(byteString.begin(), byteString.end());
+        
+        // 콜백이 있으면 호출
+        bool success = true;
+        if (writeCallback) {
+            success = writeCallback(newValue);
+        }
+        
+        if (success) {
+            // 성공적으로 처리됨
+            setValue(newValue); // setValue를 통해 특성의 알림 상태 업데이트
+            
+            // 빈 응답 생성 및 전송
+            if (call.invocation) {
+                g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
+            }
+        } else {
+            // 콜백에서 실패 반환
+            if (call.invocation) {
+                g_dbus_method_invocation_return_error_literal(
+                    call.invocation.get(), 
+                    G_DBUS_ERROR,
+                    G_DBUS_ERROR_FAILED,
+                    "Write operation failed"
+                );
+            }
+        }
+    } catch (const std::exception& e) {
+        Logger::error(std::string("Failed to parse WriteValue parameters for descriptor: ") + e.what());
+        
+        if (call.invocation) {
+            g_dbus_method_invocation_return_error_literal(
+                call.invocation.get(), 
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_INVALID_ARGS,
+                "Invalid parameters"
+            );
+        }
+    }
+}
+
+GVariant* GattDescriptor::getUuidProperty() {
+    return Utils::gvariantFromString(uuid.toBlueZFormat());
+}
+
+GVariant* GattDescriptor::getCharacteristicProperty() {
+    return Utils::gvariantFromObject(characteristic.getPath());
+}
+
+GVariant* GattDescriptor::getPermissionsProperty() {
+    std::vector<std::string> flags;
+
+    Logger::debug("Descriptor permissions flags count: " + std::to_string(flags.size()));
+    
+    if (permissions & static_cast<uint8_t>(GattPermission::READ)) {
+        flags.push_back("read");
+    }
+    if (permissions & static_cast<uint8_t>(GattPermission::WRITE)) {
+        flags.push_back("write");
+    }
+    if (permissions & static_cast<uint8_t>(GattPermission::READ_ENCRYPTED)) {
+        flags.push_back("encrypt-read");
+    }
+    if (permissions & static_cast<uint8_t>(GattPermission::WRITE_ENCRYPTED)) {
+        flags.push_back("encrypt-write");
+    }
+    if (permissions & static_cast<uint8_t>(GattPermission::READ_AUTHENTICATED)) {
+        flags.push_back("auth-read");
+    }
+    if (permissions & static_cast<uint8_t>(GattPermission::WRITE_AUTHENTICATED)) {
+        flags.push_back("auth-write");
     }
 
-    if (setter) {
-        static std::function<void(GVariant*, void*)> staticSetter = setter;
-        setterPtr = [](GVariant* value) {
-            staticSetter(value, nullptr);
-        };
+    if (flags.empty()) {
+        flags.push_back("read");  // 기본값 추가
+        Logger::warn("Descriptor permissions empty, defaulting to 'read'");
     }
-
-    addProperty(name, type, readable, writable, getterPtr, setterPtr);
+    
+    return Utils::gvariantFromStringArray(flags);
 }
 
 } // namespace ggk

@@ -1,79 +1,68 @@
+// GattService.h
 #pragma once
 
-#include <gio/gio.h>
-#include <memory>
+#include "GattTypes.h"
+#include "DBusObject.h"
 #include <vector>
-#include "DBusInterface.h"
-#include "GattUuid.h"
-#include "GattCharacteristic.h"
+#include <map>
+#include <memory>
 
 namespace ggk {
 
-class GattService : public DBusInterface {
+// 전방 선언
+class GattCharacteristic;
+
+// 이 파일에서 사용하는 포인터 타입
+using GattCharacteristicPtr = std::shared_ptr<GattCharacteristic>;
+
+class GattService : public DBusObject, public std::enable_shared_from_this<GattService> {
 public:
-    static const char* INTERFACE_NAME;    // "org.bluez.GattService1"
-
-    // Primary/Secondary 서비스 구분
-    enum class Type {
-        PRIMARY,
-        SECONDARY
-    };
-
-    GattService(const GattUuid& uuid, const DBusObjectPath& path, Type type = Type::PRIMARY);
+    // 생성자
+    GattService(
+        DBusConnection& connection,
+        const DBusObjectPath& path,
+        const GattUuid& uuid,
+        bool isPrimary
+    );
+    
     virtual ~GattService() = default;
-
-    // DBusInterface 구현
-    virtual DBusObjectPath getPath() const override { return objectPath; }
-
-    // 서비스 속성
-    const GattUuid& getUUID() const { return uuid; }
-    Type getType() const { return type; }
-    bool isPrimary() const { return type == Type::PRIMARY; }
-
-    // Characteristic 관리
-    bool addCharacteristic(std::shared_ptr<GattCharacteristic> characteristic);
-    std::shared_ptr<GattCharacteristic> getCharacteristic(const GattUuid& uuid);
-    const std::vector<std::shared_ptr<GattCharacteristic>>& getCharacteristics() const { 
-        return characteristics; 
-    }
-
-    // D-Bus 객체 관리
-    bool isRegistered() const { return registered; }
-    void setRegistered(bool reg) { registered = reg; }
-    std::string getUUIDString() const;
+    
+    // 속성 접근자
+    const GattUuid& getUuid() const { return uuid; }
+    bool isPrimary() const { return primary; }
+    
+    // 특성 관리
+    GattCharacteristicPtr createCharacteristic(
+        const GattUuid& uuid,
+        uint8_t properties,
+        uint8_t permissions
+    );
+    
+    GattCharacteristicPtr getCharacteristic(const GattUuid& uuid) const;
+    const std::map<std::string, GattCharacteristicPtr>& getCharacteristics() const { return characteristics; }
+    
+    // BlueZ D-Bus 인터페이스 설정
+    bool setupDBusInterfaces();
+    
     
 private:
-    // 정적 멤버 변수로 현재 서비스 포인터 저장
-    static GattService* currentService;
-
-    // getter 함수들을 static 멤버 함수로 정의
-    static GVariant* getUUIDProperty() {
-        if (currentService) {
-            return g_variant_new_string(currentService->uuid.toString128().c_str());
-        }
-        return nullptr;
-    }
-
-    static GVariant* getPrimaryProperty() {
-        if (currentService) {
-            return g_variant_new_boolean(currentService->type == Type::PRIMARY);
-        }
-        return nullptr;
-    }
-
-protected:
-    virtual void onCharacteristicAdded(const std::shared_ptr<GattCharacteristic>& characteristic);
-    virtual void onCharacteristicRemoved(const std::shared_ptr<GattCharacteristic>& characteristic);
-
-private:
+    // 상수
+    static constexpr const char* SERVICE_INTERFACE = "org.bluez.GattService1";
+    
+    // 속성
     GattUuid uuid;
-    DBusObjectPath objectPath;
-    Type type;
-    std::vector<std::shared_ptr<GattCharacteristic>> characteristics;
-    bool registered{false};
-
-    void setupProperties();
-    bool validateCharacteristic(const std::shared_ptr<GattCharacteristic>& characteristic) const;
+    bool primary;
+    
+    // 특성 관리
+    std::map<std::string, GattCharacteristicPtr> characteristics;
+    
+    // D-Bus 프로퍼티 획득
+    GVariant* getUuidProperty();
+    GVariant* getPrimaryProperty();
+    GVariant* getCharacteristicsProperty();
 };
+
+// 스마트 포인터 정의 - 각 헤더에서 자체적으로 정의
+using GattServicePtr = std::shared_ptr<GattService>;
 
 } // namespace ggk
