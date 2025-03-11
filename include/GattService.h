@@ -6,6 +6,7 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <mutex>
 
 namespace ggk {
 
@@ -39,13 +40,16 @@ public:
     );
     
     GattCharacteristicPtr getCharacteristic(const GattUuid& uuid) const;
-    const std::map<std::string, GattCharacteristicPtr>& getCharacteristics() const { return characteristics; }
+    
+    const std::map<std::string, GattCharacteristicPtr>& getCharacteristics() const {
+        std::lock_guard<std::mutex> lock(characteristicsMutex);
+        return characteristics;
+    }
     
     // BlueZ D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
     
-    
-private:
+//private:
     // 상수
     static constexpr const char* SERVICE_INTERFACE = "org.bluez.GattService1";
     
@@ -55,6 +59,7 @@ private:
     
     // 특성 관리
     std::map<std::string, GattCharacteristicPtr> characteristics;
+    mutable std::mutex characteristicsMutex;
     
     // D-Bus 프로퍼티 획득
     GVariant* getUuidProperty();

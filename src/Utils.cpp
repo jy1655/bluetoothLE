@@ -411,4 +411,9 @@ std::string Utils::stringFromGVariantByteArray(const GVariant *pVariant)
 	return array.data();
 }
 
+GVariant *Utils::createEmptyDictionary() 
+{
+    return g_variant_new_array(G_VARIANT_TYPE("{sv}"), NULL, 0);
+}
+
 }; // namespace ggk

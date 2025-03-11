@@ -140,6 +140,9 @@ struct Utils
 	// Extracts a string from an array of bytes ("ay")
 	static std::string stringFromGVariantByteArray(const GVariant *pVariant);
 
+	// Make a Emtpy GvarientBuilder
+	static GVariant *createEmptyDictionary();
+
 	// -----------------------------------------------------------------------------------------------------------------------------
 	// Endian conversion
 	//

@@ -18,32 +18,46 @@ GattDescriptor::GattDescriptor(
 }
 
 void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
-    value = newValue;
-    
-    // 값 변경 시 D-Bus 속성 변경 알림
-    if (isRegistered()) {
-        GVariantPtr valueVariant = GVariantPtr(
-            Utils::gvariantFromByteArray(value.data(), value.size()),
-            &g_variant_unref
-        );
-        
-        // 속성 변경 알림
-        emitPropertyChanged(DESCRIPTOR_INTERFACE, "Value", std::move(valueVariant));
+    try {
+        {
+            std::lock_guard<std::mutex> lock(valueMutex);
+            value = newValue;
+        }
         
         // 클라이언트 특성 설정 설명자(CCCD)인 경우, 이 값이 알림 활성화/비활성화를 제어
-        if (uuid.toBlueZFormat() == "2902") {
-            if (value.size() >= 2) {
+        if (uuid.toBlueZShortFormat() == "00002902") {
+            if (newValue.size() >= 2) {
                 // 첫 번째 바이트의 첫 번째 비트는 알림 활성화, 두 번째 비트는 표시(Indication) 활성화
-                bool enableNotify = (value[0] & 0x01) != 0;
-                bool enableIndicate = (value[0] & 0x02) != 0;
+                bool enableNotify = (newValue[0] & 0x01) != 0;
+                bool enableIndicate = (newValue[0] & 0x02) != 0;
                 
-                if (enableNotify || enableIndicate) {
-                    characteristic.startNotify();
-                } else {
-                    characteristic.stopNotify();
+                try {
+                    // 별도의 락 없이 특성의 알림 상태를 직접 변경
+                    if (enableNotify || enableIndicate) {
+                        characteristic.startNotify();
+                    } else {
+                        characteristic.stopNotify();
+                    }
+                } catch (const std::exception& e) {
+                    Logger::error("Failed to change notification state: " + std::string(e.what()));
                 }
             }
         }
+        
+        // 값 변경 시 D-Bus 속성 변경 알림
+        if (isRegistered()) {
+            GVariantPtr valueVariant(
+                Utils::gvariantFromByteArray(value.data(), value.size()),
+                &g_variant_unref
+            );
+            
+            if (valueVariant) {
+                // 속성 변경 알림
+                emitPropertyChanged(DESCRIPTOR_INTERFACE, "Value", std::move(valueVariant));
+            }
+        }
+    } catch (const std::exception& e) {
+        Logger::error("Exception in descriptor setValue: " + std::string(e.what()));
     }
 }
 
@@ -85,7 +99,7 @@ bool GattDescriptor::setupDBusInterfaces() {
         return false;
     }
     
-    // 메서드 핸들러 등록 - const 참조로 수정
+    // 메서드 핸들러 등록
     if (!addMethod(DESCRIPTOR_INTERFACE, "ReadValue", 
                   [this](const DBusMethodCall& call) { handleReadValue(call); })) {
         Logger::error("Failed to add ReadValue method");
@@ -109,65 +123,92 @@ bool GattDescriptor::setupDBusInterfaces() {
 }
 
 void GattDescriptor::handleReadValue(const DBusMethodCall& call) {
-    Logger::debug("ReadValue called for descriptor: " + uuid.toString());
-    
-    // 옵션 파라미터 처리 (예: offset)
-    // 실제 구현에서는 이 부분을 확장해야 함
-    
-    std::vector<uint8_t> returnValue;
-    
-    // 콜백이 있으면 호출
-    if (readCallback) {
-        returnValue = readCallback();
-    } else {
-        // 콜백이 없으면 저장된 값 반환
-        returnValue = value;
+    if (!call.invocation) {
+        Logger::error("Invalid method invocation in descriptor ReadValue");
+        return;
     }
     
-    // 결과 반환
-    GVariantPtr resultVariant = GVariantPtr(
-        Utils::gvariantFromByteArray(returnValue.data(), returnValue.size()),
-        &g_variant_unref
-    );
+    Logger::debug("ReadValue called for descriptor: " + uuid.toString());
     
-    // 메서드 응답 생성 및 전송
     try {
-        // 여기서 call.invocation은 GDBusMethodInvocationPtr이어야 함
-        if (call.invocation) {
-            g_dbus_method_invocation_return_value(call.invocation.get(), resultVariant.get());
-        } else {
-            Logger::error("Invalid method invocation in ReadValue for descriptor");
+        // 옵션 파라미터 처리 (예: offset)
+        // 실제 구현에서는 이 부분을 확장해야 함
+        
+        std::vector<uint8_t> returnValue;
+        
+        // 콜백이 있으면 호출
+        {
+            std::lock_guard<std::mutex> callbackLock(callbackMutex);
+            if (readCallback) {
+                try {
+                    returnValue = readCallback();
+                } catch (const std::exception& e) {
+                    Logger::error("Exception in descriptor read callback: " + std::string(e.what()));
+                    g_dbus_method_invocation_return_error_literal(
+                        call.invocation.get(),
+                        G_DBUS_ERROR,
+                        G_DBUS_ERROR_FAILED,
+                        e.what()
+                    );
+                    return;
+                }
+            } else {
+                // 콜백이 없으면 저장된 값 반환
+                std::lock_guard<std::mutex> valueLock(valueMutex);
+                returnValue = value;
+            }
         }
-    } catch (const std::exception& e) {
-        Logger::error(std::string("Exception in ReadValue for descriptor: ") + e.what());
-        if (call.invocation) {
-            // 오류 응답
+        
+        // 결과 반환
+        GVariantPtr resultVariant(
+            Utils::gvariantFromByteArray(returnValue.data(), returnValue.size()),
+            &g_variant_unref
+        );
+        
+        if (!resultVariant) {
+            Logger::error("Failed to create GVariant for descriptor read response");
             g_dbus_method_invocation_return_error_literal(
-                call.invocation.get(), 
+                call.invocation.get(),
                 G_DBUS_ERROR,
                 G_DBUS_ERROR_FAILED,
-                e.what()
+                "Failed to create response"
             );
+            return;
         }
+        
+        // 메서드 응답 생성 및 전송
+        g_dbus_method_invocation_return_value(call.invocation.get(), resultVariant.get());
+        
+    } catch (const std::exception& e) {
+        Logger::error("Exception in descriptor ReadValue: " + std::string(e.what()));
+        g_dbus_method_invocation_return_error_literal(
+            call.invocation.get(),
+            G_DBUS_ERROR,
+            G_DBUS_ERROR_FAILED,
+            e.what()
+        );
     }
 }
 
 void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
+    if (!call.invocation) {
+        Logger::error("Invalid method invocation in descriptor WriteValue");
+        return;
+    }
+    
     Logger::debug("WriteValue called for descriptor: " + uuid.toString());
     
     // 파라미터 확인
     if (!call.parameters) {
-        Logger::error("Missing parameters for WriteValue");
+        Logger::error("Missing parameters for descriptor WriteValue");
         
         // 오류 응답
-        if (call.invocation) {
-            g_dbus_method_invocation_return_error_literal(
-                call.invocation.get(), 
-                G_DBUS_ERROR,
-                G_DBUS_ERROR_INVALID_ARGS,
-                "Missing parameters"
-            );
-        }
+        g_dbus_method_invocation_return_error_literal(
+            call.invocation.get(),
+            G_DBUS_ERROR,
+            G_DBUS_ERROR_INVALID_ARGS,
+            "Missing parameters"
+        );
         return;
     }
     
@@ -178,8 +219,22 @@ void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
         
         // 콜백이 있으면 호출
         bool success = true;
-        if (writeCallback) {
-            success = writeCallback(newValue);
+        {
+            std::lock_guard<std::mutex> callbackLock(callbackMutex);
+            if (writeCallback) {
+                try {
+                    success = writeCallback(newValue);
+                } catch (const std::exception& e) {
+                    Logger::error("Exception in descriptor write callback: " + std::string(e.what()));
+                    g_dbus_method_invocation_return_error_literal(
+                        call.invocation.get(),
+                        G_DBUS_ERROR,
+                        G_DBUS_ERROR_FAILED,
+                        e.what()
+                    );
+                    return;
+                }
+            }
         }
         
         if (success) {
@@ -187,72 +242,81 @@ void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
             setValue(newValue); // setValue를 통해 특성의 알림 상태 업데이트
             
             // 빈 응답 생성 및 전송
-            if (call.invocation) {
-                g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
-            }
+            g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
         } else {
             // 콜백에서 실패 반환
-            if (call.invocation) {
-                g_dbus_method_invocation_return_error_literal(
-                    call.invocation.get(), 
-                    G_DBUS_ERROR,
-                    G_DBUS_ERROR_FAILED,
-                    "Write operation failed"
-                );
-            }
-        }
-    } catch (const std::exception& e) {
-        Logger::error(std::string("Failed to parse WriteValue parameters for descriptor: ") + e.what());
-        
-        if (call.invocation) {
             g_dbus_method_invocation_return_error_literal(
-                call.invocation.get(), 
+                call.invocation.get(),
                 G_DBUS_ERROR,
-                G_DBUS_ERROR_INVALID_ARGS,
-                "Invalid parameters"
+                G_DBUS_ERROR_FAILED,
+                "Write operation failed"
             );
         }
+    } catch (const std::exception& e) {
+        Logger::error("Failed to parse descriptor WriteValue parameters: " + std::string(e.what()));
+        
+        g_dbus_method_invocation_return_error_literal(
+            call.invocation.get(),
+            G_DBUS_ERROR,
+            G_DBUS_ERROR_INVALID_ARGS,
+            "Invalid parameters"
+        );
     }
 }
 
 GVariant* GattDescriptor::getUuidProperty() {
-    return Utils::gvariantFromString(uuid.toBlueZFormat());
+    try {
+        return Utils::gvariantFromString(uuid.toBlueZFormat());
+    } catch (const std::exception& e) {
+        Logger::error("Exception in descriptor getUuidProperty: " + std::string(e.what()));
+        return nullptr;
+    }
 }
 
 GVariant* GattDescriptor::getCharacteristicProperty() {
-    return Utils::gvariantFromObject(characteristic.getPath());
+    try {
+        return Utils::gvariantFromObject(characteristic.getPath());
+    } catch (const std::exception& e) {
+        Logger::error("Exception in getCharacteristicProperty: " + std::string(e.what()));
+        return nullptr;
+    }
 }
 
 GVariant* GattDescriptor::getPermissionsProperty() {
-    std::vector<std::string> flags;
+    try {
+        std::vector<std::string> flags;
 
-    Logger::debug("Descriptor permissions flags count: " + std::to_string(flags.size()));
-    
-    if (permissions & static_cast<uint8_t>(GattPermission::READ)) {
-        flags.push_back("read");
-    }
-    if (permissions & static_cast<uint8_t>(GattPermission::WRITE)) {
-        flags.push_back("write");
-    }
-    if (permissions & static_cast<uint8_t>(GattPermission::READ_ENCRYPTED)) {
-        flags.push_back("encrypt-read");
-    }
-    if (permissions & static_cast<uint8_t>(GattPermission::WRITE_ENCRYPTED)) {
-        flags.push_back("encrypt-write");
-    }
-    if (permissions & static_cast<uint8_t>(GattPermission::READ_AUTHENTICATED)) {
-        flags.push_back("auth-read");
-    }
-    if (permissions & static_cast<uint8_t>(GattPermission::WRITE_AUTHENTICATED)) {
-        flags.push_back("auth-write");
-    }
+        Logger::debug("Descriptor permissions flags count: " + std::to_string(flags.size()));
+        
+        if (permissions & static_cast<uint8_t>(GattPermission::READ)) {
+            flags.push_back("read");
+        }
+        if (permissions & static_cast<uint8_t>(GattPermission::WRITE)) {
+            flags.push_back("write");
+        }
+        if (permissions & static_cast<uint8_t>(GattPermission::READ_ENCRYPTED)) {
+            flags.push_back("encrypt-read");
+        }
+        if (permissions & static_cast<uint8_t>(GattPermission::WRITE_ENCRYPTED)) {
+            flags.push_back("encrypt-write");
+        }
+        if (permissions & static_cast<uint8_t>(GattPermission::READ_AUTHENTICATED)) {
+            flags.push_back("auth-read");
+        }
+        if (permissions & static_cast<uint8_t>(GattPermission::WRITE_AUTHENTICATED)) {
+            flags.push_back("auth-write");
+        }
 
-    if (flags.empty()) {
-        flags.push_back("read");  // 기본값 추가
-        Logger::warn("Descriptor permissions empty, defaulting to 'read'");
+        if (flags.empty()) {
+            flags.push_back("read");  // 기본값 추가
+            Logger::warn("Descriptor permissions empty, defaulting to 'read'");
+        }
+        
+        return Utils::gvariantFromStringArray(flags);
+    } catch (const std::exception& e) {
+        Logger::error("Exception in getPermissionsProperty: " + std::string(e.what()));
+        return nullptr;
     }
-    
-    return Utils::gvariantFromStringArray(flags);
 }
 
 } // namespace ggk

@@ -20,45 +20,69 @@ GattCharacteristicPtr GattService::createCharacteristic(
     uint8_t properties,
     uint8_t permissions
 ) {
+    if (uuid.toString().empty()) {
+        Logger::error("Cannot create characteristic with empty UUID");
+        return nullptr;
+    }
+    
     std::string uuidStr = uuid.toString();
+    
+    std::lock_guard<std::mutex> lock(characteristicsMutex);
     
     // 이미 존재하는 경우 기존 특성 반환
     auto it = characteristics.find(uuidStr);
     if (it != characteristics.end()) {
-        return it->second;
+        if (!it->second) {
+            Logger::error("Found null characteristic entry for UUID: " + uuidStr);
+            characteristics.erase(it);  // 잘못된 항목 제거
+        } else {
+            return it->second;
+        }
     }
     
-    // 새 경로 생성
-    DBusObjectPath charPath = getPath() + "/char" + std::to_string(characteristics.size() + 1);
-    
-    // 특성 생성
-    GattCharacteristicPtr characteristic = std::make_shared<GattCharacteristic>(
-        getConnection(),
-        charPath,
-        uuid,
-        *this,
-        properties,
-        permissions
-    );
-    
-    // 특성 등록
-    if (!characteristic->setupDBusInterfaces()) {
-        Logger::error("Failed to setup characteristic interfaces for: " + uuidStr);
+    try {
+        // 새 경로 생성
+        DBusObjectPath charPath = getPath() + "/char" + std::to_string(characteristics.size() + 1);
+        
+        // 특성 생성
+        GattCharacteristicPtr characteristic = std::make_shared<GattCharacteristic>(
+            getConnection(),
+            charPath,
+            uuid,
+            *this,
+            properties,
+            permissions
+        );
+        
+        if (!characteristic) {
+            Logger::error("Failed to create characteristic for UUID: " + uuidStr);
+            return nullptr;
+        }
+        
+        // 특성 등록
+        if (!characteristic->setupDBusInterfaces()) {
+            Logger::error("Failed to setup characteristic interfaces for: " + uuidStr);
+            return nullptr;
+        }
+        
+        // 맵에 추가
+        characteristics[uuidStr] = characteristic;
+        
+        Logger::info("Created characteristic: " + uuidStr + " at path: " + charPath.toString());
+        return characteristic;
+    } catch (const std::exception& e) {
+        Logger::error("Exception during characteristic creation: " + std::string(e.what()));
         return nullptr;
     }
-    
-    // 맵에 추가
-    characteristics[uuidStr] = characteristic;
-    
-    Logger::info("Created characteristic: " + uuidStr + " at path: " + charPath.toString());
-    return characteristic;
 }
 
 GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const {
     std::string uuidStr = uuid.toString();
-    auto it = characteristics.find(uuidStr);
     
-    if (it != characteristics.end()) {
+    std::lock_guard<std::mutex> lock(characteristicsMutex);
+    
+    auto it = characteristics.find(uuidStr);
+    if (it != characteristics.end() && it->second) {
         return it->second;
     }
     
@@ -116,20 +140,40 @@ bool GattService::setupDBusInterfaces() {
 }
 
 GVariant* GattService::getUuidProperty() {
-    return Utils::gvariantFromString(uuid.toBlueZFormat());
+    try {
+        return Utils::gvariantFromString(uuid.toBlueZFormat());
+    } catch (const std::exception& e) {
+        Logger::error("Exception in getUuidProperty: " + std::string(e.what()));
+        return nullptr;
+    }
 }
 
 GVariant* GattService::getPrimaryProperty() {
-    return Utils::gvariantFromBoolean(primary);
+    try {
+        return Utils::gvariantFromBoolean(primary);
+    } catch (const std::exception& e) {
+        Logger::error("Exception in getPrimaryProperty: " + std::string(e.what()));
+        return nullptr;
+    }
 }
 
 GVariant* GattService::getCharacteristicsProperty() {
-    std::vector<std::string> paths;
-    for (const auto& pair : characteristics) {
-        paths.push_back(pair.second->getPath().toString());
+    try {
+        std::vector<std::string> paths;
+        
+        std::lock_guard<std::mutex> lock(characteristicsMutex);
+        
+        for (const auto& pair : characteristics) {
+            if (pair.second) {  // nullptr 체크
+                paths.push_back(pair.second->getPath().toString());
+            }
+        }
+        
+        return Utils::gvariantFromStringArray(paths);
+    } catch (const std::exception& e) {
+        Logger::error("Exception in getCharacteristicsProperty: " + std::string(e.what()));
+        return nullptr;
     }
-    
-    return Utils::gvariantFromStringArray(paths);
 }
 
 } // namespace ggk

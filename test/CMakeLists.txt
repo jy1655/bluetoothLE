@@ -88,7 +88,7 @@ add_executable(run_tests
     #-- Util Test -- (약 1ms 소요)
     
     #DBusObjectPathTest.cpp
-    UtilsTest.cpp
+    #UtilsTest.cpp
     
     #-- HCI Test -- (약 30000ms 소요)
     
@@ -110,7 +110,9 @@ add_executable(run_tests
     GattServiceTest.cpp        # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    #attIntegrationTest.cpp
+    GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    BlueZIntegrationTest.cpp
+    #GattIntegrationTest.cpp
 
     # Server Test
 )

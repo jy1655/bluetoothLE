@@ -58,7 +58,7 @@ TEST_F(GattCharacteristicGvariantTest, GetUuidProperty) {
     
     // UUID 값 검증
     const gchar* uuidValue = g_variant_get_string(result, nullptr);
-    EXPECT_STREQ(uuidValue, "00002a19");
+    EXPECT_STREQ(uuidValue, "00002a1900001000800000805f9b34fb");
     
     g_variant_unref(result);
 }

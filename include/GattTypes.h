@@ -20,6 +20,7 @@ public:
     
     // BlueZ에서 사용하는 형식으로 반환
     std::string toBlueZFormat() const;
+    std::string toBlueZShortFormat() const;
     
 private:
     std::string uuid;

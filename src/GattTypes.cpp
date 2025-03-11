@@ -49,6 +49,25 @@ std::string GattUuid::toBlueZFormat() const {
     return result;
 }
 
+std::string GattUuid::toBlueZShortFormat() const {
+    // BlueZ는 하이픈이 없는 형식을 사용
+    std::string result = uuid;
+    result.erase(std::remove(result.begin(), result.end(), '-'), result.end());
+    
+    // 모두 소문자로 변환
+    std::transform(result.begin(), result.end(), result.begin(), 
+                   [](unsigned char c){ return std::tolower(c); });
+    
+    // 짧은 형식으로 반환 (처음 8자리)
+    if (result.length() >= 8) {
+        return result.substr(0, 8);
+    }
+    
+    return result;
+}
+
+
+
 bool GattUuid::validate() {
     // 기본 UUID 유효성 검사 (간단한 구현)
     if (uuid.length() == 36 && 

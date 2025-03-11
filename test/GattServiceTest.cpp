@@ -42,7 +42,7 @@ TEST_F(GattServiceGvariantTest, GetUuidProperty) {
     
     // UUID 값 검증
     const gchar* uuidValue = g_variant_get_string(result, nullptr);
-    EXPECT_STREQ(uuidValue, "0000180f");
+    EXPECT_STREQ(uuidValue, "0000180f00001000800000805f9b34fb");
     
     g_variant_unref(result);
 }

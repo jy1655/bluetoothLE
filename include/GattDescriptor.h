@@ -4,13 +4,13 @@
 #include "GattTypes.h"
 #include "GattCallbacks.h"
 #include "DBusObject.h"
+#include "GattCharacteristic.h"  // 완전한 정의가 필요하므로 포함
 #include <vector>
 #include <memory>
+#include <mutex>
 
 namespace ggk {
 
-// 전방 선언 - 필요한 것만 선언
-class GattCharacteristic;
 
 class GattDescriptor : public DBusObject, public std::enable_shared_from_this<GattDescriptor> {
 public:
@@ -27,21 +27,34 @@ public:
     
     // 속성 접근자
     const GattUuid& getUuid() const { return uuid; }
-    const std::vector<uint8_t>& getValue() const { return value; }
+    
+    const std::vector<uint8_t>& getValue() const {
+        std::lock_guard<std::mutex> lock(valueMutex);
+        return value;
+    }
+    
     uint8_t getPermissions() const { return permissions; }
     
     // 값 설정/획득
     void setValue(const std::vector<uint8_t>& value);
     
     // 콜백 설정
-    void setReadCallback(GattReadCallback callback) { readCallback = callback; }
-    void setWriteCallback(GattWriteCallback callback) { writeCallback = callback; }
+    void setReadCallback(GattReadCallback callback) {
+        std::lock_guard<std::mutex> lock(callbackMutex);
+        readCallback = callback;
+    }
+    
+    void setWriteCallback(GattWriteCallback callback) {
+        std::lock_guard<std::mutex> lock(callbackMutex);
+        writeCallback = callback;
+    }
     
     // BlueZ D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
+
+    GattCharacteristic& getCharacteristic() const { return characteristic; }
     
-    
-private:
+//private:
     // 상수
     static constexpr const char* DESCRIPTOR_INTERFACE = "org.bluez.GattDescriptor1";
     
@@ -50,12 +63,14 @@ private:
     GattCharacteristic& characteristic;
     uint8_t permissions;
     std::vector<uint8_t> value;
+    mutable std::mutex valueMutex;
     
     // 콜백
     GattReadCallback readCallback;
     GattWriteCallback writeCallback;
+    mutable std::mutex callbackMutex;
     
-    // D-Bus 메서드 핸들러 - const 참조로 수정
+    // D-Bus 메서드 핸들러
     void handleReadValue(const DBusMethodCall& call);
     void handleWriteValue(const DBusMethodCall& call);
     
