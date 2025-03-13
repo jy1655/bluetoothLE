@@ -8,19 +8,27 @@ namespace ggk {
 GattApplication::GattApplication(DBusConnection& connection, const DBusObjectPath& path)
     : DBusObject(connection, path),
       registered(false) {
-    // GattApplication 생성자에서 
-    if (connection.isConnected()) {  // DBusObject가 아닌 connection에서 호출
+    
+    if (connection.isConnected()) {
         try {
-            // 고정된 D-Bus 이름 요청
+            // 시스템 버스에 이름 등록
             const std::string busName = "com.example.gatt";
-            GVariantPtr result = connection.callMethod(  // getConnection() 대신 직접 connection 사용
+            GVariantPtr result = connection.callMethod(
                 "org.freedesktop.DBus",
                 DBusObjectPath("/org/freedesktop/DBus"),
                 "org.freedesktop.DBus",
                 "RequestName",
-                GVariantPtr(g_variant_new("(su)", busName.c_str(), 0), &g_variant_unref)
+                GVariantPtr(g_variant_new("(su)", busName.c_str(), 0x4), &g_variant_unref)  // 0x4 = DBUS_NAME_FLAG_DO_NOT_QUEUE
             );
-            Logger::info("Requested bus name: " + busName);
+            
+            guint32 ret = 0;
+            g_variant_get(result.get(), "(u)", &ret);
+            
+            if (ret == 1) {  // DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER
+                Logger::info("Successfully acquired bus name: " + busName);
+            } else {
+                Logger::error("Failed to acquire bus name: " + busName + ", return code: " + std::to_string(ret));
+            }
         } catch (const std::exception& e) {
             Logger::error("Failed to request bus name: " + std::string(e.what()));
         }
@@ -130,13 +138,13 @@ bool GattApplication::registerWithBlueZ() {
         // D-Bus 메시지 큐가 처리될 시간 제공
         usleep(100000); // 100ms 대기
         
-        // 가장 단순한 접근 방식으로 다시 시도
-        // g_variant_new 함수로 직접 중첩 구조 생성
-        GVariant* params = g_variant_new(
-            "(oa{sv})",                // 서명: 객체 경로와 빈 딕셔너리
-            getPath().c_str(),        // 객체 경로
-            NULL                       // 빈 딕셔너리
-        );
+        // 더 안전한 방식으로 빈 딕셔너리 생성
+        GVariant* emptyDict = g_variant_new_array(G_VARIANT_TYPE("{sv}"), nullptr, 0);
+        
+        // 명시적 유형 지정과 함께 파라미터 생성
+        GVariant* params = g_variant_new("(o@a{sv})",
+                                        getPath().c_str(),
+                                        emptyDict);
         
         // 스마트 포인터로 래핑
         GVariantPtr parameters(params, &g_variant_unref);

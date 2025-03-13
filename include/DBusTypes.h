@@ -9,13 +9,13 @@
 
 namespace ggk {
 
-// GLib 객체를 위한 사용자 정의 삭제자 함수 - 더 명확하게 인라인 정의
+// GLib 객체를 위한 사용자 정의 삭제자 함수
 inline void gvariant_deleter(GVariant* p) {
     if (p) g_variant_unref(p);
 }
 
 inline void gobject_deleter(void* p) {
-    if (p) g_object_unref(p);
+    if (p) g_object_unref(G_OBJECT(p));
 }
 
 inline void gerror_deleter(GError* p) {
@@ -30,7 +30,7 @@ inline void gvariantbuilder_deleter(GVariantBuilder* p) {
     if (p) g_variant_builder_unref(p);
 }
 
-// 스마트 포인터 정의 - 기존 정의 유지하되 삭제자 함수 활용
+// 스마트 포인터 정의
 using GVariantPtr = std::unique_ptr<GVariant, decltype(&gvariant_deleter)>;
 using GDBusConnectionPtr = std::unique_ptr<GDBusConnection, decltype(&gobject_deleter)>;
 using GDBusMethodInvocationPtr = std::unique_ptr<GDBusMethodInvocation, decltype(&gobject_deleter)>;
@@ -41,7 +41,7 @@ using GDBusProxyPtr = std::unique_ptr<GDBusProxy, decltype(&gobject_deleter)>;
 using GCancellablePtr = std::unique_ptr<GCancellable, decltype(&gobject_deleter)>;
 using GDBusMessagePtr = std::unique_ptr<GDBusMessage, decltype(&gobject_deleter)>;
 
-// 스마트 포인터 생성 헬퍼 함수 - 기존 함수 유지 및 확장
+// NULL 스마트 포인터 생성 헬퍼 함수
 inline GVariantPtr makeNullGVariantPtr() {
     return GVariantPtr(nullptr, &gvariant_deleter);
 }
@@ -62,21 +62,22 @@ inline GErrorPtr makeNullGErrorPtr() {
     return GErrorPtr(nullptr, &gerror_deleter);
 }
 
-// 스마트 포인터 생성 헬퍼 함수 - 추가 헬퍼 함수
+// GVariant 관련 스마트 포인터 생성 함수 (GVariant는 참조 카운트만 관리)
 inline GVariantPtr makeGVariantPtr(GVariant* p) {
     return GVariantPtr(p, &gvariant_deleter);
 }
 
+// GObject 기반 스마트 포인터 생성 함수 (참조 카운트 증가 패턴 적용)
 inline GDBusProxyPtr makeGDBusProxyPtr(GDBusProxy* p) {
-    return GDBusProxyPtr(p, &gobject_deleter);
+    return p ? GDBusProxyPtr(g_object_ref(p), &gobject_deleter) : GDBusProxyPtr(nullptr, &gobject_deleter);
 }
 
 inline GDBusMethodInvocationPtr makeGDBusMethodInvocationPtr(GDBusMethodInvocation* p) {
-    return GDBusMethodInvocationPtr(p, &gobject_deleter);
+    return p ? GDBusMethodInvocationPtr(g_object_ref(p), &gobject_deleter) : GDBusMethodInvocationPtr(nullptr, &gobject_deleter);
 }
 
 inline GDBusMessagePtr makeGDBusMessagePtr(GDBusMessage* p) {
-    return GDBusMessagePtr(p, &gobject_deleter);
+    return p ? GDBusMessagePtr(g_object_ref(p), &gobject_deleter) : GDBusMessagePtr(nullptr, &gobject_deleter);
 }
 
 inline GErrorPtr makeGErrorPtr(GError* p) {
@@ -92,22 +93,22 @@ inline GVariantBuilderPtr makeGVariantBuilderPtr(GVariantBuilder* p) {
 }
 
 inline GDBusConnectionPtr makeGDBusConnectionPtr(GDBusConnection* p) {
-    return GDBusConnectionPtr(p, &gobject_deleter);
+    return p ? GDBusConnectionPtr(g_object_ref(p), &gobject_deleter) : GDBusConnectionPtr(nullptr, &gobject_deleter);
 }
 
 inline GCancellablePtr makeGCancellablePtr(GCancellable* p) {
-    return GCancellablePtr(p, &gobject_deleter);
+    return p ? GCancellablePtr(g_object_ref(p), &gobject_deleter) : GCancellablePtr(nullptr, &gobject_deleter);
 }
 
-// D-Bus 인자 정의 - 기존 구조체 유지
+// D-Bus 인자 정의
 struct DBusArgument {
     std::string signature;   // D-Bus 타입 시그니처
     std::string name;        // 인자 이름
     std::string direction;   // "in" 또는 "out"
-    std::string description; // 인자 설명 (추가됨)
+    std::string description; // 인자 설명
 };
 
-// D-Bus 메시지 타입 정의 - 기존 열거형 유지
+// D-Bus 메시지 타입 정의
 enum class DBusMessageType {
     METHOD_CALL,
     METHOD_RETURN,
@@ -115,14 +116,14 @@ enum class DBusMessageType {
     SIGNAL
 };
 
-// D-Bus 기본 인터페이스 상수 - 기존 구조체 유지
+// D-Bus 기본 인터페이스 상수
 struct DBusInterface {
     static constexpr const char* PROPERTIES = "org.freedesktop.DBus.Properties";
     static constexpr const char* INTROSPECTABLE = "org.freedesktop.DBus.Introspectable";
     static constexpr const char* OBJECTMANAGER = "org.freedesktop.DBus.ObjectManager";
 };
 
-// D-Bus 속성 구조체 - 기존 구조체 유지
+// D-Bus 속성 구조체
 struct DBusProperty {
     std::string name;
     std::string signature;
@@ -133,7 +134,7 @@ struct DBusProperty {
     std::function<bool(GVariant*)> setter;
 };
 
-// D-Bus 메서드 호출 구조체 - 기존 구조체 유지
+// D-Bus 메서드 호출 구조체
 struct DBusMethodCall {
     std::string sender;
     std::string interface;
@@ -165,13 +166,13 @@ struct DBusMethodCall {
         parameters(std::move(p)), invocation(std::move(inv)) {}
 };
 
-// D-Bus 시그널 구조체 - 기존 구조체 유지
+// D-Bus 시그널 구조체
 struct DBusSignal {
     std::string name;
     std::vector<DBusArgument> arguments;
 };
 
-// D-Bus 인트로스펙션 구조체 - 추가된 구조체
+// D-Bus 인트로스펙션 구조체
 struct DBusIntrospection {
     bool includeStandardInterfaces = true;
     std::map<std::string, std::string> annotations;

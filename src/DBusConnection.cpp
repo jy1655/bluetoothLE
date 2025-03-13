@@ -30,14 +30,17 @@ bool DBusConnection::connect() {
         if (error) {
             Logger::error("Failed to connect to D-Bus: " + std::string(error->message));
             g_error_free(error);
+            error = nullptr;
         } else {
             Logger::error("Failed to connect to D-Bus: Unknown error");
         }
         return false;
     }
     
-    connection.reset(rawConnection);
+    // 중요: 참조 카운트를 명시적으로 증가시킨 후 스마트 포인터에 저장
+    connection = makeGDBusConnectionPtr(rawConnection);
     
+    // exit-on-close 설정 해제
     g_dbus_connection_set_exit_on_close(connection.get(), FALSE);
     
     Logger::info("Connected to D-Bus");
@@ -85,6 +88,11 @@ GVariantPtr DBusConnection::callMethod(
     }
     
     GError* error = nullptr;
+    GVariantType* replyType = nullptr;
+    if (!replySignature.empty()) {
+        replyType = g_variant_type_new(replySignature.c_str());
+    }
+    
     GVariant* result = g_dbus_connection_call_sync(
         connection.get(),
         destination.c_str(),
@@ -92,16 +100,21 @@ GVariantPtr DBusConnection::callMethod(
         interface.c_str(),
         method.c_str(),
         parameters.get(),
-        replySignature.empty() ? nullptr : g_variant_type_new(replySignature.c_str()),
+        replyType,
         G_DBUS_CALL_FLAGS_NONE,
         timeoutMs,
         nullptr,
         &error
     );
     
+    if (replyType) {
+        g_variant_type_free(replyType);
+    }
+    
     if (error) {
         Logger::error("D-Bus method call failed: " + std::string(error->message));
         g_error_free(error);
+        error = nullptr;
         return makeNullGVariantPtr();
     }
     
@@ -134,6 +147,7 @@ bool DBusConnection::emitSignal(
         if (error) {
             Logger::error("Failed to emit D-Bus signal: " + std::string(error->message));
             g_error_free(error);
+            error = nullptr; 
         } else {
             Logger::error("Failed to emit D-Bus signal: Unknown error");
         }
@@ -168,6 +182,7 @@ bool DBusConnection::registerObject(
         if (error) {
             Logger::error("Failed to parse introspection XML: " + std::string(error->message));
             g_error_free(error);
+            error = nullptr;
         } else {
             Logger::error("Failed to parse introspection XML: Unknown error");
         }
@@ -259,29 +274,38 @@ bool DBusConnection::emitPropertyChanged(
     
     // 변경된 속성 사전 생성
     GVariantBuilder builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE_ARRAY);
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));  // 구체적인 타입 사용
     g_variant_builder_add(&builder, "{sv}", propertyName.c_str(), value.get());
     
     // 무효화된 속성 빈 배열
     GVariantBuilder invalidatedBuilder;
-    g_variant_builder_init(&invalidatedBuilder, G_VARIANT_TYPE_ARRAY);
+    g_variant_builder_init(&invalidatedBuilder, G_VARIANT_TYPE("as"));  // 구체적인 타입 사용
     
     // 시그널 매개변수 생성
-    GVariantPtr params(
-        g_variant_new("(sa{sv}as)",
-            interface.c_str(),
-            &builder,
-            &invalidatedBuilder),
-        &g_variant_unref
-    );
+    GVariant* params = g_variant_new("(sa{sv}as)",
+        interface.c_str(),
+        &builder,
+        &invalidatedBuilder);
+    
+    // floating reference를 싱크하여 참조 카운트 관리
+    GVariant* ref_sinked_params = g_variant_ref_sink(params);
+    
+    // cleanup: 빌더 리소스 해제
+    g_variant_builder_clear(&builder);
+    g_variant_builder_clear(&invalidatedBuilder);
+    
+    // 스마트 포인터로 래핑
+    GVariantPtr paramsPtr(ref_sinked_params, &g_variant_unref);
     
     // PropertiesChanged 시그널 발생
-    return emitSignal(
+    bool result = emitSignal(
         path,
         "org.freedesktop.DBus.Properties",
         "PropertiesChanged",
-        std::move(params)
+        std::move(paramsPtr)
     );
+    
+    return result;
 }
 
 guint DBusConnection::addSignalWatch(

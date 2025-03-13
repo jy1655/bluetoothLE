@@ -102,7 +102,7 @@ sudo nano /etc/dbus-1/system.d/com.example.gatt.conf
     <allow send_destination="org.bluez"/>
   </policy>
   <policy at_console="true">
-    <allow own="ccom.example.gatt"/>
+    <allow own="com.example.gatt"/>
     <allow send_destination="com.example.gatt"/>
     <allow send_destination="org.bluez"/>
   </policy>

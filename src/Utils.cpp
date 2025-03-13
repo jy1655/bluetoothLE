@@ -243,19 +243,21 @@ GVariant *Utils::gvariantFromStringArray(const char *pStr, ...)
 }
 
 // Returns an array of strings ("as") from an array of strings
-GVariant *Utils::gvariantFromStringArray(const std::vector<std::string> &arr)
-{
-	// 빌더 초기화 - 항상 유효한 빌더 사용
-	g_auto(GVariantBuilder) builder;
-	g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
-
-	// 배열이 비어있어도 문제없이 빈 배열 생성
-    for (const std::string& str : arr)
-    {
-        g_variant_builder_add(&builder, "s", str.c_str());
+GVariant* Utils::gvariantFromStringArray(const std::vector<std::string>& arr) {
+    // 명시적으로 힙에 빌더 생성
+    GVariantBuilder* builder = g_variant_builder_new(G_VARIANT_TYPE("as"));
+    
+    for (const auto& str : arr) {
+        g_variant_builder_add(builder, "s", str.c_str());
     }
-
-	return g_variant_builder_end(&builder);
+    
+    // 빌더로부터 GVariant 생성
+    GVariant* result = g_variant_builder_end(builder);
+    
+    // 빌더 메모리 해제
+    g_variant_builder_unref(builder);
+    
+    return result;
 }
 
 // Returns an array of strings ("as") from an array of C strings
