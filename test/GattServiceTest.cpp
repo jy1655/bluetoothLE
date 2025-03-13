@@ -78,8 +78,8 @@ TEST_F(GattServiceGvariantTest, GetCharacteristicsPropertyWithItems) {
     // 먼저 특성을 추가
     GattCharacteristicPtr characteristic = service->createCharacteristic(
         GattUuid::fromShortUuid(0x2A19), // Battery Level
-        static_cast<uint8_t>(GattProperty::READ),
-        static_cast<uint8_t>(GattPermission::READ)
+        GattProperty::PROP_READ,
+        GattPermission::PERM_READ
     );
     
     // Null이 아닌지 확인

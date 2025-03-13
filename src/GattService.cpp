@@ -122,7 +122,7 @@ bool GattService::setupDBusInterfaces() {
     };
     
     // 인터페이스 추가
-    if (!addInterface(SERVICE_INTERFACE, properties)) {
+    if (!addInterface(BlueZConstants::GATT_SERVICE_INTERFACE, properties)) {
         Logger::error("Failed to add service interface");
         return false;
     }

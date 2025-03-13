@@ -3,6 +3,7 @@
 
 #include "GattTypes.h"
 #include "DBusObject.h"
+#include "BlueZConstants.h"
 #include <vector>
 #include <map>
 #include <memory>
@@ -50,8 +51,6 @@ public:
     bool setupDBusInterfaces();
     
 //private:
-    // 상수
-    static constexpr const char* SERVICE_INTERFACE = "org.bluez.GattService1";
     
     // 속성
     GattUuid uuid;

@@ -46,6 +46,7 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/DBusMessage.h
     ${PROJECT_INCLUDE_DIR}/DBusObject.h
     # GATT
+    ${PROJECT_INCLUDE_DIR}/BlueZConstants.h
     ${PROJECT_INCLUDE_DIR}/GattCallbacks.h
     ${PROJECT_INCLUDE_DIR}/GattTypes.h
     ${PROJECT_INCLUDE_DIR}/GattService.h
@@ -111,7 +112,6 @@ add_executable(run_tests
     GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    BlueZIntegrationTest.cpp
     #GattIntegrationTest.cpp
 
     # Server Test

@@ -58,7 +58,7 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
             }
             
             // Value 속성 변경 알림 - 속성이 공개되어 있는 경우에만
-            emitPropertyChanged(CHARACTERISTIC_INTERFACE, "Value", std::move(valueVariant));
+            emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Value", std::move(valueVariant));
         }
     } catch (const std::exception& e) {
         Logger::error("Exception in setValue: " + std::string(e.what()));
@@ -148,8 +148,8 @@ bool GattCharacteristic::startNotify() {
         return true;  // 이미 알림 중
     }
     
-    if (!(properties & static_cast<uint8_t>(GattProperty::NOTIFY)) &&
-        !(properties & static_cast<uint8_t>(GattProperty::INDICATE))) {
+    if (!(properties & GattProperty::PROP_NOTIFY) &&
+        !(properties & GattProperty::PROP_INDICATE)) {
         Logger::error("Characteristic does not support notifications: " + uuid.toString());
         return false;
     }
@@ -169,7 +169,7 @@ bool GattCharacteristic::startNotify() {
             return false;
         }
         
-        emitPropertyChanged(CHARACTERISTIC_INTERFACE, "Notifying", std::move(valueVariant));
+        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Notifying", std::move(valueVariant));
     }
     
     // 콜백 호출
@@ -209,7 +209,7 @@ bool GattCharacteristic::stopNotify() {
             return false;
         }
         
-        emitPropertyChanged(CHARACTERISTIC_INTERFACE, "Notifying", std::move(valueVariant));
+        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Notifying", std::move(valueVariant));
     }
     
     Logger::info("Stopped notifications for: " + uuid.toString());
@@ -267,31 +267,31 @@ bool GattCharacteristic::setupDBusInterfaces() {
     };
     
     // 인터페이스 추가
-    if (!addInterface(CHARACTERISTIC_INTERFACE, properties)) {
+    if (!addInterface(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, properties)) {
         Logger::error("Failed to add characteristic interface");
         return false;
     }
     
     // 메서드 핸들러 등록
-    if (!addMethod(CHARACTERISTIC_INTERFACE, "ReadValue", 
+    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "ReadValue", 
                   [this](const DBusMethodCall& call) { handleReadValue(call); })) {
         Logger::error("Failed to add ReadValue method");
         return false;
     }
     
-    if (!addMethod(CHARACTERISTIC_INTERFACE, "WriteValue", 
+    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "WriteValue", 
                   [this](const DBusMethodCall& call) { handleWriteValue(call); })) {
         Logger::error("Failed to add WriteValue method");
         return false;
     }
     
-    if (!addMethod(CHARACTERISTIC_INTERFACE, "StartNotify", 
+    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "StartNotify", 
                   [this](const DBusMethodCall& call) { handleStartNotify(call); })) {
         Logger::error("Failed to add StartNotify method");
         return false;
     }
     
-    if (!addMethod(CHARACTERISTIC_INTERFACE, "StopNotify", 
+    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "StopNotify", 
                   [this](const DBusMethodCall& call) { handleStopNotify(call); })) {
         Logger::error("Failed to add StopNotify method");
         return false;
@@ -518,33 +518,33 @@ GVariant* GattCharacteristic::getPropertiesProperty() {
     try {
         std::vector<std::string> flags;
         
-        if (properties & static_cast<uint8_t>(GattProperty::BROADCAST)) {
+        if (properties & GattProperty::PROP_BROADCAST) {
             flags.push_back("broadcast");
         }
-        if (properties & static_cast<uint8_t>(GattProperty::READ)) {
+        if (properties & GattProperty::PROP_READ) {
             flags.push_back("read");
         }
-        if (properties & static_cast<uint8_t>(GattProperty::WRITE_WITHOUT_RESPONSE)) {
+        if (properties & GattProperty::PROP_WRITE_WITHOUT_RESPONSE) {
             flags.push_back("write-without-response");
         }
-        if (properties & static_cast<uint8_t>(GattProperty::WRITE)) {
+        if (properties & GattProperty::PROP_WRITE) {
             flags.push_back("write");
         }
-        if (properties & static_cast<uint8_t>(GattProperty::NOTIFY)) {
+        if (properties & GattProperty::PROP_NOTIFY) {
             flags.push_back("notify");
         }
-        if (properties & static_cast<uint8_t>(GattProperty::INDICATE)) {
+        if (properties & GattProperty::PROP_INDICATE) {
             flags.push_back("indicate");
         }
-        if (properties & static_cast<uint8_t>(GattProperty::AUTHENTICATED_SIGNED_WRITES)) {
+        if (properties & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES) {
             flags.push_back("authenticated-signed-writes");
         }
         
         // 권한 기반 추가 플래그
-        if (permissions & static_cast<uint8_t>(GattPermission::READ_ENCRYPTED)) {
+        if (permissions & GattPermission::PERM_READ_ENCRYPTED) {
             flags.push_back("encrypt-read");
         }
-        if (permissions & static_cast<uint8_t>(GattPermission::WRITE_ENCRYPTED)) {
+        if (permissions & GattPermission::PERM_WRITE_ENCRYPTED) {
             flags.push_back("encrypt-write");
         }
         

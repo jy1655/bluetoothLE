@@ -31,8 +31,8 @@ protected:
             DBusObjectPath("/test/service/char1"),
             GattUuid::fromShortUuid(0x2A19), // Battery Level
             *service,
-            static_cast<uint8_t>(GattProperty::READ) | static_cast<uint8_t>(GattProperty::NOTIFY),
-            static_cast<uint8_t>(GattPermission::READ)
+            static_cast<uint8_t>(GattProperty::PROP_READ) | static_cast<uint8_t>(GattProperty::PROP_NOTIFY),
+            static_cast<uint8_t>(GattPermission::PERM_READ)
         );
         
         // 테스트용 설명자 생성
@@ -41,7 +41,7 @@ protected:
             DBusObjectPath("/test/service/char1/desc1"),
             GattUuid::fromShortUuid(0x2902), // CCCD
             *characteristic,
-            static_cast<uint8_t>(GattPermission::READ) | static_cast<uint8_t>(GattPermission::WRITE)
+            static_cast<uint8_t>(GattPermission::PERM_READ) | static_cast<uint8_t>(GattPermission::PERM_WRITE)
         );
         
         // 초기값 설정

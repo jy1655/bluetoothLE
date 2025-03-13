@@ -1,119 +1,139 @@
 #include <gtest/gtest.h>
-#include "GattApplication.h"
 #include "DBusConnection.h"
 #include "DBusObjectPath.h"
 #include "GattTypes.h"
-#include <thread>
-#include <chrono>
+#include "GattApplication.h"
+#include "GattService.h"
+#include "GattCharacteristic.h"
+#include "GattDescriptor.h"
+#include "BlueZConstants.h"
 
 using namespace ggk;
 
-class GattApplicationRealTest : public ::testing::Test {
+class GattTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        static int testCounter = 0;
-        dbusPath = DBusObjectPath("/org/example/test" + std::to_string(testCounter++));
-        dbusConnection = std::make_unique<DBusConnection>(G_BUS_TYPE_SYSTEM);
-
-        ASSERT_TRUE(dbusConnection->connect()) << "DBus 연결 실패";
-
-        app = std::make_unique<GattApplication>(*dbusConnection, dbusPath);
-        adapterPath = DBusObjectPath("/org/bluez/hci0"); // 실제 블루투스 어댑터 경로
+        connection = std::make_unique<DBusConnection>();
+        ASSERT_TRUE(connection->connect());  // 🔹 D-Bus 연결 확인
+        app = std::make_unique<GattApplication>(*connection);
     }
 
     void TearDown() override {
-        // isRegistered() 메서드 사용
-        if (app->isRegistered) {  // 게터 메서드 사용
-            app->unregisterFromBluez(adapterPath);
-        }
-        
         app.reset();
-        dbusConnection.reset();
+        connection->disconnect();
+        connection.reset();
     }
 
-    std::unique_ptr<DBusConnection> dbusConnection;
+    std::unique_ptr<DBusConnection> connection;
     std::unique_ptr<GattApplication> app;
-    DBusObjectPath dbusPath;
-    DBusObjectPath adapterPath;
 };
 
-// **GattApplication 객체 생성 테스트**
-TEST_F(GattApplicationRealTest, Constructor_InitializesProperly) {
-    EXPECT_EQ(app->getPath().toString(), "/org/example/test0");
-    // 초기 상태에서는 등록되지 않아야 함
-    EXPECT_FALSE(app->isRegistered);
+TEST_F(GattTest, GattService_Creation) {
+    auto service = std::make_shared<GattService>(
+        *connection,
+        DBusObjectPath("/com/example/gatt/service1"),
+        GattUuid("12345678-1234-5678-1234-56789abcdef0"),
+        true
+    );
+
+    EXPECT_EQ(service->getUuid().toString(), "12345678-1234-5678-1234-56789abcdef0");
+    EXPECT_TRUE(service->isPrimary());
 }
 
-// **GattApplication의 D-Bus 인터페이스 설정 테스트**
-TEST_F(GattApplicationRealTest, SetupDBusInterfaces_Success) {
-    EXPECT_TRUE(app->setupDBusInterfaces());
+TEST_F(GattTest, AddGattCharacteristic) {
+    auto service = std::make_shared<GattService>(
+        *connection,
+        DBusObjectPath("/com/example/gatt/service1"),
+        GattUuid("12345678-1234-5678-1234-56789abcdef0"),
+        true
+    );
 
-    // D-Bus 객체 등록 확인 (DBusObject::isRegistered() 메서드가 있다면)
-    EXPECT_TRUE(app->DBusObject::isRegistered());
-    
-    // 그러나 BlueZ 등록은 아직 안 됨
-    EXPECT_FALSE(app->isRegistered);
+    auto characteristic = service->createCharacteristic(
+        GattUuid("87654321-4321-6789-4321-56789abcdef0"),
+        GattProperty::PROP_READ | GattProperty::PROP_WRITE,
+        GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED  // ✅ 수정
+    );
+
+    ASSERT_NE(characteristic, nullptr);
+    EXPECT_EQ(characteristic->getUuid().toString(), "87654321-4321-6789-4321-56789abcdef0");
+    EXPECT_EQ(characteristic->getProperties(), (GattProperty::PROP_READ | GattProperty::PROP_WRITE));
+    EXPECT_EQ(characteristic->getPermissions(), (GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED));
 }
 
-// 에러 케이스 테스트 추가
-TEST_F(GattApplicationRealTest, RegisterWithInvalidPath_Fails) {
-    ASSERT_TRUE(app->setupDBusInterfaces()) << "DBus 인터페이스 설정 실패";
-    
-    // 잘못된 어댑터 경로로 등록 시도
-    DBusObjectPath invalidPath("/org/bluez/invalid1");
-    EXPECT_FALSE(app->registerWithBluez(invalidPath));
+TEST_F(GattTest, RegisterWithBlueZ) {
+    auto service = std::make_shared<GattService>(
+        *connection,
+        DBusObjectPath("/com/example/gatt/service1"),
+        GattUuid("12345678-1234-5678-1234-56789abcdef0"),
+        true
+    );
+
+    app->addService(service);
+
+    EXPECT_TRUE(app->registerWithBlueZ());
+    EXPECT_TRUE(app->isRegistered());
+
+    EXPECT_TRUE(app->unregisterFromBlueZ());
+    EXPECT_FALSE(app->isRegistered());
 }
 
-// **GattApplication의 BlueZ 등록 테스트**
-TEST_F(GattApplicationRealTest, RegisterWithBluez_Success) {
-    ASSERT_TRUE(app->setupDBusInterfaces()) << "DBus 인터페이스 설정 실패";
-    
-    EXPECT_TRUE(app->registerWithBluez(adapterPath));
+TEST_F(GattTest, GattCharacteristic_ReadWrite) {
+    auto service = std::make_shared<GattService>(
+        *connection,
+        DBusObjectPath("/com/example/gatt/service1"),
+        GattUuid("12345678-1234-5678-1234-56789abcdef0"),
+        true
+    );
 
-    // 2초 대기 후 블루투스 서비스 확인
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    auto characteristic = service->createCharacteristic(
+        GattUuid("87654321-4321-6789-4321-56789abcdef0"),
+        GattProperty::PROP_READ | GattProperty::PROP_WRITE,
+        GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED  // ✅ 수정
+    );
 
-    // 등록 후 상태 확인
-    EXPECT_TRUE(app->isRegistered);
+    app->addService(service);
 
-    // 테스트 완료 후 원상복구
-    EXPECT_TRUE(app->unregisterFromBluez(adapterPath));
+    GattData testData = {0x12, 0x34, 0x56};
+    characteristic->setValue(testData);
+    EXPECT_EQ(characteristic->getValue(), testData);
 }
 
-// **GattApplication의 BlueZ 등록 해제 테스트**
-TEST_F(GattApplicationRealTest, UnregisterFromBluez_Success) {
-    ASSERT_TRUE(app->setupDBusInterfaces()) << "DBus 인터페이스 설정 실패";
-    ASSERT_TRUE(app->registerWithBluez(adapterPath)) << "BlueZ 등록 실패";
+TEST_F(GattTest, GattCharacteristic_Notify) {
+    auto service = std::make_shared<GattService>(
+        *connection,
+        DBusObjectPath("/com/example/gatt/service1"),
+        GattUuid("12345678-1234-5678-1234-56789abcdef0"),
+        true
+    );
 
-    EXPECT_TRUE(app->unregisterFromBluez(adapterPath));
+    auto characteristic = service->createCharacteristic(
+        GattUuid("87654321-4321-6789-4321-56789abcdef0"),
+        GattProperty::PROP_NOTIFY,
+        GattPermission::PERM_READ_ENCRYPTED  // ✅ 수정
+    );
 
-    // 2초 대기 후 확인
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    app->addService(service);
 
-    // 등록 해제 후 상태 확인
-    EXPECT_FALSE(app->isRegistered);
+    EXPECT_FALSE(characteristic->isNotifying());
+    EXPECT_TRUE(characteristic->startNotify());
+    EXPECT_TRUE(characteristic->isNotifying());
+    EXPECT_TRUE(characteristic->stopNotify());
+    EXPECT_FALSE(characteristic->isNotifying());
 }
 
-// **GattApplication에서 GattService 생성 및 D-Bus 반영 확인 테스트**
-TEST_F(GattApplicationRealTest, CreateAndRetrieveService) {
-    GattUuid serviceUuid("12345678-1234-5678-1234-56789abcdef0");
-    
-    auto service = app->createService(serviceUuid, true);
-    ASSERT_NE(service, nullptr) << "GattService 생성 실패";
+TEST_F(GattTest, GetManagedObjects) {
+    auto service = std::make_shared<GattService>(
+        *connection,
+        DBusObjectPath("/com/example/gatt/service1"),
+        GattUuid("12345678-1234-5678-1234-56789abcdef0"),
+        true
+    );
 
-    auto retrievedService = app->getService(serviceUuid);
-    ASSERT_NE(retrievedService, nullptr) << "GattService 조회 실패";
-    EXPECT_EQ(service, retrievedService);
+    app->addService(service);
 
-    // D-Bus에 등록되었는지 확인
-    auto servicesMap = app->getServices();
-    EXPECT_EQ(servicesMap.size(), 1);
-}
+    DBusMethodCall dummyCall;
+    app->handleGetManagedObjects(dummyCall);
 
-// **GattApplication에서 존재하지 않는 GattService 조회 테스트**
-TEST_F(GattApplicationRealTest, GetService_NotFound) {
-    GattUuid invalidUuid("00000000-0000-0000-0000-000000000000");
-
-    auto retrievedService = app->getService(invalidUuid);
-    EXPECT_EQ(retrievedService, nullptr);
+    auto response = app->createManagedObjectsDict();
+    EXPECT_NE(response, nullptr);
 }

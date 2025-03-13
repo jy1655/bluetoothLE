@@ -4,7 +4,8 @@
 #include "GattTypes.h"
 #include "GattCallbacks.h"
 #include "DBusObject.h"
-#include "GattCharacteristic.h"  // 완전한 정의가 필요하므로 포함
+#include "GattCharacteristic.h" 
+#include "BlueZConstants.h"
 #include <vector>
 #include <memory>
 #include <mutex>
@@ -55,8 +56,6 @@ public:
     GattCharacteristic& getCharacteristic() const { return characteristic; }
     
 //private:
-    // 상수
-    static constexpr const char* DESCRIPTOR_INTERFACE = "org.bluez.GattDescriptor1";
     
     // 속성
     GattUuid uuid;

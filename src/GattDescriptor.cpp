@@ -53,7 +53,7 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
             
             if (valueVariant) {
                 // 속성 변경 알림
-                emitPropertyChanged(DESCRIPTOR_INTERFACE, "Value", std::move(valueVariant));
+                emitPropertyChanged(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, "Value", std::move(valueVariant));
             }
         }
     } catch (const std::exception& e) {
@@ -94,19 +94,19 @@ bool GattDescriptor::setupDBusInterfaces() {
     };
     
     // 인터페이스 추가
-    if (!addInterface(DESCRIPTOR_INTERFACE, properties)) {
+    if (!addInterface(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, properties)) {
         Logger::error("Failed to add descriptor interface");
         return false;
     }
     
     // 메서드 핸들러 등록
-    if (!addMethod(DESCRIPTOR_INTERFACE, "ReadValue", 
+    if (!addMethod(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, "ReadValue", 
                   [this](const DBusMethodCall& call) { handleReadValue(call); })) {
         Logger::error("Failed to add ReadValue method");
         return false;
     }
     
-    if (!addMethod(DESCRIPTOR_INTERFACE, "WriteValue", 
+    if (!addMethod(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, "WriteValue", 
                   [this](const DBusMethodCall& call) { handleWriteValue(call); })) {
         Logger::error("Failed to add WriteValue method");
         return false;
@@ -288,22 +288,22 @@ GVariant* GattDescriptor::getPermissionsProperty() {
 
         Logger::debug("Descriptor permissions flags count: " + std::to_string(flags.size()));
         
-        if (permissions & static_cast<uint8_t>(GattPermission::READ)) {
+        if (permissions & GattPermission::PERM_READ) {
             flags.push_back("read");
         }
-        if (permissions & static_cast<uint8_t>(GattPermission::WRITE)) {
+        if (permissions & GattPermission::PERM_WRITE) {
             flags.push_back("write");
         }
-        if (permissions & static_cast<uint8_t>(GattPermission::READ_ENCRYPTED)) {
+        if (permissions & GattPermission::PERM_READ_ENCRYPTED) {
             flags.push_back("encrypt-read");
         }
-        if (permissions & static_cast<uint8_t>(GattPermission::WRITE_ENCRYPTED)) {
+        if (permissions & GattPermission::PERM_WRITE_ENCRYPTED){
             flags.push_back("encrypt-write");
         }
-        if (permissions & static_cast<uint8_t>(GattPermission::READ_AUTHENTICATED)) {
+        if (permissions & GattPermission::PERM_READ_AUTHENTICATED) {
             flags.push_back("auth-read");
         }
-        if (permissions & static_cast<uint8_t>(GattPermission::WRITE_AUTHENTICATED)) {
+        if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED) {
             flags.push_back("auth-write");
         }
 

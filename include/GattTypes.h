@@ -28,25 +28,25 @@ private:
 };
 
 // GATT 권한 플래그
-enum class GattPermission {
-    READ = 0x01,
-    WRITE = 0x02,
-    READ_ENCRYPTED = 0x04,
-    WRITE_ENCRYPTED = 0x08,
-    READ_AUTHENTICATED = 0x10,
-    WRITE_AUTHENTICATED = 0x20
+enum GattPermission {
+    PERM_READ = 0x01,
+    PERM_WRITE = 0x02,
+    PERM_READ_ENCRYPTED = 0x04,
+    PERM_WRITE_ENCRYPTED = 0x08,
+    PERM_READ_AUTHENTICATED = 0x10,
+    PERM_WRITE_AUTHENTICATED = 0x20
 };
 
 // GATT 특성 속성 플래그
-enum class GattProperty {
-    BROADCAST = 0x01,
-    READ = 0x02,
-    WRITE_WITHOUT_RESPONSE = 0x04,
-    WRITE = 0x08,
-    NOTIFY = 0x10,
-    INDICATE = 0x20,
-    AUTHENTICATED_SIGNED_WRITES = 0x40,
-    EXTENDED_PROPERTIES = 0x80
+enum GattProperty {
+    PROP_BROADCAST = 0x01,
+    PROP_READ = 0x02,
+    PROP_WRITE_WITHOUT_RESPONSE = 0x04,
+    PROP_WRITE = 0x08,
+    PROP_NOTIFY = 0x10,
+    PROP_INDICATE = 0x20,
+    PROP_AUTHENTICATED_SIGNED_WRITES = 0x40,
+    PROP_EXTENDED_PROPERTIES = 0x80
 };
 
 // GATT 설명자 타입 상수

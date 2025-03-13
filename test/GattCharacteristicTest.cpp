@@ -30,8 +30,8 @@ protected:
             DBusObjectPath("/test/service/char1"),
             GattUuid::fromShortUuid(0x2A19), // Battery Level
             *service,
-            static_cast<uint8_t>(GattProperty::READ) | static_cast<uint8_t>(GattProperty::NOTIFY),
-            static_cast<uint8_t>(GattPermission::READ)
+            static_cast<uint8_t>(GattProperty::PROP_READ) | static_cast<uint8_t>(GattProperty::PROP_NOTIFY),
+            static_cast<uint8_t>(GattPermission::PERM_READ)
         );
         
         // 초기값 설정
@@ -123,7 +123,7 @@ TEST_F(GattCharacteristicGvariantTest, GetDescriptorsPropertyWithItems) {
     // 설명자 추가
     GattDescriptorPtr descriptor = characteristic->createDescriptor(
         GattUuid::fromShortUuid(0x2902), // CCCD
-        static_cast<uint8_t>(GattPermission::READ) | static_cast<uint8_t>(GattPermission::WRITE)
+        static_cast<uint8_t>(GattPermission::PERM_READ) | static_cast<uint8_t>(GattPermission::PERM_WRITE)
     );
     
     // Null이 아닌지 확인
