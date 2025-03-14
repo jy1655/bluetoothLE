@@ -57,7 +57,8 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/GattDescriptor.h
     ${PROJECT_INCLUDE_DIR}/GattApplication.h
     ${PROJECT_INCLUDE_DIR}/GattAdvertisement.h
-
+    # Server
+    ${PROJECT_INCLUDE_DIR}/ConnectionManager.h
     # 테스트 환경헤더 (미사용시 주석처리 필요)
     DBusTestEnvironment.h
 )
@@ -84,7 +85,8 @@ set(TEST_SOURCES
     ${PROJECT_SRC_DIR}/GattDescriptor.cpp
     ${PROJECT_SRC_DIR}/GattApplication.cpp
     ${PROJECT_SRC_DIR}/GattAdvertisement.cpp
-    
+    # Server
+    ${PROJECT_SRC_DIR}/ConnectionManager.cpp
 )
 
 include_directories(${GIO_INCLUDE_DIRS})
@@ -123,9 +125,10 @@ add_executable(run_tests
     GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattAdvertisementTest.cpp
-    #GattIntegrationTest.cpp
 
     # Server Test
+
+    ConnectionManagerTest.cpp
 )
 
 # 라이브러리 연결

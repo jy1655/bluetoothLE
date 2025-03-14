@@ -20,6 +20,7 @@ DBusName::~DBusName() {
     shutdown();
 }
 
+#ifdef TESTING
 void DBusName::setBusType(GBusType type) {
     if (initialized) {
         // 이미 초기화된 경우 먼저 연결 해제
@@ -29,6 +30,7 @@ void DBusName::setBusType(GBusType type) {
     busType = type;
     connection = std::make_unique<DBusConnection>(type);
 }
+#endif
 
 bool DBusName::initialize(const std::string& name) {
     if (initialized) {

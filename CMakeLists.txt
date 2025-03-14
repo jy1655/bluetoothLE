@@ -19,15 +19,18 @@ pkg_check_modules(BLUEZ REQUIRED bluez)
 
 # Source files
 set(SOURCES
-    src/DBusInterface.cpp
-    src/DBusMethod.cpp
+    src/DBusConnection.cpp
+    src/DBusError.cpp
+    src/DBusMessage.cpp
+    src/DBusName.cpp
     src/DBusObject.cpp
+    src/DBusXml.cpp
+    src/GattAdvertisement.cpp
     src/GattApplication.cpp
     src/GattCharacteristic.cpp
     src/GattDescriptor.cpp
-    src/GattObject.cpp
-    src/GattProperty.cpp
     src/GattService.cpp
+    src/GattTypes.cpp
     src/HciAdapter.cpp
     src/HciSocket.cpp
     src/Logger.cpp
