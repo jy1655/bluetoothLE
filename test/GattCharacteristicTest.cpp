@@ -5,7 +5,7 @@
 #include "GattCharacteristic.h"
 #include "GattTypes.h"
 #include "Logger.h"
-#include "DBusConnection.h"
+#include "DBusTestEnvironment.h"  // Changed from DBusConnection.h
 
 using namespace ggk;
 
@@ -13,8 +13,8 @@ using namespace ggk;
 class GattCharacteristicGvariantTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // D-Bus 연결
-        ASSERT_TRUE(connection.connect());
+        // 공유 D-Bus 연결 사용
+        DBusConnection& connection = DBusTestEnvironment::getConnection();
         
         // 테스트용 서비스 생성
         service = std::make_unique<GattService>(
@@ -42,10 +42,9 @@ protected:
     void TearDown() override {
         characteristic.reset();
         service.reset();
-        connection.disconnect();
+        // 공유 연결은 해제하지 않음 (DBusTestEnvironment가 관리)
     }
     
-    DBusConnection connection;
     std::unique_ptr<GattService> service;
     std::unique_ptr<GattCharacteristic> characteristic;
 };

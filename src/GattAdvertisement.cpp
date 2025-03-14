@@ -1,10 +1,22 @@
-#include "LEAdvertisement.h"
+#include "GattAdvertisement.h"
 #include "Logger.h"
 #include "Utils.h"
 
 namespace ggk {
 
-LEAdvertisement::LEAdvertisement(const DBusObjectPath& path)
+GattAdvertisement::GattAdvertisement(
+    DBusConnection& connection,
+    const DBusObjectPath& path,
+    AdvertisementType type)
+    : DBusObject(connection, path),
+      type(type),
+      appearance(0),
+      duration(0),
+      includeTxPower(false),
+      registered(false) {
+}
+
+GattAdvertisement::GattAdvertisement(const DBusObjectPath& path)
     : DBusObject(DBusName::getInstance().getConnection(), path),
       type(AdvertisementType::PERIPHERAL),
       appearance(0),
@@ -13,7 +25,7 @@ LEAdvertisement::LEAdvertisement(const DBusObjectPath& path)
       registered(false) {
 }
 
-void LEAdvertisement::addServiceUUID(const GattUuid& uuid) {
+void GattAdvertisement::addServiceUUID(const GattUuid& uuid) {
     if (!uuid.toString().empty()) {
         for (const auto& existingUuid : serviceUUIDs) {
             if (existingUuid.toString() == uuid.toString()) {
@@ -25,45 +37,45 @@ void LEAdvertisement::addServiceUUID(const GattUuid& uuid) {
     }
 }
 
-void LEAdvertisement::addServiceUUIDs(const std::vector<GattUuid>& uuids) {
+void GattAdvertisement::addServiceUUIDs(const std::vector<GattUuid>& uuids) {
     for (const auto& uuid : uuids) {
         addServiceUUID(uuid);
     }
 }
 
-void LEAdvertisement::setManufacturerData(uint16_t manufacturerId, const std::vector<uint8_t>& data) {
+void GattAdvertisement::setManufacturerData(uint16_t manufacturerId, const std::vector<uint8_t>& data) {
     manufacturerData[manufacturerId] = data;
     Logger::debug(SSTR << "Set manufacturer data for ID 0x" << Utils::hex(manufacturerId) << " with " << data.size() << " bytes");
 }
 
-void LEAdvertisement::setServiceData(const GattUuid& serviceUuid, const std::vector<uint8_t>& data) {
+void GattAdvertisement::setServiceData(const GattUuid& serviceUuid, const std::vector<uint8_t>& data) {
     if (!serviceUuid.toString().empty()) {
         serviceData[serviceUuid] = data;
         Logger::debug("Set service data for UUID: " + serviceUuid.toString());
     }
 }
 
-void LEAdvertisement::setLocalName(const std::string& name) {
+void GattAdvertisement::setLocalName(const std::string& name) {
     localName = name;
     Logger::debug("Set local name: " + name);
 }
 
-void LEAdvertisement::setAppearance(uint16_t value) {
+void GattAdvertisement::setAppearance(uint16_t value) {
     appearance = value;
     Logger::debug(SSTR << "Set appearance: 0x" << Utils::hex(value));
 }
 
-void LEAdvertisement::setDuration(uint16_t value) {
+void GattAdvertisement::setDuration(uint16_t value) {
     duration = value;
     Logger::debug(SSTR << "Set advertisement duration: " << value << " seconds");
 }
 
-void LEAdvertisement::setIncludeTxPower(bool include) {
+void GattAdvertisement::setIncludeTxPower(bool include) {
     includeTxPower = include;
     Logger::debug(SSTR << "Set include TX power: " << (include ? "true" : "false"));
 }
 
-bool LEAdvertisement::setupDBusInterfaces() {
+bool GattAdvertisement::setupDBusInterfaces() {
     // 속성 정의
     std::vector<DBusProperty> properties = {
         {
@@ -175,7 +187,7 @@ bool LEAdvertisement::setupDBusInterfaces() {
     return true;
 }
 
-void LEAdvertisement::handleRelease(const DBusMethodCall& call) {
+void GattAdvertisement::handleRelease(const DBusMethodCall& call) {
     if (!call.invocation) {
         Logger::error("Invalid method invocation in Release");
         return;
@@ -190,7 +202,7 @@ void LEAdvertisement::handleRelease(const DBusMethodCall& call) {
     registered = false;
 }
 
-bool LEAdvertisement::registerWithBlueZ() {
+bool GattAdvertisement::registerWithBlueZ() {
     try {
         if (registered) {
             Logger::info("Advertisement already registered with BlueZ");
@@ -250,7 +262,7 @@ bool LEAdvertisement::registerWithBlueZ() {
     }
 }
 
-bool LEAdvertisement::unregisterFromBlueZ() {
+bool GattAdvertisement::unregisterFromBlueZ() {
     try {
         // 등록되어 있지 않으면 성공으로 간주
         if (!registered) {
@@ -280,7 +292,7 @@ bool LEAdvertisement::unregisterFromBlueZ() {
     }
 }
 
-GVariant* LEAdvertisement::getTypeProperty() {
+GVariant* GattAdvertisement::getTypeProperty() {
     try {
         const char* typeStr;
         
@@ -301,7 +313,7 @@ GVariant* LEAdvertisement::getTypeProperty() {
     }
 }
 
-GVariant* LEAdvertisement::getServiceUUIDsProperty() {
+GVariant* GattAdvertisement::getServiceUUIDsProperty() {
     try {
         std::vector<std::string> uuidStrings;
         
@@ -316,7 +328,7 @@ GVariant* LEAdvertisement::getServiceUUIDsProperty() {
     }
 }
 
-GVariant* LEAdvertisement::getManufacturerDataProperty() {
+GVariant* GattAdvertisement::getManufacturerDataProperty() {
     try {
         // 제조사 데이터가 없는 경우 빈 맵 반환
         if (manufacturerData.empty()) {
@@ -361,7 +373,7 @@ GVariant* LEAdvertisement::getManufacturerDataProperty() {
     }
 }
 
-GVariant* LEAdvertisement::getServiceDataProperty() {
+GVariant* GattAdvertisement::getServiceDataProperty() {
     try {
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
@@ -388,7 +400,7 @@ GVariant* LEAdvertisement::getServiceDataProperty() {
     }
 }
 
-GVariant* LEAdvertisement::getLocalNameProperty() {
+GVariant* GattAdvertisement::getLocalNameProperty() {
     try {
         return Utils::gvariantFromString(localName);
     } catch (const std::exception& e) {
@@ -397,7 +409,7 @@ GVariant* LEAdvertisement::getLocalNameProperty() {
     }
 }
 
-GVariant* LEAdvertisement::getAppearanceProperty() {
+GVariant* GattAdvertisement::getAppearanceProperty() {
     try {
         return g_variant_new_uint16(appearance);
     } catch (const std::exception& e) {
@@ -406,7 +418,7 @@ GVariant* LEAdvertisement::getAppearanceProperty() {
     }
 }
 
-GVariant* LEAdvertisement::getDurationProperty() {
+GVariant* GattAdvertisement::getDurationProperty() {
     try {
         return g_variant_new_uint16(duration);
     } catch (const std::exception& e) {
@@ -415,7 +427,7 @@ GVariant* LEAdvertisement::getDurationProperty() {
     }
 }
 
-GVariant* LEAdvertisement::getIncludeTxPowerProperty() {
+GVariant* GattAdvertisement::getIncludeTxPowerProperty() {
     try {
         return Utils::gvariantFromBoolean(includeTxPower);
     } catch (const std::exception& e) {

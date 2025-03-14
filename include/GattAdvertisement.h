@@ -10,23 +10,23 @@
 
 namespace ggk {
 
-class LEAdvertisement : public DBusObject {
+class GattAdvertisement : public DBusObject {
 public:
     enum class AdvertisementType {
         BROADCAST,
         PERIPHERAL
     };
     
-    LEAdvertisement(
+    GattAdvertisement(
         DBusConnection& connection,
         const DBusObjectPath& path,
         AdvertisementType type = AdvertisementType::PERIPHERAL
     );
 
     // DBusName 사용하는 새 생성자 추가
-    LEAdvertisement(const DBusObjectPath& path);
+    GattAdvertisement(const DBusObjectPath& path);
     
-    virtual ~LEAdvertisement() = default;
+    virtual ~GattAdvertisement() = default;
     
     // 서비스 UUID 설정
     void addServiceUUID(const GattUuid& uuid);

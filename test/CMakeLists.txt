@@ -56,7 +56,7 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/GattCharacteristic.h
     ${PROJECT_INCLUDE_DIR}/GattDescriptor.h
     ${PROJECT_INCLUDE_DIR}/GattApplication.h
-    ${PROJECT_INCLUDE_DIR}/LEAdvertisement.h
+    ${PROJECT_INCLUDE_DIR}/GattAdvertisement.h
 
     # 테스트 환경헤더 (미사용시 주석처리 필요)
     DBusTestEnvironment.h
@@ -83,7 +83,7 @@ set(TEST_SOURCES
     ${PROJECT_SRC_DIR}/GattCharacteristic.cpp
     ${PROJECT_SRC_DIR}/GattDescriptor.cpp
     ${PROJECT_SRC_DIR}/GattApplication.cpp
-    ${PROJECT_SRC_DIR}/LEAdvertisement.cpp
+    ${PROJECT_SRC_DIR}/GattAdvertisement.cpp
     
 )
 
@@ -94,6 +94,8 @@ add_executable(run_tests
     ${TEST_SOURCES}
     ${TEST_HEADERS}
     main.cpp
+    DBusTestEnvironment.cpp     # 주석처리시 main.cpp 에도 주석처리 작업 필요
+
     #-- Util Test -- (약 1ms 소요)
     
     #DBusObjectPathTest.cpp
@@ -107,7 +109,6 @@ add_executable(run_tests
     
     #-- DBus Test --
     
-    DBusTestEnvironment.cpp     # 주석처리시 main.cpp 도 주석처리 작업 필요
     DBusXmlTest.cpp
     DBusErrorTest.cpp
     DBusConnectionTest.cpp
@@ -121,7 +122,7 @@ add_executable(run_tests
     GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    #LEAdvertisementTest.cpp
+    GattAdvertisementTest.cpp
     #GattIntegrationTest.cpp
 
     # Server Test

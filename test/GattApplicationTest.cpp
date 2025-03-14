@@ -1,5 +1,4 @@
 #include <gtest/gtest.h>
-#include "DBusConnection.h"
 #include "DBusObjectPath.h"
 #include "GattTypes.h"
 #include "GattApplication.h"
@@ -7,18 +6,25 @@
 #include "GattCharacteristic.h"
 #include "GattDescriptor.h"
 #include "BlueZConstants.h"
+#include "DBusTestEnvironment.h"  // 추가된 헤더
 
 using namespace ggk;
 
-class GattTest : public ::testing::Test {
+class GattApplicationTest : public ::testing::Test {
 protected:
-    std::unique_ptr<DBusConnection> connection;  // 🔹 추가
     std::unique_ptr<GattApplication> app;
+    const testing::TestInfo* test_info = testing::UnitTest::GetInstance()->current_test_info();
+    std::string test_name = test_info->name();
 
     void SetUp() override {
-        connection = std::make_unique<DBusConnection>();
-        ASSERT_TRUE(connection->connect());  // 🔹 D-Bus 연결 확인
-        app = std::make_unique<GattApplication>(*connection);
+        // 공유 D-Bus 연결 사용
+        DBusConnection& connection = DBusTestEnvironment::getConnection();
+        
+        // GattApplication 생성
+        app = std::make_unique<GattApplication>(
+            connection,
+            DBusObjectPath("/com/example/gatt/test" + std::string(testing::UnitTest::GetInstance()->current_test_info()->name()))
+        );
     }
 
     void TearDown() override {
@@ -35,19 +41,20 @@ protected:
             }
         }
         
-        // 연결 해제
+        // 애플리케이션 리셋
         app.reset();
-        connection->disconnect();
-        connection.reset();
         
         // 잠시 대기
         usleep(50000);  // 50ms
     }
 };
 
-TEST_F(GattTest, GattService_Creation) {
+TEST_F(GattApplicationTest, GattService_Creation) {
+    // 공유 D-Bus 연결 사용
+    DBusConnection& connection = DBusTestEnvironment::getConnection();
+    
     auto service = std::make_shared<GattService>(
-        *connection,
+        connection,
         DBusObjectPath("/com/example/gatt/service1"),
         GattUuid("12345678-1234-5678-1234-56789abcdef0"),
         true
@@ -57,9 +64,12 @@ TEST_F(GattTest, GattService_Creation) {
     EXPECT_TRUE(service->isPrimary());
 }
 
-TEST_F(GattTest, AddGattCharacteristic) {
+TEST_F(GattApplicationTest, AddGattCharacteristic) {
+    // 공유 D-Bus 연결 사용
+    DBusConnection& connection = DBusTestEnvironment::getConnection();
+    
     auto service = std::make_shared<GattService>(
-        *connection,
+        connection,
         DBusObjectPath("/com/example/gatt/service1"),
         GattUuid("12345678-1234-5678-1234-56789abcdef0"),
         true
@@ -68,7 +78,7 @@ TEST_F(GattTest, AddGattCharacteristic) {
     auto characteristic = service->createCharacteristic(
         GattUuid("87654321-4321-6789-4321-56789abcdef0"),
         GattProperty::PROP_READ | GattProperty::PROP_WRITE,
-        GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED  // ✅ 수정
+        GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED
     );
 
     ASSERT_NE(characteristic, nullptr);
@@ -77,13 +87,18 @@ TEST_F(GattTest, AddGattCharacteristic) {
     EXPECT_EQ(characteristic->getPermissions(), (GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED));
 }
 
-TEST_F(GattTest, RegisterWithBlueZ) {
-
-    app.reset(new GattApplication(*connection, DBusObjectPath("/com/example/gatt")));
+TEST_F(GattApplicationTest, RegisterWithBlueZ) {
+    // 공유 D-Bus 연결 사용
+    DBusConnection& connection = DBusTestEnvironment::getConnection();
+    
+    app.reset(new GattApplication(
+        connection, 
+        DBusObjectPath("/com/example/gatt/bluez_reg_test")
+    ));
 
     auto service = std::make_shared<GattService>(
-        *connection,
-        DBusObjectPath("/com/example/gatt/service1"),
+        connection,
+        DBusObjectPath("/com/example/gatt/bluez_reg_test/service1"),
         GattUuid("12345678-1234-5678-1234-56789abcdef0"),
         true
     );
@@ -101,12 +116,6 @@ TEST_F(GattTest, RegisterWithBlueZ) {
     // 먼저 서비스 인터페이스 설정
     EXPECT_TRUE(service->setupDBusInterfaces());
     
-    // 애플리케이션 인터페이스 설정
-    EXPECT_TRUE(app->setupDBusInterfaces());
-    
-    // 객체가 등록되었는지 확인
-    EXPECT_TRUE(app->isRegistered());
-
     // BlueZ에 등록 시도 - 타임아웃은 예상된 문제로 표시하되, 다른 문제는 실패로 처리
     try {
         // 타임아웃을 5초로 줄여서 테스트 속도 개선 (원래 25초 대신)
@@ -130,6 +139,10 @@ TEST_F(GattTest, RegisterWithBlueZ) {
             FAIL() << "Unexpected error during BlueZ registration: " << error;
         }
     }
+    
+    // 객체가 등록되었는지 확인
+    EXPECT_TRUE(app->isRegistered());
+
 
     // unregisterFromBlueZ 테스트
     try {
@@ -142,10 +155,13 @@ TEST_F(GattTest, RegisterWithBlueZ) {
     }
 }
 
-TEST_F(GattTest, GattCharacteristic_ReadWrite) {
+TEST_F(GattApplicationTest, GattCharacteristic_ReadWrite) {
+    // 공유 D-Bus 연결 사용
+    DBusConnection& connection = DBusTestEnvironment::getConnection();
+    
     auto service = std::make_shared<GattService>(
-        *connection,
-        DBusObjectPath("/com/example/gatt/service1"),
+        connection,
+        DBusObjectPath("/com/example/gatt/service2"),
         GattUuid("12345678-1234-5678-1234-56789abcdef0"),
         true
     );
@@ -153,7 +169,7 @@ TEST_F(GattTest, GattCharacteristic_ReadWrite) {
     auto characteristic = service->createCharacteristic(
         GattUuid("87654321-4321-6789-4321-56789abcdef0"),
         GattProperty::PROP_READ | GattProperty::PROP_WRITE,
-        GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED  // ✅ 수정
+        GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED
     );
 
     app->addService(service);
@@ -163,10 +179,13 @@ TEST_F(GattTest, GattCharacteristic_ReadWrite) {
     EXPECT_EQ(characteristic->getValue(), testData);
 }
 
-TEST_F(GattTest, GattCharacteristic_Notify) {
+TEST_F(GattApplicationTest, GattCharacteristic_Notify) {
+    // 공유 D-Bus 연결 사용
+    DBusConnection& connection = DBusTestEnvironment::getConnection();
+    
     auto service = std::make_shared<GattService>(
-        *connection,
-        DBusObjectPath("/com/example/gatt/service1"),
+        connection,
+        DBusObjectPath("/com/example/gatt/service3"),
         GattUuid("12345678-1234-5678-1234-56789abcdef0"),
         true
     );
@@ -174,7 +193,7 @@ TEST_F(GattTest, GattCharacteristic_Notify) {
     auto characteristic = service->createCharacteristic(
         GattUuid("87654321-4321-6789-4321-56789abcdef0"),
         GattProperty::PROP_NOTIFY,
-        GattPermission::PERM_READ_ENCRYPTED  // ✅ 수정
+        GattPermission::PERM_READ_ENCRYPTED
     );
 
     app->addService(service);
@@ -186,10 +205,13 @@ TEST_F(GattTest, GattCharacteristic_Notify) {
     EXPECT_FALSE(characteristic->isNotifying());
 }
 
-TEST_F(GattTest, GetManagedObjects) {
+TEST_F(GattApplicationTest, GetManagedObjects) {
+    // 공유 D-Bus 연결 사용
+    DBusConnection& connection = DBusTestEnvironment::getConnection();
+    
     auto service = std::make_shared<GattService>(
-        *connection,
-        DBusObjectPath("/com/example/gatt/service1"),
+        connection,
+        DBusObjectPath("/com/example/gatt/service4"),
         GattUuid("12345678-1234-5678-1234-56789abcdef0"),
         true
     );
