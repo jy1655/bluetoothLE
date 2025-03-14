@@ -22,6 +22,9 @@ public:
     std::string toBlueZFormat() const;
     std::string toBlueZShortFormat() const;
     
+    // 비교연산자 추가
+    bool operator<(const GattUuid& other) const;
+    
 private:
     std::string uuid;
     bool validate();

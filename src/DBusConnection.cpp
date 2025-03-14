@@ -90,6 +90,10 @@ GVariantPtr DBusConnection::callMethod(
     GError* error = nullptr;
     GVariantType* replyType = nullptr;
     if (!replySignature.empty()) {
+        if (!g_variant_type_string_is_valid(replySignature.c_str())) {
+            Logger::error("Invalid reply signature: " + replySignature);
+            return makeNullGVariantPtr();
+        }
         replyType = g_variant_type_new(replySignature.c_str());
     }
     
@@ -118,7 +122,13 @@ GVariantPtr DBusConnection::callMethod(
         return makeNullGVariantPtr();
     }
     
-    return GVariantPtr(result, &g_variant_unref);
+    if (result) {
+        // 참조 카운트 처리 확인
+        GVariantPtr resultPtr(g_variant_ref_sink(result), &g_variant_unref);
+        return resultPtr;
+    }
+    
+    return makeNullGVariantPtr();
 }
 
 bool DBusConnection::emitSignal(

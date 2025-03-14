@@ -11,6 +11,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+add_definitions(-DTESTING)
+
 # Google Test 라이브러리 추가
 enable_testing()
 find_package(GTest REQUIRED)
@@ -43,6 +45,7 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/DBusXml.h
     ${PROJECT_INCLUDE_DIR}/DBusError.h
     ${PROJECT_INCLUDE_DIR}/DBusConnection.h
+    ${PROJECT_INCLUDE_DIR}/DBusName.h
     ${PROJECT_INCLUDE_DIR}/DBusMessage.h
     ${PROJECT_INCLUDE_DIR}/DBusObject.h
     # GATT
@@ -53,6 +56,8 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/GattCharacteristic.h
     ${PROJECT_INCLUDE_DIR}/GattDescriptor.h
     ${PROJECT_INCLUDE_DIR}/GattApplication.h
+    ${PROJECT_INCLUDE_DIR}/LEAdvertisement.h
+
     
 )
 
@@ -68,6 +73,7 @@ set(TEST_SOURCES
     ${PROJECT_SRC_DIR}/DBusXml.cpp
     ${PROJECT_SRC_DIR}/DBusError.cpp
     ${PROJECT_SRC_DIR}/DBusConnection.cpp
+    ${PROJECT_SRC_DIR}/DBusName.cpp
     ${PROJECT_SRC_DIR}/DBusMessage.cpp
     ${PROJECT_SRC_DIR}/DBusObject.cpp
     # GATT
@@ -76,6 +82,7 @@ set(TEST_SOURCES
     ${PROJECT_SRC_DIR}/GattCharacteristic.cpp
     ${PROJECT_SRC_DIR}/GattDescriptor.cpp
     ${PROJECT_SRC_DIR}/GattApplication.cpp
+    ${PROJECT_SRC_DIR}/LEAdvertisement.cpp
     
 )
 
@@ -99,11 +106,13 @@ add_executable(run_tests
     
     #-- DBus Test --
     
+    #DBusTestEnvironment.h
+    #DBusTestEnvironment.cpp
     DBusXmlTest.cpp
     DBusErrorTest.cpp
     DBusConnectionTest.cpp
     DBusMessageTest.cpp
-    #DBusObjectTest.cpp
+    DBusObjectTest.cpp
     
     # GATT Test
 
@@ -112,6 +121,7 @@ add_executable(run_tests
     GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    LEAdvertisementTest.cpp
     #GattIntegrationTest.cpp
 
     # Server Test

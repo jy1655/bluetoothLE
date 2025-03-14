@@ -97,20 +97,23 @@ TEST_F(DBusObjectTest, EmitSignal) {
 }
 
 TEST_F(DBusObjectTest, IntrospectionXmlIndirectTest) {
-    // Introspection 인터페이스를 통해 XML 획득
+    // 튜플 타입 "(s)"로 수정 (단일 문자열 "s"가 아님)
     GVariantPtr introspectResult = connection.callMethod(
         "org.freedesktop.DBus",
         dbusObject->getPath(),
         "org.freedesktop.DBus.Introspectable",
         "Introspect",
         makeNullGVariantPtr(),
-        "s"
+        "(s)"  // "s"에서 "(s)"로 변경
     );
 
     ASSERT_NE(introspectResult.get(), nullptr);
 
-    const gchar* xml;
+    // 튜플에서 문자열 추출
+    const gchar* xml = nullptr;
     g_variant_get(introspectResult.get(), "(&s)", &xml);
+    
+    ASSERT_NE(xml, nullptr);
 
     std::string introspectionXml(xml);
     EXPECT_NE(introspectionXml.find("<interface name='org.example.TestInterface'>"), std::string::npos);

@@ -90,4 +90,8 @@ bool GattUuid::validate() {
     return false;
 }
 
+bool GattUuid::operator<(const GattUuid& other) const {
+    return uuid < other.uuid;
+}
+
 } // namespace ggk

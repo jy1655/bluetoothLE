@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "Logger.h"
 
+//#include "DBusTestEnvironment.h" // DBus 이후 테스트부터 필요
+
 void initLogger() {
     // 표준 출력으로 로그 출력
     ggk::Logger::registerDebugReceiver([](const char* msg) { std::cout << "DEBUG: " << msg << std::endl; });
@@ -20,5 +22,9 @@ int main(int argc, char **argv) {
     ggk::Logger::info("Logger initialized for tests");
 
     ::testing::InitGoogleTest(&argc, argv);
+
+    // DBus 네임 관련 테스트 환경 등록- DBus 이전 테스트 진행시 주석처리 해도 무방
+    //::testing::AddGlobalTestEnvironment(new ggk::DBusTestEnvironment());
+
     return RUN_ALL_TESTS();
 }

@@ -8,31 +8,6 @@ namespace ggk {
 GattApplication::GattApplication(DBusConnection& connection, const DBusObjectPath& path)
     : DBusObject(connection, path),
       registered(false) {
-    
-    if (connection.isConnected()) {
-        try {
-            // 시스템 버스에 이름 등록
-            const std::string busName = "com.example.gatt";
-            GVariantPtr result = connection.callMethod(
-                "org.freedesktop.DBus",
-                DBusObjectPath("/org/freedesktop/DBus"),
-                "org.freedesktop.DBus",
-                "RequestName",
-                GVariantPtr(g_variant_new("(su)", busName.c_str(), 0x4), &g_variant_unref)  // 0x4 = DBUS_NAME_FLAG_DO_NOT_QUEUE
-            );
-            
-            guint32 ret = 0;
-            g_variant_get(result.get(), "(u)", &ret);
-            
-            if (ret == 1) {  // DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER
-                Logger::info("Successfully acquired bus name: " + busName);
-            } else {
-                Logger::error("Failed to acquire bus name: " + busName + ", return code: " + std::to_string(ret));
-            }
-        } catch (const std::exception& e) {
-            Logger::error("Failed to request bus name: " + std::string(e.what()));
-        }
-    }
 }
 
 bool GattApplication::setupDBusInterfaces() {

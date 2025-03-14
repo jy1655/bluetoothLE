@@ -87,27 +87,27 @@ sudo nano /etc/dbus-1/system.d/bluetooth.conf
 ```
 
 ##### 4. D-Bus 네임(버스 네임) 소유 권한 설정
-- D-Bus의 시스템 버스에서 특정 사용자가 특정 네임(예: com.example.gatt)을 소유하도록 하려면, 정책 파일을 추가해야함
+- D-Bus의 시스템 버스에서 특정 사용자가 특정 네임(예: com.aidall.oculo)을 소유하도록 하려면, 정책 파일을 추가해야함
 
 ```bash
-sudo nano /etc/dbus-1/system.d/com.example.gatt.conf
+sudo nano /etc/dbus-1/system.d/com.aidall.oculo.conf
 ```
 파일 생성 후에 아래내용을 추가
 ```xml
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
   <policy user="root">
-    <allow own="com.example.gatt"/>
-    <allow send_destination="com.example.gatt"/>
+    <allow own="com.aidall.oculo"/>
+    <allow send_destination="com.aidall.oculo"/>
     <allow send_destination="org.bluez"/>
   </policy>
   <policy at_console="true">
-    <allow own="com.example.gatt"/>
-    <allow send_destination="com.example.gatt"/>
+    <allow own="com.aidall.oculo"/>
+    <allow send_destination="com.aidall.oculo"/>
     <allow send_destination="org.bluez"/>
   </policy>
   <policy context="default">
-    <deny send_destination="com.example.gatt"/>
+    <deny send_destination="com.aidall.oculo"/>
   </policy>
 </busconfig>
 ```
