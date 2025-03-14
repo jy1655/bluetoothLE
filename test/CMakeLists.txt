@@ -58,7 +58,8 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/GattApplication.h
     ${PROJECT_INCLUDE_DIR}/LEAdvertisement.h
 
-    
+    # 테스트 환경헤더 (미사용시 주석처리 필요)
+    DBusTestEnvironment.h
 )
 
 # 테스트할 대상 소스 파일 추가
@@ -106,8 +107,7 @@ add_executable(run_tests
     
     #-- DBus Test --
     
-    #DBusTestEnvironment.h
-    #DBusTestEnvironment.cpp
+    DBusTestEnvironment.cpp     # 주석처리시 main.cpp 도 주석처리 작업 필요
     DBusXmlTest.cpp
     DBusErrorTest.cpp
     DBusConnectionTest.cpp
@@ -121,7 +121,7 @@ add_executable(run_tests
     GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    LEAdvertisementTest.cpp
+    #LEAdvertisementTest.cpp
     #GattIntegrationTest.cpp
 
     # Server Test

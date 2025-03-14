@@ -1,32 +1,27 @@
 // test/DBusTestEnvironment.h
 #pragma once
-#include "DBusManager.h"
+#include "DBusName.h"
 #include <gtest/gtest.h>
-
+#include "GattApplication.h"
+#include <memory>
 
 namespace ggk {
 
-
+// 전역 테스트 환경 설정을 위한 클래스
 class DBusTestEnvironment : public ::testing::Environment {
 public:
-    void SetUp() override {
-        // 테스트 시작 전 환경 준비
-        #ifdef TESTING
-        // 테스트에서는 세션 버스 사용 (시스템 버스는 권한 필요)
-        DBusManager::getInstance().reset();
-        DBusManager::getInstance().setBusType(G_BUS_TYPE_SESSION);
-        #endif
-        
-        // 테스트용 버스 네임으로 초기화
-        if (!DBusManager::getInstance().initialize("org.example.ble.test")) {
-            FAIL() << "Failed to initialize D-Bus for testing";
-        }
-    }
+    // 정적 메서드로 공유 연결에 접근할 수 있게 함
+    static DBusConnection& getConnection();
     
-    void TearDown() override {
-        // 테스트 종료 후 정리
-        DBusManager::getInstance().shutdown();
-    }
+    // GattApplication 공유 인스턴스 접근
+    static GattApplication* getGattApplication();
+
+    void SetUp() override;
+    void TearDown() override;
+
+private:
+    // 정적 멤버 변수 선언 (여기서는 정의하지 않음)
+    static std::unique_ptr<GattApplication> application;
 };
 
 } // namespace ggk

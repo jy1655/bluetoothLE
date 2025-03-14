@@ -15,7 +15,10 @@ DBusConnection::DBusConnection(GBusType busType)
 }
 
 DBusConnection::~DBusConnection() {
-    disconnect();
+    if (connection) {
+        connection.reset();  // 스마트 포인터가 알아서 g_object_unref 호출
+        Logger::info("DBus connection destroyed");
+    }
 }
 
 bool DBusConnection::connect() {
@@ -38,7 +41,8 @@ bool DBusConnection::connect() {
     }
     
     // 중요: 참조 카운트를 명시적으로 증가시킨 후 스마트 포인터에 저장
-    connection = makeGDBusConnectionPtr(rawConnection);
+    connection = GDBusConnectionPtr(g_object_ref_sink(rawConnection), &g_object_unref);
+
     
     // exit-on-close 설정 해제
     g_dbus_connection_set_exit_on_close(connection.get(), FALSE);
