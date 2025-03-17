@@ -1,5 +1,5 @@
-// src/DBusName.cpp
 #include "DBusName.h"
+#include "Utils.h"  // Utils 유틸리티 함수 사용을 위해 추가
 
 namespace ggk {
 
@@ -46,12 +46,18 @@ bool DBusName::initialize(const std::string& name) {
     
     // 버스 네임 요청
     try {
+        // 복잡한 GVariant 생성을 위한 안전한 방법
+        GVariant* paramsRaw = g_variant_new("(su)", busName.c_str(), 0x4);
+        // makeGVariantPtr 함수를 사용하여 스마트 포인터로 래핑
+        // floating reference를 적절히 처리
+        GVariantPtr params = makeGVariantPtr(g_variant_ref_sink(paramsRaw));
+        
         GVariantPtr result = connection->callMethod(
             "org.freedesktop.DBus",
             DBusObjectPath("/org/freedesktop/DBus"),
             "org.freedesktop.DBus",
             "RequestName",
-            GVariantPtr(g_variant_new("(su)", busName.c_str(), 0x4), &g_variant_unref),
+            std::move(params),  // 이동 의미론 사용하여 소유권 이전
             "(u)"
         );
         
@@ -79,12 +85,18 @@ bool DBusName::initialize(const std::string& name) {
 void DBusName::shutdown() {
     if (busNameAcquired && connection) {
         try {
+            // 복잡한 GVariant 생성을 위한 안전한 방법
+            GVariant* paramsRaw = g_variant_new("(s)", busName.c_str());
+            // makeGVariantPtr 함수를 사용하여 스마트 포인터로 래핑
+            // floating reference를 적절히 처리
+            GVariantPtr params = makeGVariantPtr(g_variant_ref_sink(paramsRaw));
+            
             connection->callMethod(
                 "org.freedesktop.DBus",
                 DBusObjectPath("/org/freedesktop/DBus"),
                 "org.freedesktop.DBus",
                 "ReleaseName",
-                GVariantPtr(g_variant_new("(s)", busName.c_str()), &g_variant_unref)
+                std::move(params)  // 이동 의미론 사용하여 소유권 이전
             );
         } catch (...) {
             // 종료 과정에서 예외가 발생해도 무시

@@ -135,12 +135,12 @@ TEST_F(DBusObjectTest, IntrospectionXmlIndirectTest) {
     
     // 4. Introspection 쿼리 실행
     GVariantPtr introspectResult = connection.callMethod(
-        DBusName::getInstance().getBusName(),  // 우리 프로그램의 서비스 이름
+        DBusName::getInstance().getBusName(),
         dbusObject->getPath(),
         "org.freedesktop.DBus.Introspectable",
         "Introspect",
-        makeNullGVariantPtr(),
-        "(s)"
+        makeNullGVariantPtr(),  // 파라미터 없음
+        "(s)"  // 응답 시그니처: 문자열
     );
     
     // 5. 결과 검증 (null 체크)

@@ -1,5 +1,6 @@
 #include "DBusConnection.h"
 #include <stdexcept>
+#include "Utils.h"
 
 namespace ggk {
 
@@ -16,8 +17,7 @@ DBusConnection::DBusConnection(GBusType busType)
 
 DBusConnection::~DBusConnection() {
     if (connection) {
-        connection.reset();  // 스마트 포인터가 알아서 g_object_unref 호출
-        Logger::info("DBus connection destroyed");
+        disconnect();  // 연결 해제
     }
 }
 
@@ -101,13 +101,14 @@ GVariantPtr DBusConnection::callMethod(
         replyType = g_variant_type_new(replySignature.c_str());
     }
     
+    // g_dbus_connection_call_sync 호출
     GVariant* result = g_dbus_connection_call_sync(
         connection.get(),
         destination.c_str(),
         path.c_str(),
         interface.c_str(),
         method.c_str(),
-        parameters.get(),
+        parameters.get(),  // null 가능
         replyType,
         G_DBUS_CALL_FLAGS_NONE,
         timeoutMs,
@@ -127,9 +128,10 @@ GVariantPtr DBusConnection::callMethod(
     }
     
     if (result) {
-        // 참조 카운트 처리 확인
-        GVariantPtr resultPtr(g_variant_ref_sink(result), &g_variant_unref);
-        return resultPtr;
+        // 중요: GLib 문서에 따르면 g_dbus_connection_call_sync는 
+        // floating reference를 반환함
+        // makeGVariantPtr은 기본적으로 g_variant_ref_sink를 호출
+        return makeGVariantPtr(result);
     }
     
     return makeNullGVariantPtr();
@@ -411,8 +413,8 @@ void DBusConnection::handleMethodCall(
         sender ? sender : "",
         interfaceName ? interfaceName : "",
         methodName ? methodName : "",
-        parameters ? GVariantPtr(g_variant_ref(parameters), &g_variant_unref) : makeNullGVariantPtr(),
-        invocation ? GDBusMethodInvocationPtr(g_object_ref(invocation), &g_object_unref) : makeNullGDBusMethodInvocationPtr()
+        parameters ? makeGVariantPtr(parameters, false) : makeNullGVariantPtr(),
+        invocation ? makeGDBusMethodInvocationPtr(invocation) : makeNullGDBusMethodInvocationPtr()
     );
 
     try {
@@ -466,7 +468,7 @@ GVariant* DBusConnection::handleGetProperty(
             }
             
             try {
-                return prop.getter();  // 이미 GVariant* 반환
+                return prop.getter();  
             } catch (const std::exception& e) {
                 g_set_error(error, g_quark_from_static_string(DBusError::ERROR_FAILED),
                            0, "Error getting property: %s", e.what());
@@ -474,14 +476,14 @@ GVariant* DBusConnection::handleGetProperty(
             } catch (...) {
                 g_set_error(error, g_quark_from_static_string(DBusError::ERROR_FAILED),
                            0, "Unknown error getting property");
-                return nullptr;  // 여기는 이미 올바름
+                return nullptr;  
             }
         }
     }
     
     g_set_error(error, g_quark_from_static_string(DBusError::ERROR_UNKNOWN_PROPERTY),
                0, "Unknown property: %s.%s", interfaceName, propertyName);
-    return nullptr;  // 여기는 이미 올바름
+    return nullptr; 
 }
 
 gboolean DBusConnection::handleSetProperty(
@@ -555,7 +557,7 @@ void DBusConnection::handleSignal(
         try {
             handler.second(
                 std::string(signalName ? signalName : ""),
-                GVariantPtr(g_variant_ref(parameters), &g_variant_unref)
+                makeGVariantPtr(parameters, false) // false = 소유권 이전 안 함
             );
         } catch (const std::exception& e) {
             Logger::error("Exception in D-Bus signal handler: " + std::string(e.what()));

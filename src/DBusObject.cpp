@@ -1,6 +1,7 @@
 #include "DBusObject.h"
 #include "DBusXml.h"
 #include "Logger.h"
+#include "Utils.h"
 
 namespace ggk {
 
@@ -95,6 +96,7 @@ GVariantPtr DBusObject::getProperty(const std::string& interface, const std::str
             if (prop.getter) {
                 GVariant* value = prop.getter();
                 if (value) {
+                    // 반환된 GVariant를 적절히 스마트 포인터로 래핑
                     return makeGVariantPtr(value);
                 }
             } else {
@@ -115,7 +117,7 @@ bool DBusObject::emitPropertyChanged(const std::string& interface, const std::st
         return false;
     }
     
-    // 속성 변경 시그널 발생
+    // 속성 변경 시그널 발생 - 이동 의미론 사용
     return connection.emitPropertyChanged(path, interface, name, std::move(value));
 }
 
@@ -125,7 +127,7 @@ bool DBusObject::emitSignal(const std::string& interface, const std::string& nam
         return false;
     }
     
-    // 시그널 발생
+    // 시그널 발생 - 이동 의미론 사용
     return connection.emitSignal(path, interface, name, std::move(parameters));
 }
 
@@ -182,7 +184,7 @@ bool DBusObject::unregisterObject() {
 
 std::string DBusObject::generateIntrospectionXml() const {
     // 메서드 목록 수집
-    std::vector<std::pair<std::string, std::string>> methods; // 인터페이스와 메서드 이름만 저장
+    std::vector<std::pair<std::string, std::string>> methods;
     for (const auto& ifaceMethods : methodHandlers) {
         for (const auto& method : ifaceMethods.second) {
             methods.push_back({ifaceMethods.first, method.first});
@@ -201,14 +203,11 @@ std::string DBusObject::generateIntrospectionXml() const {
         auto it = methodHandlers.find(iface.first);
         if (it != methodHandlers.end()) {
             for (const auto& method : it->second) {
-                // 복사 대신 직접 생성자 호출
-                DBusMethodCall call(
-                    "",  // sender
-                    iface.first,  // interface
-                    method.first,  // method
-                    makeNullGVariantPtr(),  // parameters
-                    makeNullGDBusMethodInvocationPtr()  // invocation
-                );
+                // 수정된 부분: 기본 생성자를 통한 안전한 객체 생성
+                DBusMethodCall call;
+                call.interface = iface.first;
+                call.method = method.first;
+                
                 // 이동(move) 사용하여 복사 방지
                 ifaceMethods.push_back(std::move(call));
             }

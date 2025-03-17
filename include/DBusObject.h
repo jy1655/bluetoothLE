@@ -64,7 +64,7 @@ public:
      * @param value 설정할 값
      * @return 성공 여부
      */
-    bool setProperty(const std::string& interface, const std::string& name, GVariantPtr value);
+     bool setProperty(const std::string& interface, const std::string& name, GVariantPtr value);
     
     /**
      * @brief 속성 획득
@@ -73,7 +73,7 @@ public:
      * @param name 속성 이름
      * @return 속성 값 (없거나 실패 시 null)
      */
-    GVariantPtr getProperty(const std::string& interface, const std::string& name) const;
+     GVariantPtr getProperty(const std::string& interface, const std::string& name) const;
     
     /**
      * @brief 속성 변경 시그널 발생
@@ -83,7 +83,7 @@ public:
      * @param value 변경된 값
      * @return 성공 여부
      */
-    bool emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value);
+     bool emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value);
     
     /**
      * @brief 시그널 발생
@@ -93,7 +93,7 @@ public:
      * @param parameters 시그널 매개변수 (기본값: null)
      * @return 성공 여부
      */
-    bool emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters = makeNullGVariantPtr());
+     bool emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters = makeNullGVariantPtr());
     
     /**
      * @brief D-Bus에 객체 등록
