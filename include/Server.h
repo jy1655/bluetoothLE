@@ -6,6 +6,7 @@
 #include "Mgmt.h"
 #include "HciAdapter.h"
 #include "DBusName.h"
+#include "ConnectionManager.h"
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -24,6 +25,7 @@ namespace ggk {
  * - Managing GATT services (via GattApplication)
  * - Handling BLE advertisements (via GattAdvertisement)
  * - Maintaining the event loop for BLE events
+ * - Managing device connections via ConnectionManager
  */
 class Server {
 public:
@@ -45,7 +47,7 @@ public:
      * @brief Initializes the BLE stack
      * 
      * Sets up HCI adapter, Bluetooth management, D-Bus connection,
-     * GATT application and advertisement objects
+     * GATT application, advertisement objects, and ConnectionManager
      * 
      * @param deviceName The name to advertise for this BLE peripheral
      * @return true if initialization was successful, false otherwise
@@ -58,9 +60,10 @@ public:
      * Enables the BLE controller, starts advertising, and registers the
      * GATT application with BlueZ
      * 
+     * @param secureMode Whether to enable secure connections and pairing
      * @return true if the server started successfully, false otherwise
      */
-    bool start();
+    bool start(bool secureMode = false);
     
     /**
      * @brief Stops the BLE peripheral
@@ -100,13 +103,15 @@ public:
      * @param manufacturerId Manufacturer ID for advertisement data (0 for none)
      * @param manufacturerData Data to include with manufacturer ID
      * @param includeTxPower Whether to include TX power in advertisement
+     * @param timeout Advertisement timeout in seconds (0 for indefinite)
      */
     void configureAdvertisement(
         const std::string& name = "",
         const std::vector<GattUuid>& serviceUuids = {},
         uint16_t manufacturerId = 0,
         const std::vector<uint8_t>& manufacturerData = {},
-        bool includeTxPower = true
+        bool includeTxPower = true,
+        uint16_t timeout = 0
     );
     
     /**
@@ -169,6 +174,21 @@ public:
         disconnectionCallback = callback;
     }
     
+    /**
+     * @brief Gets the list of currently connected devices
+     * 
+     * @return Vector of device addresses
+     */
+    std::vector<std::string> getConnectedDevices() const;
+    
+    /**
+     * @brief Checks if a specific device is connected
+     * 
+     * @param deviceAddress The Bluetooth address to check
+     * @return true if the device is connected, false otherwise
+     */
+    bool isDeviceConnected(const std::string& deviceAddress) const;
+    
 private:
     // Core BLE components
     std::unique_ptr<HciAdapter> hciAdapter;
@@ -182,6 +202,9 @@ private:
     std::thread eventThread;
     std::string deviceName;
     
+    // Advertisement settings
+    uint16_t advTimeout;
+    
     // Callback functions
     std::function<void(const std::string&)> connectionCallback;
     std::function<void(const std::string&)> disconnectionCallback;
@@ -192,6 +215,9 @@ private:
     void setupSignalHandlers();
     void handleConnectionEvent(const std::string& deviceAddress);
     void handleDisconnectionEvent(const std::string& deviceAddress);
+    void handlePropertyChangeEvent(const std::string& interface, 
+                                   const std::string& property, 
+                                   GVariantPtr value);
     
     /**
      * @brief Static method to register for safe shutdown

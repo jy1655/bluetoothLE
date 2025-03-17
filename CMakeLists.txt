@@ -19,6 +19,7 @@ pkg_check_modules(BLUEZ REQUIRED bluez)
 
 # Source files
 set(SOURCES
+    src/ConnectionManager.cpp
     src/DBusConnection.cpp
     src/DBusError.cpp
     src/DBusMessage.cpp

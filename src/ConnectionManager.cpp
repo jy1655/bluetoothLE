@@ -30,6 +30,10 @@ bool ConnectionManager::initialize(DBusConnection& dbusConnection) {
     return true;
 }
 
+bool ConnectionManager::isInitialized() const { 
+    return initialized; 
+}
+
 void ConnectionManager::shutdown() {
     if (!initialized) {
         return;

@@ -31,13 +31,14 @@ public:
     
     // 서비스 조회
     std::vector<GattServicePtr> getServices() const;
-    
-//private:
+
     // D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
-    
     // D-Bus 메서드 핸들러
     void handleGetManagedObjects(const DBusMethodCall& call);
+    
+private:
+    
     
     // 관리 객체 딕셔너리 생성
     GVariantPtr createManagedObjectsDict() const;

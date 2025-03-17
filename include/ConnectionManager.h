@@ -33,6 +33,7 @@ public:
     // 연결 관리
     std::vector<std::string> getConnectedDevices() const;
     bool isDeviceConnected(const std::string& deviceAddress) const;
+    bool isInitialized() const;
 
 private:
     ConnectionManager();

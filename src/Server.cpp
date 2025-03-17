@@ -24,7 +24,8 @@ static void signalHandler(int signal) {
 Server::Server()
     : running(false)
     , initialized(false)
-    , deviceName("JetsonBLE") {
+    , deviceName("JetsonBLE")
+    , advTimeout(0) {
     // Initialize logger
     ggk::Logger::registerDebugReceiver([](const char* msg) { std::cout << "DEBUG: " << msg << std::endl; });
     ggk::Logger::registerInfoReceiver([](const char* msg) { std::cout << "INFO: " << msg << std::endl; });
@@ -91,6 +92,30 @@ bool Server::initialize(const std::string& name) {
     advertisement->setLocalName(deviceName);
     advertisement->setIncludeTxPower(true);
     
+    // Step 6: Initialize ConnectionManager
+    if (!ConnectionManager::getInstance().initialize(DBusName::getInstance().getConnection())) {
+        Logger::warn("Failed to initialize ConnectionManager, connection events may not be detected");
+        // Not critical for initialization - continue anyway
+    } else {
+        // Set connection event callbacks
+        ConnectionManager::getInstance().setOnConnectionCallback(
+            [this](const std::string& deviceAddress) {
+                this->handleConnectionEvent(deviceAddress);
+            });
+        
+        ConnectionManager::getInstance().setOnDisconnectionCallback(
+            [this](const std::string& deviceAddress) {
+                this->handleDisconnectionEvent(deviceAddress);
+            });
+        
+        ConnectionManager::getInstance().setOnPropertyChangedCallback(
+            [this](const std::string& interface, const std::string& property, GVariantPtr value) {
+                this->handlePropertyChangeEvent(interface, property, std::move(value));
+            });
+            
+        Logger::info("ConnectionManager initialized successfully");
+    }
+    
     // Setup signal handlers
     setupSignalHandlers();
     
@@ -99,7 +124,7 @@ bool Server::initialize(const std::string& name) {
     return true;
 }
 
-bool Server::start() {
+bool Server::start(bool secureMode) {
     if (!initialized) {
         Logger::error("Cannot start: Server not initialized");
         return false;
@@ -128,14 +153,49 @@ bool Server::start() {
         return false;
     }
     
+    // Configure security if enabled
+    if (secureMode) {
+        Logger::info("Enabling BLE security features...");
+        
+        if (!mgmt->setSecureConnections(1)) {
+            Logger::warn("Failed to enable secure connections");
+            // Not critical, continue anyway
+        }
+        
+        if (!mgmt->setBondable(true)) {
+            Logger::warn("Failed to make device bondable");
+            // Not critical, continue anyway
+        }
+    }
+    
     if (!mgmt->setName(deviceName, deviceName.substr(0, std::min(deviceName.length(), 
                                                                static_cast<size_t>(Mgmt::kMaxAdvertisingShortNameLength))))) {
         Logger::warn("Failed to set adapter name");
         // Not critical, continue anyway
     }
     
-    // CRITICAL: Make sure all services and characteristics have their D-Bus interfaces set up
-    // before registering with BlueZ
+    // CRITICAL: 모든 객체 계층 구조를 한 번에 설정
+    
+    // 1. 먼저 애플리케이션과 광고 객체가 올바르게 설정되었는지 확인
+    // 이미 초기화 과정에서 생성됨
+    
+    // 2. 애플리케이션에 ObjectManager 인터페이스 추가
+    // (중요: D-Bus에 등록하기 전에 모든 인터페이스를 먼저 추가)
+    if (!application->addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
+        Logger::error("Failed to add ObjectManager interface");
+        return false;
+    }
+    
+    if (!application->addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
+                              [this](const DBusMethodCall& call) { 
+                                  application->handleGetManagedObjects(call); 
+                              })) {
+        Logger::error("Failed to add GetManagedObjects method");
+        return false;
+    }
+    
+    // 3. 모든 서비스, 특성, 설명자의 D-Bus 인터페이스 설정
+    Logger::info("Setting up D-Bus interfaces for all GATT objects...");
     for (auto& service : application->getServices()) {
         if (!service->isRegistered()) {
             if (!service->setupDBusInterfaces()) {
@@ -143,7 +203,7 @@ bool Server::start() {
                 return false;
             }
             
-            // Make sure all characteristics have interfaces set up too
+            // 각 서비스의 특성들도 설정
             auto charMap = service->getCharacteristics();
             for (const auto& charPair : charMap) {
                 auto& characteristic = charPair.second;
@@ -154,7 +214,7 @@ bool Server::start() {
                         return false;
                     }
                     
-                    // Make sure all descriptors have interfaces set up too
+                    // 각 특성의 설명자들도 설정
                     auto descMap = characteristic->getDescriptors();
                     for (const auto& descPair : descMap) {
                         auto& descriptor = descPair.second;
@@ -171,30 +231,35 @@ bool Server::start() {
         }
     }
     
-    // Step 2: Setup the Application's D-Bus interfaces before registering
-    // No need to explicitly call setupDBusInterfaces() for the advertisement
-    // as registerWithBlueZ() will handle that
-    if (!application->isRegistered()) {
-        if (!application->setupDBusInterfaces()) {
-            Logger::error("Failed to setup D-Bus interfaces for application");
-            return false;
-        }
+    // 4. 애플리케이션 객체 D-Bus에 등록 (한 번만 등록)
+    Logger::info("Registering GATT application object with D-Bus...");
+    if (!application->registerObject()) {
+        Logger::error("Failed to register application object with D-Bus");
+        return false;
     }
     
-    // Step 4: Register GATT application with BlueZ
+    // 5. 애플리케이션을 BlueZ에 등록
+    Logger::info("Registering GATT application with BlueZ...");
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");
         return false;
     }
     
-    // Step 5: Register advertisement with BlueZ
+    // 6. 광고 설정 및 등록
+    Logger::info("Setting up and registering advertisement...");
+    if (!advertisement->setupDBusInterfaces()) {
+        Logger::error("Failed to setup advertisement interfaces");
+        application->unregisterFromBlueZ();
+        return false;
+    }
+    
     if (!advertisement->registerWithBlueZ()) {
         Logger::error("Failed to register advertisement with BlueZ");
         application->unregisterFromBlueZ();
         return false;
     }
     
-    // Step 6: Start advertising
+    // 7. 광고 활성화
     if (!mgmt->setAdvertising(1)) {
         Logger::error("Failed to enable advertising");
         advertisement->unregisterFromBlueZ();
@@ -202,7 +267,7 @@ bool Server::start() {
         return false;
     }
     
-    if (!mgmt->setDiscoverable(1, 0)) {  // Infinite timeout (0)
+    if (!mgmt->setDiscoverable(1, advTimeout)) {
         Logger::warn("Failed to make device discoverable");
         // Not critical, continue anyway
     }
@@ -251,6 +316,12 @@ void Server::stop() {
         if (hciAdapter) {
             Logger::debug("Stopping HCI adapter...");
             hciAdapter->stop();
+        }
+        
+        // Step 6: Shutdown ConnectionManager
+        if (ConnectionManager::getInstance().isInitialized()) {
+            Logger::debug("Shutting down ConnectionManager...");
+            ConnectionManager::getInstance().shutdown();
         }
         
         Logger::info("BLE Server stopped successfully");
@@ -324,7 +395,8 @@ void Server::configureAdvertisement(
     const std::vector<GattUuid>& serviceUuids,
     uint16_t manufacturerId,
     const std::vector<uint8_t>& manufacturerData,
-    bool includeTxPower)
+    bool includeTxPower,
+    uint16_t timeout)
 {
     if (!advertisement) {
         Logger::error("Cannot configure advertisement: Advertisement not available");
@@ -355,6 +427,14 @@ void Server::configureAdvertisement(
     
     // Set TX power inclusion
     advertisement->setIncludeTxPower(includeTxPower);
+    
+    // Set advertisement duration (if supported by your GattAdvertisement class)
+    if (timeout > 0) {
+        advertisement->setDuration(timeout);
+    }
+    
+    // Store timeout for discoverable mode
+    advTimeout = timeout;
     
     Logger::info("Advertisement configured");
 }
@@ -408,6 +488,23 @@ void Server::eventLoop() {
     Logger::info("BLE event loop started");
     
     while (running && !g_signalReceived) {
+        // Check connection state via ConnectionManager
+        if (ConnectionManager::getInstance().isInitialized()) {
+            auto devices = ConnectionManager::getInstance().getConnectedDevices();
+            
+            // Optional: Log periodic connection status
+            static int loopCount = 0;
+            if (++loopCount % 100 == 0) {  // Log every ~10 seconds
+                if (!devices.empty()) {
+                    Logger::debug("Connected devices: " + std::to_string(devices.size()));
+                }
+            }
+            
+            // Optional: Add adaptive advertising logic based on connection state
+            // For example, increase advertising power when no devices connected
+            // or reduce it when devices are connected to save power
+        }
+        
         // Check for connections/disconnections
         // This would ideally monitor D-Bus signals from BlueZ
         // For now, we just sleep to avoid busy waiting
@@ -449,7 +546,11 @@ void Server::handleConnectionEvent(const std::string& deviceAddress) {
     Logger::info("Client connected: " + deviceAddress);
     
     if (connectionCallback) {
-        connectionCallback(deviceAddress);
+        try {
+            connectionCallback(deviceAddress);
+        } catch (const std::exception& e) {
+            Logger::error("Exception in connection callback: " + std::string(e.what()));
+        }
     }
 }
 
@@ -458,8 +559,40 @@ void Server::handleDisconnectionEvent(const std::string& deviceAddress) {
     Logger::info("Client disconnected: " + deviceAddress);
     
     if (disconnectionCallback) {
-        disconnectionCallback(deviceAddress);
+        try {
+            disconnectionCallback(deviceAddress);
+        } catch (const std::exception& e) {
+            Logger::error("Exception in disconnection callback: " + std::string(e.what()));
+        }
     }
+}
+
+void Server::handlePropertyChangeEvent(const std::string& interface, 
+                                      const std::string& property, 
+                                      GVariantPtr value) {
+    // Log property changes for debug purposes
+    if (value) {
+        char* valueStr = g_variant_print(value.get(), TRUE);
+        Logger::debug("Property changed: " + interface + "." + property + " = " + valueStr);
+        g_free(valueStr);
+    }
+    
+    // Handle specific properties that might be interesting
+    // For example, MTU size changes could affect how much data we can send
+}
+
+std::vector<std::string> Server::getConnectedDevices() const {
+    if (ConnectionManager::getInstance().isInitialized()) {
+        return ConnectionManager::getInstance().getConnectedDevices();
+    }
+    return {};
+}
+
+bool Server::isDeviceConnected(const std::string& deviceAddress) const {
+    if (ConnectionManager::getInstance().isInitialized()) {
+        return ConnectionManager::getInstance().isDeviceConnected(deviceAddress);
+    }
+    return false;
 }
 
 } // namespace ggk

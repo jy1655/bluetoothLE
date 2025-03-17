@@ -110,54 +110,58 @@ std::vector<GattServicePtr> GattApplication::getServices() const {
 }
 
 bool GattApplication::registerWithBlueZ() {
-    // 모든 서비스가 D-Bus에 등록되었는지 확인
-    for (auto& service : getServices()) {
-        if (!service->isRegistered()) {
-            service->setupDBusInterfaces();
-        }
-    }
-    
-    // 애플리케이션이 D-Bus에 등록되었는지 확인
-    if (!isRegistered()) {
-        if (!setupDBusInterfaces()) {
-            return false;
-        }
-    }
-    
-    // 약간의 지연 추가
-    usleep(100000);  // 100ms
-    
     try {
+        // 이미 BlueZ에 등록된 경우
         if (registered) {
             Logger::info("Application already registered with BlueZ");
             return true;
         }
-        
-        // 1. 먼저 D-Bus 인터페이스가 설정되어 있는지 확인
+
+        // 이미 객체가 등록되었는지 확인
         if (!isRegistered()) {
             if (!setupDBusInterfaces()) {
                 Logger::error("Failed to setup D-Bus interfaces");
                 return false;
             }
-            
-            // 객체가 D-Bus에 완전히 등록될 시간을 줌
-            usleep(500000); // 500ms
         }
         
-        // 2. 옵션 딕셔너리 생성
+        // 1. 모든 서비스 인터페이스 설정 (아직 등록되지 않은 경우)
+        for (auto& service : getServices()) {
+            if (!service->isRegistered()) {
+                if (!service->setupDBusInterfaces()) {
+                    Logger::error("Failed to setup service interfaces");
+                    return false;
+                }
+            }
+        }
+        
+        // 2. 애플리케이션 인터페이스 설정 및 D-Bus 등록 (아직 등록되지 않은 경우)
+        if (!isRegistered()) {
+            if (!setupDBusInterfaces()) {
+                Logger::error("Failed to setup application interfaces");
+                return false;
+            }
+            
+            // D-Bus 등록이 완료될 때까지 짧은 대기
+            usleep(100000); // 100ms
+        }
+        
+        // 3. BlueZ에 등록 요청
+        Logger::info("Sending RegisterApplication request to BlueZ");
+        
+        // 옵션 딕셔너리 생성
         GVariantBuilder options_builder;
         g_variant_builder_init(&options_builder, G_VARIANT_TYPE("a{sv}"));
         
-        // 3. 파라미터 생성
+        // 파라미터 생성
         GVariant* params = g_variant_new("(o@a{sv})", 
                                         getPath().c_str(),
                                         g_variant_builder_end(&options_builder));
         
-        // 4. 참조 카운트 관리
+        // 참조 카운트 관리
         GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
         
-        // 5. BlueZ에 등록 요청 전송
-        Logger::info("Sending RegisterApplication request to BlueZ");
+        // BlueZ에 등록 요청 전송
         GVariantPtr result = getConnection().callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(BlueZConstants::ADAPTER_PATH),

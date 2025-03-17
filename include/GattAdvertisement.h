@@ -48,13 +48,15 @@ public:
     bool registerWithBlueZ();
     bool unregisterFromBlueZ();
     bool isRegistered() const { return registered; }
-    
-private:
+
     // D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
     
     // D-Bus 메서드 핸들러
     void handleRelease(const DBusMethodCall& call);
+
+private:
+    
     
     // D-Bus 속성 획득
     GVariant* getTypeProperty();
