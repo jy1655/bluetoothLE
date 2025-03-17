@@ -17,11 +17,10 @@ GattApplication* DBusTestEnvironment::getGattApplication() {
 void DBusTestEnvironment::SetUp() {
     // ✅ 먼저 버스 타입을 설정
     DBusName::getInstance().setBusType(G_BUS_TYPE_SYSTEM);
-    
     if (!DBusName::getInstance().initialize()) {
         FAIL() << "Failed to initialize D-Bus for testing";
     }
-    
+
     application = std::make_unique<GattApplication>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath("/com/example/test/gatt")

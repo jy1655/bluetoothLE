@@ -7,6 +7,7 @@
 #include <endian.h>
 
 #include "DBusObjectPath.h"
+#include "DBusTypes.h"
 
 namespace ggk {
 
@@ -63,6 +64,13 @@ struct Utils
 	// A small collection of helper functions for generating various types of GVariants, which are needed when responding to BlueZ
 	// method/property messages. Real services will likley need more of these to support various types of data passed to/from BlueZ,
 	// or feel free to do away with them and use GLib directly.
+	// -----------------------------------------------------------------------------------------------------------------------------
+
+	// -----------------------------------------------------------------------------------------------------------------------------
+	// 이전 버전과 호환되는 GVariant 생성 함수들 (raw 포인터 반환)
+	// 참고: 이 함수들은 새로운 스마트 포인터 기반 함수를 내부적으로 사용하지만,
+	// 기존 코드와의 호환성을 위해 raw 포인터를 반환합니다. 
+	// 소유권 관리를 위해 새로운 함수를 사용하는 것이 권장됩니다.
 	// -----------------------------------------------------------------------------------------------------------------------------
 
 	// Returns a GVariant containing a floating reference to a utf8 string
@@ -137,11 +145,62 @@ struct Utils
 	// Returns an array of bytes ("ay") containing a single signed 64-bit value
 	static GVariant *gvariantFromByteArray(const gint64 data);
 
+	// -----------------------------------------------------------------------------------------------------------------------------
+	// 새로운 스마트 포인터 기반 GVariant 생성 함수들
+	// 소유권 관리가 명확하고 안전하게 스마트 포인터를 반환합니다.
+	// 새로운 코드에서는 이 함수들을 사용하는 것이 권장됩니다.
+	// -----------------------------------------------------------------------------------------------------------------------------
+
+	// Returns a GVariantPtr containing a string
+	static GVariantPtr gvariantPtrFromString(const char *pStr);
+
+	// Returns a GVariantPtr containing a string
+	static GVariantPtr gvariantPtrFromString(const std::string &str);
+
+	// Returns a GVariantPtr containing an array of strings ("as") from a vector of strings
+	static GVariantPtr gvariantPtrFromStringArray(const std::vector<std::string> &arr);
+
+	// Returns a GVariantPtr containing an array of strings ("as") from a vector of C strings
+	static GVariantPtr gvariantPtrFromStringArray(const std::vector<const char *> &arr);
+
+	// Returns a GVariantPtr containing an object path ("o") from a DBusObjectPath
+	static GVariantPtr gvariantPtrFromObject(const DBusObjectPath &path);
+
+	// Returns a GVariantPtr containing a boolean
+	static GVariantPtr gvariantPtrFromBoolean(bool b);
+
+	// Returns a GVariantPtr containing a 16-bit integer
+	static GVariantPtr gvariantPtrFromInt(gint16 value);
+
+	// Returns a GVariantPtr containing a 32-bit integer
+	static GVariantPtr gvariantPtrFromInt(gint32 value);
+
+	// Returns a GVariantPtr containing an array of bytes ("ay") from a C string
+	static GVariantPtr gvariantPtrFromByteArray(const char *pStr);
+
+	// Returns a GVariantPtr containing an array of bytes ("ay") from a string
+	static GVariantPtr gvariantPtrFromByteArray(const std::string &str);
+
+	// Returns a GVariantPtr containing an array of bytes ("ay") from raw byte data
+	static GVariantPtr gvariantPtrFromByteArray(const guint8 *pBytes, int count);
+
+	// Returns a GVariantPtr containing an array of bytes ("ay") from a vector of bytes
+	static GVariantPtr gvariantPtrFromByteArray(const std::vector<guint8> bytes);
+
+	// Returns a GVariantPtr containing an array of bytes ("ay") with a single numeric value
+	template<typename T>
+	static GVariantPtr gvariantPtrFromByteArray(T value) {
+		return gvariantPtrFromByteArray(reinterpret_cast<const guint8 *>(&value), sizeof(value));
+	}
+
 	// Extracts a string from an array of bytes ("ay")
 	static std::string stringFromGVariantByteArray(const GVariant *pVariant);
 
 	// Make a Emtpy GvarientBuilder
 	static GVariant *createEmptyDictionary();
+
+	// Make an Emtpy GVariantBuilder as a smart pointer
+	static GVariantPtr createEmptyDictionaryPtr();
 
 	// -----------------------------------------------------------------------------------------------------------------------------
 	// Endian conversion

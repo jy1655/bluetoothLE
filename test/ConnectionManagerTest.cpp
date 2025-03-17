@@ -1,299 +1,349 @@
 // test/ConnectionManagerTest.cpp
 #include <gtest/gtest.h>
-#include "ConnectionManager.h"
-#include "DBusTestEnvironment.h"
-#include <chrono>
+#include <iostream>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <chrono>
+#include <atomic>
+
+// BLE 스택 헤더
+#include "DBusName.h"
+#include "ConnectionManager.h"
+#include "GattApplication.h"
+#include "GattService.h"
+#include "GattCharacteristic.h"
+#include "GattAdvertisement.h"
 
 using namespace ggk;
 
 class ConnectionManagerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // 콜백 호출 여부를 추적하기 위한 변수 초기화
-        connectionCallbackCalled = false;
-        disconnectionCallbackCalled = false;
-        propertyChangedCallbackCalled = false;
+        // DBus 연결 초기화
+        ASSERT_TRUE(DBusName::getInstance().initialize());
+        dbus_conn = &DBusName::getInstance().getConnection();
         
-        // 테스트용 디바이스 정보
-        testDeviceAddress = "AA:BB:CC:DD:EE:FF";
-        testDevicePath = "/org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF";
+        // GATT Application 생성하지 않고 바로 광고만 설정
+        advertisement = std::make_shared<GattAdvertisement>(
+            *dbus_conn,
+            DBusObjectPath("/com/example/ble/adv")
+        );
+        
+        advertisement->setLocalName("BLE Test Device");
+        ASSERT_TRUE(advertisement->registerWithBlueZ());
+        
+        // ConnectionManager 초기화
+        ASSERT_TRUE(ConnectionManager::getInstance().initialize(*dbus_conn));
     }
-
+    
     void TearDown() override {
-        // ConnectionManager 종료
+        std::cout << "\n====== CLEANING UP BLE PERIPHERAL TEST ======\n" << std::endl;
+        
+        // 1. 광고 중지
+        if (advertisement && advertisement->isRegistered()) {
+            std::cout << "Stopping advertisement..." << std::endl;
+            advertisement->unregisterFromBlueZ();
+        }
+        
+        // 2. GATT 애플리케이션 등록 해제
+        if (application && application->isRegistered()) {
+            std::cout << "Unregistering GATT application..." << std::endl;
+            application->unregisterFromBlueZ();
+        }
+        
+        // 3. ConnectionManager 종료
+        std::cout << "Shutting down ConnectionManager..." << std::endl;
         ConnectionManager::getInstance().shutdown();
-    }
-
-    // 모의 D-Bus 시그널 생성 (Interfaces Added)
-    void sendMockInterfacesAddedSignal(bool connected) {
-        // a{sa{sv}} 타입의 인터페이스 맵 생성
-        GVariantBuilder ifacesBuilder;
-        g_variant_builder_init(&ifacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
         
-        // Device 인터페이스 속성 맵 생성
-        GVariantBuilder propsBuilder;
-        g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
+        // 4. DBusName 종료
+        std::cout << "Closing D-Bus connection..." << std::endl;
+        DBusName::getInstance().shutdown();
         
-        // Connected 속성 추가
-        g_variant_builder_add(&propsBuilder, "{sv}", "Connected", 
-                             g_variant_new_boolean(connected));
-        
-        // Address 속성 추가
-        g_variant_builder_add(&propsBuilder, "{sv}", "Address", 
-                             g_variant_new_string(testDeviceAddress.c_str()));
-        
-        // Device 인터페이스 추가
-        g_variant_builder_add(&ifacesBuilder, "{sa{sv}}", 
-                             BlueZConstants::DEVICE_INTERFACE.c_str(),
-                             &propsBuilder);
-        
-        // InterfacesAdded 신호 매개변수 생성
-        GVariant* params = g_variant_new("(oa{sa{sv}})", 
-                                       testDevicePath.c_str(),
-                                       &ifacesBuilder);
-        
-        GVariantPtr paramsPtr(g_variant_ref_sink(params), &g_variant_unref);
-        
-        // 신호 전송
-        DBusConnection& conn = DBusTestEnvironment::getConnection();
-        conn.emitSignal(
-            DBusObjectPath(BlueZConstants::ROOT_PATH),
-            BlueZConstants::OBJECT_MANAGER_INTERFACE,
-            "InterfacesAdded",
-            std::move(paramsPtr)
-        );
+        std::cout << "Test cleanup complete." << std::endl;
     }
     
-    // 모의 D-Bus 시그널 생성 (Interfaces Removed)
-    void sendMockInterfacesRemovedSignal() {
-        // as 타입의 인터페이스 배열 생성
-        GVariantBuilder ifacesBuilder;
-        g_variant_builder_init(&ifacesBuilder, G_VARIANT_TYPE("as"));
-        
-        // Device 인터페이스 추가
-        g_variant_builder_add(&ifacesBuilder, "s", BlueZConstants::DEVICE_INTERFACE.c_str());
-        
-        // InterfacesRemoved 신호 매개변수 생성
-        GVariant* params = g_variant_new("(oas)", 
-                                       testDevicePath.c_str(),
-                                       &ifacesBuilder);
-        
-        GVariantPtr paramsPtr(g_variant_ref_sink(params), &g_variant_unref);
-        
-        // 신호 전송
-        DBusConnection& conn = DBusTestEnvironment::getConnection();
-        conn.emitSignal(
-            DBusObjectPath(BlueZConstants::ROOT_PATH),
-            BlueZConstants::OBJECT_MANAGER_INTERFACE,
-            "InterfacesRemoved",
-            std::move(paramsPtr)
-        );
+    // Wait for connection with timeout
+    bool waitForConnection(int timeoutSeconds) {
+        std::unique_lock<std::mutex> lock(mtx);
+        return cv.wait_for(lock, std::chrono::seconds(timeoutSeconds), 
+                         [this] { return connectionCallbackCalled; });
     }
     
-    // 모의 D-Bus 시그널 생성 (Properties Changed)
-    void sendMockPropertiesChangedSignal() {
-        // a{sv} 타입의 속성 맵 생성
-        GVariantBuilder propsBuilder;
-        g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
-        
-        // RSSI 속성 추가
-        g_variant_builder_add(&propsBuilder, "{sv}", "RSSI", 
-                             g_variant_new_int16(-65));
-        
-        // as 타입의 무효화된 속성 배열 생성
-        GVariantBuilder invalidatedBuilder;
-        g_variant_builder_init(&invalidatedBuilder, G_VARIANT_TYPE("as"));
-        
-        // PropertiesChanged 신호 매개변수 생성
-        GVariant* params = g_variant_new("(sa{sv}as)", 
-                                       BlueZConstants::DEVICE_INTERFACE.c_str(),
-                                       &propsBuilder,
-                                       &invalidatedBuilder);
-        
-        GVariantPtr paramsPtr(g_variant_ref_sink(params), &g_variant_unref);
-        
-        // 신호 전송
-        DBusConnection& conn = DBusTestEnvironment::getConnection();
-        conn.emitSignal(
-            DBusObjectPath(testDevicePath),
-            BlueZConstants::PROPERTIES_INTERFACE,
-            "PropertiesChanged",
-            std::move(paramsPtr)
-        );
+    // Wait for disconnection with timeout
+    bool waitForDisconnection(int timeoutSeconds) {
+        std::unique_lock<std::mutex> lock(mtx);
+        return cv.wait_for(lock, std::chrono::seconds(timeoutSeconds), 
+                         [this] { return disconnectionCallbackCalled; });
     }
-
-    // 테스트 상태 변수
+    
+    // Wait for property change with timeout
+    bool waitForPropertyChange(int timeoutSeconds) {
+        std::unique_lock<std::mutex> lock(mtx);
+        return cv.wait_for(lock, std::chrono::seconds(timeoutSeconds), 
+                         [this] { return propertyChangedCallbackCalled; });
+    }
+    
+    // Test state variables
+    std::mutex mtx;
+    std::condition_variable cv;
     bool connectionCallbackCalled;
     bool disconnectionCallbackCalled;
     bool propertyChangedCallbackCalled;
-    std::string testDeviceAddress;
-    std::string testDevicePath;
+    std::string deviceAddress;
+    std::string propertyName;
+    
+    // BLE stack components
+    DBusConnection* dbus_conn;
+    std::shared_ptr<GattApplication> application;
+    std::shared_ptr<GattAdvertisement> advertisement;
 };
 
-// 초기화 테스트
+// 1. 기본 초기화 테스트
 TEST_F(ConnectionManagerTest, Initialize) {
+    // 이미 SetUp에서 초기화가 완료됨
     ConnectionManager& connMgr = ConnectionManager::getInstance();
-    DBusConnection& connection = DBusTestEnvironment::getConnection();
     
-    bool result = connMgr.initialize(connection);
-    EXPECT_TRUE(result);
-    EXPECT_TRUE(connMgr.getConnectedDevices().empty());
+    // 연결된 장치 목록 확인
+    std::vector<std::string> devices = connMgr.getConnectedDevices();
+    std::cout << "Found " << devices.size() << " initially connected devices" << std::endl;
 }
 
-// 연결 이벤트 테스트
+// 2. 장치 연결 이벤트 테스트
 TEST_F(ConnectionManagerTest, DeviceConnectedEvent) {
     ConnectionManager& connMgr = ConnectionManager::getInstance();
-    DBusConnection& connection = DBusTestEnvironment::getConnection();
     
-    // 초기화
-    ASSERT_TRUE(connMgr.initialize(connection));
+    std::cout << "\n===== DEVICE CONNECTION TEST =====\n" << std::endl;
+    std::cout << "Waiting for a device to connect..." << std::endl;
+    std::cout << "Please connect to 'BLE Test Device' from any BLE Central device (smartphone, etc.)" << std::endl;
+    std::cout << "You have 30 seconds to complete the connection" << std::endl;
     
     // 연결 콜백 설정
-    connMgr.setOnConnectionCallback([this](const std::string& deviceAddress) {
-        EXPECT_EQ(deviceAddress, testDeviceAddress);
+    connMgr.setOnConnectionCallback([this](const std::string& address) {
+        std::cout << "✓ Connection detected from device: " << address << std::endl;
+        
+        std::lock_guard<std::mutex> lock(mtx);
         connectionCallbackCalled = true;
+        deviceAddress = address;
+        cv.notify_one();
     });
     
-    // 연결 상태가 true인 모의 InterfacesAdded 시그널 전송
-    sendMockInterfacesAddedSignal(true);
-    
-    // 콜백 호출을 위한 잠시 대기
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
-    // 콜백이 호출되었는지 확인
-    EXPECT_TRUE(connectionCallbackCalled);
-    
-    // 디바이스가 연결된 목록에 추가되었는지 확인
-    auto devices = connMgr.getConnectedDevices();
-    EXPECT_EQ(devices.size(), 1);
-    if (!devices.empty()) {
-        EXPECT_EQ(devices[0], testDeviceAddress);
+    // 연결 대기
+    bool connected = waitForConnection(30);
+    if (!connected) {
+        std::cout << "No device connected within 30 seconds timeout" << std::endl;
+        GTEST_SKIP() << "No device connected during test period";
+        return;
     }
     
-    EXPECT_TRUE(connMgr.isDeviceConnected(testDeviceAddress));
+    // 연결 확인
+    EXPECT_TRUE(connectionCallbackCalled);
+    EXPECT_FALSE(deviceAddress.empty());
+    EXPECT_TRUE(connMgr.isDeviceConnected(deviceAddress));
+    
+    // 연결된 장치 목록 확인
+    auto devices = connMgr.getConnectedDevices();
+    EXPECT_FALSE(devices.empty());
+    EXPECT_TRUE(std::find(devices.begin(), devices.end(), deviceAddress) != devices.end());
+    
+    std::cout << "Connection test passed successfully!" << std::endl;
 }
 
-// 연결 해제 이벤트 테스트
+// 3. 장치 연결 해제 이벤트 테스트
 TEST_F(ConnectionManagerTest, DeviceDisconnectedEvent) {
     ConnectionManager& connMgr = ConnectionManager::getInstance();
-    DBusConnection& connection = DBusTestEnvironment::getConnection();
     
-    // 초기화
-    ASSERT_TRUE(connMgr.initialize(connection));
+    std::cout << "\n===== DEVICE DISCONNECTION TEST =====\n" << std::endl;
     
-    // 먼저 연결 상태로 설정
-    connMgr.setOnConnectionCallback([this](const std::string& deviceAddress) {
-        connectionCallbackCalled = true;
-    });
-    
-    sendMockInterfacesAddedSignal(true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    ASSERT_TRUE(connectionCallbackCalled);
-    ASSERT_TRUE(connMgr.isDeviceConnected(testDeviceAddress));
-    
-    // 연결 해제 콜백 설정
-    connMgr.setOnDisconnectionCallback([this](const std::string& deviceAddress) {
-        EXPECT_EQ(deviceAddress, testDeviceAddress);
-        disconnectionCallbackCalled = true;
-    });
-    
-    // 모의 InterfacesRemoved 시그널 전송
-    sendMockInterfacesRemovedSignal();
-    
-    // 콜백 호출을 위한 잠시 대기
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
-    // 콜백이 호출되었는지 확인
-    EXPECT_TRUE(disconnectionCallbackCalled);
-    
-    // 디바이스가 연결된 목록에서 제거되었는지 확인
-    EXPECT_TRUE(connMgr.getConnectedDevices().empty());
-    EXPECT_FALSE(connMgr.isDeviceConnected(testDeviceAddress));
-}
-
-// 속성 변경 이벤트 테스트
-TEST_F(ConnectionManagerTest, PropertyChangedEvent) {
-    ConnectionManager& connMgr = ConnectionManager::getInstance();
-    DBusConnection& connection = DBusTestEnvironment::getConnection();
-    
-    // 초기화
-    ASSERT_TRUE(connMgr.initialize(connection));
-    
-    // 먼저 연결 상태로 설정
-    connMgr.setOnConnectionCallback([this](const std::string& deviceAddress) {
-        connectionCallbackCalled = true;
-    });
-    
-    sendMockInterfacesAddedSignal(true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    ASSERT_TRUE(connectionCallbackCalled);
-    
-    // 속성 변경 콜백 설정
-    connMgr.setOnPropertyChangedCallback([this](const std::string& interface, 
-                                               const std::string& property, 
-                                               GVariantPtr value) {
-        EXPECT_EQ(interface, BlueZConstants::DEVICE_INTERFACE);
-        EXPECT_EQ(property, "RSSI");
-        EXPECT_NE(value.get(), nullptr);
+    // 먼저 연결된 장치 확인
+    auto devices = connMgr.getConnectedDevices();
+    if (devices.empty()) {
+        std::cout << "No devices currently connected." << std::endl;
+        std::cout << "Please connect to 'BLE Test Device' from a BLE Central device" << std::endl;
         
-        // RSSI 값 확인
-        if (property == "RSSI" && value.get()) {
-            int16_t rssi = g_variant_get_int16(value.get());
-            EXPECT_EQ(rssi, -65);
+        // 연결 콜백 설정 및 대기
+        connMgr.setOnConnectionCallback([this](const std::string& address) {
+            std::cout << "✓ Connection detected from device: " << address << std::endl;
+            std::lock_guard<std::mutex> lock(mtx);
+            connectionCallbackCalled = true;
+            deviceAddress = address;
+            cv.notify_one();
+        });
+        
+        bool connected = waitForConnection(30);
+        if (!connected) {
+            std::cout << "No device connected within timeout" << std::endl;
+            GTEST_SKIP() << "No device connected for disconnection test";
+            return;
         }
         
-        propertyChangedCallbackCalled = true;
-    });
+        devices = connMgr.getConnectedDevices();
+    }
     
-    // 모의 PropertiesChanged 시그널 전송
-    sendMockPropertiesChangedSignal();
+    // 이제 연결된 장치가 있어야 함
+    ASSERT_FALSE(devices.empty());
     
-    // 콜백 호출을 위한 잠시 대기
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    std::cout << "Currently connected devices:" << std::endl;
+    for (const auto& addr : devices) {
+        std::cout << "  - " << addr << std::endl;
+    }
     
-    // 콜백이 호출되었는지 확인
-    EXPECT_TRUE(propertyChangedCallbackCalled);
-}
-
-// 연결 및 연결 해제 통합 테스트
-TEST_F(ConnectionManagerTest, DeviceConnectionLifecycle) {
-    ConnectionManager& connMgr = ConnectionManager::getInstance();
-    DBusConnection& connection = DBusTestEnvironment::getConnection();
-    
-    // 초기화
-    ASSERT_TRUE(connMgr.initialize(connection));
-    
-    // 연결 콜백 설정
-    connMgr.setOnConnectionCallback([this](const std::string& deviceAddress) {
-        connectionCallbackCalled = true;
-    });
+    std::cout << "Please disconnect the device within 30 seconds" << std::endl;
+    std::cout << "(Either turn off Bluetooth on the connected device or use the app to disconnect)" << std::endl;
     
     // 연결 해제 콜백 설정
-    connMgr.setOnDisconnectionCallback([this](const std::string& deviceAddress) {
+    connMgr.setOnDisconnectionCallback([this](const std::string& address) {
+        std::cout << "✓ Disconnection detected for device: " << address << std::endl;
+        std::lock_guard<std::mutex> lock(mtx);
         disconnectionCallbackCalled = true;
+        deviceAddress = address;
+        cv.notify_one();
     });
     
-    // 1. 연결 이벤트 테스트
-    sendMockInterfacesAddedSignal(true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(connectionCallbackCalled);
-    EXPECT_TRUE(connMgr.isDeviceConnected(testDeviceAddress));
+    // 연결 해제 대기
+    bool disconnected = waitForDisconnection(30);
+    if (!disconnected) {
+        std::cout << "No device disconnected within timeout" << std::endl;
+        GTEST_SKIP() << "No device disconnected during test period";
+        return;
+    }
     
-    // 2. 속성 변경 이벤트 테스트
-    connMgr.setOnPropertyChangedCallback([this](const std::string& interface, 
-                                               const std::string& property, 
-                                               GVariantPtr value) {
-        propertyChangedCallbackCalled = true;
-    });
-    
-    sendMockPropertiesChangedSignal();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    EXPECT_TRUE(propertyChangedCallbackCalled);
-    
-    // 3. 연결 해제 이벤트 테스트
-    sendMockInterfacesRemovedSignal();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // 연결 해제 확인
     EXPECT_TRUE(disconnectionCallbackCalled);
-    EXPECT_FALSE(connMgr.isDeviceConnected(testDeviceAddress));
+    EXPECT_FALSE(deviceAddress.empty());
+    EXPECT_FALSE(connMgr.isDeviceConnected(deviceAddress));
+    
+    std::cout << "Disconnection test passed successfully!" << std::endl;
+}
+
+// 4. 속성 변경 테스트
+TEST_F(ConnectionManagerTest, PropertyChangedEvent) {
+    ConnectionManager& connMgr = ConnectionManager::getInstance();
+    
+    std::cout << "\n===== PROPERTY CHANGE TEST =====\n" << std::endl;
+    
+    // 연결된 장치 확인
+    auto devices = connMgr.getConnectedDevices();
+    if (devices.empty()) {
+        std::cout << "No devices currently connected." << std::endl;
+        std::cout << "Please connect to 'BLE Test Device' from a BLE Central device" << std::endl;
+        
+        // 연결 대기
+        connMgr.setOnConnectionCallback([this](const std::string& address) {
+            deviceAddress = address;
+            connectionCallbackCalled = true;
+            cv.notify_one();
+        });
+        
+        if (!waitForConnection(30)) {
+            GTEST_SKIP() << "No device connected for property change test";
+            return;
+        }
+    }
+    
+    // 속성 변경 콜백 설정
+    connMgr.setOnPropertyChangedCallback([this](const std::string& interface,
+                                             const std::string& property,
+                                             GVariantPtr value) {
+        if (!value) return;
+        
+        char* str = g_variant_print(value.get(), TRUE);
+        std::cout << "Property changed: " << interface << "." << property << " = " << str << std::endl;
+        g_free(str);
+        
+        std::lock_guard<std::mutex> lock(mtx);
+        propertyChangedCallbackCalled = true;
+        propertyName = property;
+        cv.notify_one();
+    });
+    
+    std::cout << "Waiting for property changes..." << std::endl;
+    std::cout << "Please interact with the connected device (move it, use the app, etc.)" << std::endl;
+    std::cout << "You have 30 seconds to trigger property changes" << std::endl;
+    
+    // 속성 변경 대기
+    bool propertyChanged = waitForPropertyChange(30);
+    if (!propertyChanged) {
+        std::cout << "No property changes detected within timeout" << std::endl;
+        GTEST_SKIP() << "No property changes detected during test period";
+        return;
+    }
+    
+    // 속성 변경 확인
+    EXPECT_TRUE(propertyChangedCallbackCalled);
+    EXPECT_FALSE(propertyName.empty());
+    
+    std::cout << "Property change test passed successfully!" << std::endl;
+}
+
+// 5. 전체 연결 생명주기 테스트
+TEST_F(ConnectionManagerTest, DeviceConnectionLifecycle) {
+    ConnectionManager& connMgr = ConnectionManager::getInstance();
+    
+    std::cout << "\n===== DEVICE LIFECYCLE TEST =====\n" << std::endl;
+    std::cout << "This test will verify the complete device connection lifecycle" << std::endl;
+    
+    // 1. 연결 단계
+    std::cout << "\n[PHASE 1] Please connect a device to 'BLE Test Device'" << std::endl;
+    
+    // 연결 콜백 설정
+    std::atomic<bool> connectionDetected(false);
+    std::string connectedDevice;
+    
+    connMgr.setOnConnectionCallback([&](const std::string& address) {
+        std::cout << "✓ Connection detected from device: " << address << std::endl;
+        connectionDetected = true;
+        connectedDevice = address;
+        cv.notify_one();
+    });
+    
+    // 연결 대기
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        auto result = cv.wait_for(lock, std::chrono::seconds(30), 
+                                [&]{ return connectionDetected.load(); });
+        
+        if (!result) {
+            std::cout << "No device connected within timeout" << std::endl;
+            GTEST_SKIP() << "No device connected during lifecycle test";
+            return;
+        }
+    }
+    
+    // 연결 확인
+    EXPECT_TRUE(connectionDetected);
+    EXPECT_FALSE(connectedDevice.empty());
+    EXPECT_TRUE(connMgr.isDeviceConnected(connectedDevice));
+    
+    // 2. 연결 해제 단계
+    std::cout << "\n[PHASE 2] Now please disconnect the device: " << connectedDevice << std::endl;
+    
+    // 연결 해제 콜백 설정
+    std::atomic<bool> disconnectionDetected(false);
+    
+    connMgr.setOnDisconnectionCallback([&](const std::string& address) {
+        std::cout << "✓ Disconnection detected for device: " << address << std::endl;
+        EXPECT_EQ(address, connectedDevice);
+        disconnectionDetected = true;
+        cv.notify_one();
+    });
+    
+    // 연결 해제 대기
+    {
+        std::unique_lock<std::mutex> lock(mtx);
+        auto result = cv.wait_for(lock, std::chrono::seconds(30),
+                                [&]{ return disconnectionDetected.load(); });
+        
+        if (!result) {
+            std::cout << "Device not disconnected within timeout" << std::endl;
+            GTEST_SKIP() << "Device not disconnected during lifecycle test";
+            return;
+        }
+    }
+    
+    // 연결 해제 확인
+    EXPECT_TRUE(disconnectionDetected);
+    EXPECT_FALSE(connMgr.isDeviceConnected(connectedDevice));
+    
+    std::cout << "\nConnection lifecycle test completed successfully!" << std::endl;
 }

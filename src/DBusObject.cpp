@@ -95,7 +95,7 @@ GVariantPtr DBusObject::getProperty(const std::string& interface, const std::str
             if (prop.getter) {
                 GVariant* value = prop.getter();
                 if (value) {
-                    return GVariantPtr(value, &g_variant_unref);
+                    return makeGVariantPtr(value);
                 }
             } else {
                 Logger::error("No getter for property: " + interface + "." + name);
