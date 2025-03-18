@@ -118,7 +118,13 @@ std::vector<GattServicePtr> GattApplication::getServices() const {
 }
 
 bool GattApplication::ensureInterfacesRegistered() {
-    // 1. 먼저 모든 서비스와 특성이 D-Bus에 등록되어 있는지 확인
+    // 이미 객체가 등록되어 있으면 인터페이스 설정을 건너뜀
+    if (isRegistered()) {
+        Logger::debug("Application object already registered, skipping interface setup");
+        return true;
+    }
+
+    // 1. 서비스 등록 확인 및 설정
     std::lock_guard<std::mutex> lock(servicesMutex);
     for (auto& service : services) {
         if (!service->isRegistered()) {
@@ -129,7 +135,7 @@ bool GattApplication::ensureInterfacesRegistered() {
         }
     }
     
-    // 2. ObjectManager 인터페이스 추가 
+    // 2. ObjectManager 인터페이스 추가
     if (!addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
         Logger::error("Failed to add ObjectManager interface");
         return false;
@@ -145,7 +151,7 @@ bool GattApplication::ensureInterfacesRegistered() {
     }
     
     // 4. 애플리케이션 객체 등록
-    if (!isRegistered() && !registerObject()) {
+    if (!registerObject()) {
         Logger::error("Failed to register application object");
         return false;
     }
@@ -162,22 +168,10 @@ bool GattApplication::registerWithBlueZ() {
             return true;
         }
 
-        // 인터페이스 확인 및 설정
-        if (!isRegistered() && !ensureInterfacesRegistered()) {
+        // 인터페이스 확인 및 설정 - 이미 등록된 경우에도 호출됨
+        if (!ensureInterfacesRegistered()) {
             Logger::error("Failed to setup application interfaces before BlueZ registration");
             return false;
-        }
-        
-        // 서비스 등록 상태 확인
-        {
-            std::lock_guard<std::mutex> lock(servicesMutex);
-            for (const auto& service : services) {
-                if (!service->isRegistered()) {
-                    Logger::error("Service not registered with D-Bus: " + service->getUuid().toString());
-                    Logger::error("All services must be registered before registering with BlueZ");
-                    return false;
-                }
-            }
         }
         
         // BlueZ 상태 확인
@@ -187,7 +181,7 @@ bool GattApplication::registerWithBlueZ() {
             return false;
         }
         
-        // BlueZ에 등록 요청만 담당
+        // BlueZ에 등록 요청 전송
         Logger::info("Sending RegisterApplication request to BlueZ");
         
         // 옵션 딕셔너리 생성
@@ -202,7 +196,7 @@ bool GattApplication::registerWithBlueZ() {
         // 참조 카운트 관리
         GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
         
-        // BlueZ에 등록 요청 전송 (타임아웃 증가)
+        // BlueZ에 등록 요청 전송
         GVariantPtr result = getConnection().callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(BlueZConstants::ADAPTER_PATH),
@@ -210,16 +204,13 @@ bool GattApplication::registerWithBlueZ() {
             BlueZConstants::REGISTER_APPLICATION,
             std::move(parameters),
             "",
-            30000  // 타임아웃 30초로 증가
+            30000  // 타임아웃 30초
         );
         
         if (!result) {
             Logger::warn("No result from BlueZ RegisterApplication call");
-            // hcitool을 사용하여 어댑터 상태 확인
-            system("hciconfig -a");
+            system("hciconfig -a"); // 어댑터 상태 확인
             
-            // 타임아웃으로 인한 실패로 처리하지만, 실제로는 작동할 수도 있음
-            // BlueZ 5.64에서는 때때로 타임아웃이 발생하지만 실제로는 등록됨
             registered = true;
             Logger::info("Assuming application registration succeeded despite timeout");
             return true;

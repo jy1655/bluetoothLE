@@ -212,13 +212,36 @@ void GattAdvertisement::handleRelease(const DBusMethodCall& call) {
 
 bool GattAdvertisement::registerWithBlueZ() {
     try {
+        // 이미 BlueZ에 등록된 경우
         if (registered) {
             Logger::info("Advertisement already registered with BlueZ");
             return true;
         }
         
-        // isRegistered() 검사 제거 - setupDBusInterfaces()가 이미 성공했으므로
-        // D-Bus 등록은 이미 되어 있다고 가정
+        // 객체가 이미 등록되어 있으면 등록 해제 후 다시 설정
+        if (isRegistered()) {
+            Logger::info("Unregistering advertisement object to refresh interfaces");
+            unregisterObject();
+        }
+        
+        // D-Bus 인터페이스 설정
+        if (!setupDBusInterfaces()) {
+            Logger::error("Failed to setup advertisement D-Bus interfaces");
+            return false;
+        }
+        
+        // BlueZ 서비스가 실행 중인지 확인
+        int bluezStatus = system("systemctl is-active --quiet bluetooth.service");
+        if (bluezStatus != 0) {
+            Logger::error("BlueZ service is not active. Run: systemctl start bluetooth.service");
+            return false;
+        }
+        
+        // BlueZ 어댑터가 존재하는지 확인
+        if (system("hciconfig hci0 > /dev/null 2>&1") != 0) {
+            Logger::error("BlueZ adapter 'hci0' not found or not available");
+            return false;
+        }
         
         // BlueZ에 등록 요청 전송
         Logger::info("Sending RegisterAdvertisement request to BlueZ");
@@ -235,30 +258,60 @@ bool GattAdvertisement::registerWithBlueZ() {
         // 참조 카운트 관리
         GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
         
-        // BlueZ에 등록 요청 전송
-        GVariantPtr result = getConnection().callMethod(
-            BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-            BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
-            BlueZConstants::REGISTER_ADVERTISEMENT,
-            std::move(parameters),
-            "",
-            10000
-        );
-        
-        registered = true;
-        Logger::info("Successfully registered advertisement with BlueZ");
-        return true;
-    } catch (const std::exception& e) {
-        // 타임아웃 예외 처리 등 기존 코드 유지
-        std::string error = e.what();
-        if (error.find("Timeout") != std::string::npos) {
-            Logger::warn("BlueZ advertisement registration timed out but continuing operation");
+        try {
+            // BlueZ에 등록 요청 전송
+            GVariantPtr result = getConnection().callMethod(
+                BlueZConstants::BLUEZ_SERVICE,
+                DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
+                BlueZConstants::REGISTER_ADVERTISEMENT,
+                std::move(parameters),
+                "",
+                10000
+            );
+            
+            if (!result) {
+                Logger::warn("No result from BlueZ RegisterAdvertisement call");
+                // 타임아웃인 경우와 동일하게 처리
+                registered = true;
+                Logger::info("Assuming advertisement registration succeeded despite no result");
+                return true;
+            }
+            
             registered = true;
+            Logger::info("Successfully registered advertisement with BlueZ");
             return true;
+        } catch (const std::exception& e) {
+            std::string error = e.what();
+            
+            // 타임아웃 예외 처리
+            if (error.find("Timeout") != std::string::npos) {
+                Logger::warn("BlueZ advertisement registration timed out but continuing operation");
+                registered = true;
+                return true;
+            }
+            
+            // DoesNotExist 오류 처리
+            if (error.find("DoesNotExist") != std::string::npos || 
+                error.find("Does Not Exist") != std::string::npos) {
+                Logger::error("BlueZ advertising interface not available. Check if bluetoothd supports LE advertising");
+                
+                // bluetoothd 버전 확인
+                system("bluetoothd -v");
+                
+                // 어댑터를 리셋해 볼 수 있음
+                Logger::info("Attempting to reset Bluetooth adapter...");
+                system("sudo hciconfig hci0 down && sudo hciconfig hci0 up");
+                sleep(2);
+                
+                return false;
+            }
+            
+            Logger::error("Exception in registerWithBlueZ: " + error);
+            return false;
         }
-        
-        Logger::error("Exception in registerWithBlueZ: " + error);
+    } catch (const std::exception& e) {
+        Logger::error("Exception in registerWithBlueZ outer block: " + std::string(e.what()));
         return false;
     }
 }

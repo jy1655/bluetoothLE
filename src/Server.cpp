@@ -200,43 +200,26 @@ bool Server::start(bool secureMode) {
     }
     
     // *** 중요: 객체 등록 순서 변경 ***
-    // 1. 서비스, 특성, 설명자를 먼저 설정
-    Logger::info("Setting up D-Bus interfaces for all GATT objects...");
+    // 1. 애플리케이션/광고 객체 초기화 - 항상 새로 시작하도록 기존 등록 해제
+    if (application->isRegistered()) {
+        Logger::info("Unregistering application to refresh");
+        application->unregisterObject();
+    }
+    
+    if (advertisement->isRegistered()) {
+        Logger::info("Unregistering advertisement to refresh");
+        advertisement->unregisterObject();
+    }
+    
+    // 2. 서비스 설정
     for (auto& service : application->getServices()) {
-        if (!service->isRegistered()) {
-            if (!service->setupDBusInterfaces()) {
-                Logger::error("Failed to setup D-Bus interfaces for service: " + service->getUuid().toString());
-                return false;
-            }
+        if (!service->isRegistered() && !service->setupDBusInterfaces()) {
+            Logger::error("Failed to setup D-Bus interfaces for service: " + service->getUuid().toString());
+            return false;
         }
     }
     
-    // 2. 애플리케이션 설정 - 이미 등록된 경우 재등록하지 않음
-    // 중요: 서버가 시작될 때마다 애플리케이션 객체를 새로 만들거나 기존 객체를 언레지스터한 후 재등록
-    if (application->isRegistered()) {
-        Logger::info("Unregistering application object to refresh interfaces");
-        application->unregisterObject();  // 기존 등록 해제
-    }
-    
-    // 애플리케이션 인터페이스 설정 - 모든 인터페이스를 추가한 후에 객체 등록
-    if (!application->setupDBusInterfaces()) {
-        Logger::error("Failed to setup application D-Bus interfaces");
-        return false;
-    }
-    
-    // 3. 광고 설정 - 애플리케이션 등록 후
-    Logger::info("Setting up advertisement...");
-    if (advertisement->isRegistered()) {
-        Logger::info("Unregistering advertisement object to refresh interfaces");
-        advertisement->unregisterObject();  // 기존 등록 해제
-    }
-    
-    if (!advertisement->setupDBusInterfaces()) {
-        Logger::error("Failed to setup advertisement interfaces");
-        return false;
-    }
-    
-    // 4. 애플리케이션을 BlueZ에 등록
+    // 3. 애플리케이션 등록
     Logger::info("Registering GATT application with BlueZ...");
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");
@@ -246,7 +229,7 @@ bool Server::start(bool secureMode) {
     // 설정 반영될 시간 주기
     sleep(1);
     
-    // 5. 광고 등록
+    // 4. 광고 등록
     Logger::info("Registering advertisement with BlueZ...");
     if (!advertisement->registerWithBlueZ()) {
         Logger::error("Failed to register advertisement with BlueZ");
@@ -257,7 +240,7 @@ bool Server::start(bool secureMode) {
     // 설정 반영될 시간 주기
     sleep(1);
     
-    // 6. 광고 활성화
+    // 5. 광고 활성화
     Logger::info("Enabling advertising...");
     if (!mgmt->setAdvertising(1)) {
         Logger::error("Failed to enable advertising");
