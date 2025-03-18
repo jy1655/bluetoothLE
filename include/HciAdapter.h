@@ -19,6 +19,23 @@ public:
         uint8_t type;     // 패킷 타입 (1 = command)
         uint16_t opcode;  // OGF(6비트) + OCF(10비트)
         uint8_t plen;     // 파라미터 길이
+        
+        // opcode 설정 도우미 메서드
+        void setOpcode(uint8_t ogf, uint16_t ocf) {
+            // OGF는 상위 6비트, OCF는 하위 10비트
+            opcode = htole16((ogf << 10) | (ocf & 0x03FF));
+        }
+        
+        // 디버그 출력 도우미
+        std::string toString() const {
+            std::stringstream ss;
+            ss << "HCI Header: type=" << (int)type
+            << ", opcode=0x" << Utils::hex(opcode)
+            << " (OGF=" << (int)((opcode >> 10) & 0x3F)
+            << ", OCF=" << (int)(opcode & 0x03FF)
+            << "), plen=" << (int)plen;
+            return ss.str();
+        }
     } __attribute__((packed));
 
     struct AdapterSettings {

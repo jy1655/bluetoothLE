@@ -12,6 +12,8 @@ Mgmt::Mgmt(HciAdapter& adapter, uint16_t controllerIndex)
 bool Mgmt::setName(std::string name, std::string shortName) {
     name = truncateName(name);
     shortName = truncateShortName(shortName);
+    
+    Logger::debug("Setting device name to: '" + name + "', short name: '" + shortName + "'");
 
     struct {
         HciAdapter::HciHeader header;
@@ -21,14 +23,22 @@ bool Mgmt::setName(std::string name, std::string shortName) {
 
     request.header.type = 0x01;
     request.header.opcode = HciAdapter::CMD_SET_LOCAL_NAME;
-    request.header.plen = sizeof(request) - sizeof(HciAdapter::HciHeader);
-
+    
+    // 이름 설정 (모든 바이트 설정)
     memset(request.name, 0, sizeof(request.name));
     strncpy(request.name, name.c_str(), sizeof(request.name) - 1);
     
     memset(request.shortName, 0, sizeof(request.shortName));
     strncpy(request.shortName, shortName.c_str(), sizeof(request.shortName) - 1);
-
+    
+    // 실제로 이름의 길이를 계산하고, 기본 HCI 명령 구조를 따름
+    // opcode(2) + plen(1) + name(248) + shortname(10) 구조 확인
+    request.header.plen = sizeof(request) - sizeof(HciAdapter::HciHeader);
+    
+    // 이름 설정 후 확인
+    Logger::debug("Command opcode: " + Utils::hex(request.header.opcode) + ", plen: " + std::to_string(request.header.plen));
+    Logger::debug("Full name buffer first 32 bytes: " + Utils::hex((uint8_t*)request.name, std::min(32, (int)sizeof(request.name))));
+    
     return hciAdapter.sendCommand(request.header);
 }
 

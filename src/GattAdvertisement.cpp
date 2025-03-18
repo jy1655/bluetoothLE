@@ -76,6 +76,14 @@ void GattAdvertisement::setIncludeTxPower(bool include) {
 }
 
 bool GattAdvertisement::setupDBusInterfaces() {
+    // 이미 등록된 경우 재등록하지 않음
+    if (isRegistered()) {
+        Logger::warn("Advertisement already registered with D-Bus");
+        return true;
+    }
+    
+    Logger::info("Setting up D-Bus interfaces for advertisement: " + getPath().toString());
+    
     // 속성 정의
     std::vector<DBusProperty> properties = {
         {
@@ -164,20 +172,20 @@ bool GattAdvertisement::setupDBusInterfaces() {
         });
     }
 
-    // LE Advertisement 인터페이스 추가
+    // 1. LE Advertisement 인터페이스 추가 - 반드시 registerObject() 호출 전에 수행
     if (!addInterface(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, properties)) {
         Logger::error("Failed to add LEAdvertisement interface");
         return false;
     }
     
-    // Release 메서드 추가
+    // 2. Release 메서드 추가 - 반드시 registerObject() 호출 전에 수행
     if (!addMethod(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, "Release", 
                   [this](const DBusMethodCall& call) { handleRelease(call); })) {
         Logger::error("Failed to add Release method");
         return false;
     }
     
-    // 객체 등록
+    // 3. 객체 등록 - 모든 인터페이스와 메서드 추가 후에 마지막으로 수행
     if (!registerObject()) {
         Logger::error("Failed to register advertisement object");
         return false;

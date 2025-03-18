@@ -41,20 +41,36 @@ bool HciAdapter::sendCommand(HciHeader& request) {
     return hciSocket.write(pRequest, sizeof(request) + request.plen);
 }
 
+// src/HciAdapter.cpp 수정
 bool HciAdapter::setAdapterName(const std::string& name) {
+    Logger::debug("Setting adapter name from HciAdapter: '" + name + "'");
+    
     struct {
         HciHeader header;
-        char name[248];
+        char name[248]; // BlueZ에서 사용하는 표준 길이
     } __attribute__((packed)) request;
 
     request.header.type = 0x01;
     request.header.opcode = CMD_SET_LOCAL_NAME;
-    request.header.plen = sizeof(request) - sizeof(HciHeader);
-
+    
+    // 전체 이름 버퍼 초기화
     memset(request.name, 0, sizeof(request.name));
     strncpy(request.name, name.c_str(), sizeof(request.name) - 1);
 
-    return sendCommand(request.header);
+    // plen은 매개변수 길이(이름 버퍼 길이)
+    request.header.plen = sizeof(request.name);
+
+    // 전송할 정확한 바이트 수 계산 (헤더 + 이름)
+    size_t totalSize = sizeof(HciHeader) + sizeof(request.name);
+    
+    // 첫 32바이트만 디버그로 출력
+    Logger::debug("Name buffer first 32 bytes: " + Utils::hex((uint8_t*)request.name, std::min(32, (int)sizeof(request.name))));
+    
+    // 로깅 추가
+    Logger::debug("Command: SET_LOCAL_NAME, Data size: " + std::to_string(totalSize) + " bytes");
+    
+    // 전체 요청 구조체를 바이트 배열로 전송
+    return hciSocket.write(reinterpret_cast<uint8_t*>(&request), totalSize);
 }
 
 bool HciAdapter::setAdvertisingEnabled(bool enabled) {

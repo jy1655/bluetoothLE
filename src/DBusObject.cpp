@@ -23,6 +23,17 @@ bool DBusObject::addInterface(const std::string& interface, const std::vector<DB
         return false;
     }
     
+    // 인터페이스가 이미 존재하는지 확인
+    auto it = interfaces.find(interface);
+    if (it != interfaces.end()) {
+        Logger::warn("Interface already exists: " + interface + " on object: " + path.toString());
+        // 인터페이스가 이미 존재하는 경우, 속성을 병합하거나 교체할 수 있음
+        // 여기서는 간단히 새 속성으로 교체
+        it->second = properties;
+        Logger::debug("Updated properties for interface: " + interface + " on object: " + path.toString());
+        return true;
+    }
+    
     interfaces[interface] = properties;
     Logger::debug("Added interface: " + interface + " to object: " + path.toString());
     return true;
@@ -169,11 +180,20 @@ bool DBusObject::unregisterObject() {
     std::lock_guard<std::mutex> lock(mutex);
     
     if (!registered) {
+        Logger::debug("Object not registered, nothing to unregister: " + path.toString());
+        return true;
+    }
+    
+    // 연결이 끊어진 경우 로컬 상태만 업데이트
+    if (!connection.isConnected()) {
+        Logger::warn("D-Bus connection not available, updating local registration state only for: " + path.toString());
+        registered = false;
         return true;
     }
     
     registered = !connection.unregisterObject(path);
     if (!registered) {
+        Logger::info("Unregistered D-Bus object at path: " + path.toString());
         Logger::info("Unregistered D-Bus object: " + path.toString());
     } else {
         Logger::error("Failed to unregister D-Bus object: " + path.toString());

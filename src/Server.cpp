@@ -137,11 +137,21 @@ bool Server::start(bool secureMode) {
     
     Logger::info("Starting BLE Server...");
     
+    // 어댑터 다시 초기화
+    Logger::info("Resetting Bluetooth adapter...");
+    system("sudo hciconfig hci0 down");
+    sleep(1);
+    system("sudo hciconfig hci0 up");
+    sleep(1);
+    
     // Step 1: Configure BLE controller
     if (!mgmt->setPowered(true)) {
         Logger::error("Failed to power on BLE adapter");
         return false;
     }
+    
+    // 설정 반영될 시간 주기
+    sleep(1);
     
     if (!mgmt->setBredr(false)) {
         Logger::warn("Failed to disable BR/EDR mode");
@@ -152,6 +162,27 @@ bool Server::start(bool secureMode) {
         Logger::error("Failed to enable LE mode");
         return false;
     }
+    
+    // 설정 반영될 시간 주기
+    sleep(1);
+    
+    // 디바이스 이름 설정
+    Logger::info("Setting device name to: " + deviceName);
+    if (!mgmt->setName(deviceName, deviceName.substr(0, std::min(deviceName.length(), 
+                                                               static_cast<size_t>(Mgmt::kMaxAdvertisingShortNameLength))))) {
+        Logger::warn("Failed to set adapter name via Mgmt");
+        // 대체 방법으로 HciAdapter 직접 사용
+        if (!hciAdapter->setAdapterName(deviceName)) {
+            Logger::warn("Failed to set adapter name via HciAdapter");
+        }
+    }
+    
+    // 설정 반영될 시간 주기
+    sleep(1);
+    
+    // 설정 확인 (디버깅 목적)
+    Logger::info("Checking current adapter settings...");
+    system("hciconfig -a hci0");
     
     // Configure security if enabled
     if (secureMode) {
@@ -168,33 +199,8 @@ bool Server::start(bool secureMode) {
         }
     }
     
-    if (!mgmt->setName(deviceName, deviceName.substr(0, std::min(deviceName.length(), 
-                                                               static_cast<size_t>(Mgmt::kMaxAdvertisingShortNameLength))))) {
-        Logger::warn("Failed to set adapter name");
-        // Not critical, continue anyway
-    }
-    
-    // CRITICAL: 모든 객체 계층 구조를 한 번에 설정
-    
-    // 1. 먼저 애플리케이션과 광고 객체가 올바르게 설정되었는지 확인
-    // 이미 초기화 과정에서 생성됨
-    
-    // 2. 애플리케이션에 ObjectManager 인터페이스 추가
-    // (중요: D-Bus에 등록하기 전에 모든 인터페이스를 먼저 추가)
-    if (!application->addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
-        Logger::error("Failed to add ObjectManager interface");
-        return false;
-    }
-    
-    if (!application->addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
-                              [this](const DBusMethodCall& call) { 
-                                  application->handleGetManagedObjects(call); 
-                              })) {
-        Logger::error("Failed to add GetManagedObjects method");
-        return false;
-    }
-    
-    // 3. 모든 서비스, 특성, 설명자의 D-Bus 인터페이스를 먼저 설정
+    // *** 중요: 객체 등록 순서 변경 ***
+    // 1. 서비스, 특성, 설명자를 먼저 설정
     Logger::info("Setting up D-Bus interfaces for all GATT objects...");
     for (auto& service : application->getServices()) {
         if (!service->isRegistered()) {
@@ -202,63 +208,57 @@ bool Server::start(bool secureMode) {
                 Logger::error("Failed to setup D-Bus interfaces for service: " + service->getUuid().toString());
                 return false;
             }
-            
-            // 각 서비스의 특성들도 설정
-            auto charMap = service->getCharacteristics();
-            for (const auto& charPair : charMap) {
-                auto& characteristic = charPair.second;
-                if (!characteristic->isRegistered()) {
-                    if (!characteristic->setupDBusInterfaces()) {
-                        Logger::error("Failed to setup D-Bus interfaces for characteristic: " + 
-                                     characteristic->getUuid().toString());
-                        return false;
-                    }
-                    
-                    // 각 특성의 설명자들도 설정
-                    auto descMap = characteristic->getDescriptors();
-                    for (const auto& descPair : descMap) {
-                        auto& descriptor = descPair.second;
-                        if (!descriptor->isRegistered()) {
-                            if (!descriptor->setupDBusInterfaces()) {
-                                Logger::error("Failed to setup D-Bus interfaces for descriptor: " + 
-                                             descriptor->getUuid().toString());
-                                return false;
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
     
-    // 4. 애플리케이션의 D-Bus 인터페이스 설정 (ensureInterfacesRegistered() 사용)
-    if (!application->ensureInterfacesRegistered()) {
+    // 2. 애플리케이션 설정 - 이미 등록된 경우 재등록하지 않음
+    // 중요: 서버가 시작될 때마다 애플리케이션 객체를 새로 만들거나 기존 객체를 언레지스터한 후 재등록
+    if (application->isRegistered()) {
+        Logger::info("Unregistering application object to refresh interfaces");
+        application->unregisterObject();  // 기존 등록 해제
+    }
+    
+    // 애플리케이션 인터페이스 설정 - 모든 인터페이스를 추가한 후에 객체 등록
+    if (!application->setupDBusInterfaces()) {
         Logger::error("Failed to setup application D-Bus interfaces");
         return false;
     }
     
-    // 5. 애플리케이션을 BlueZ에 등록 (이제 D-Bus에 모든 객체가 이미 등록된 상태)
+    // 3. 광고 설정 - 애플리케이션 등록 후
+    Logger::info("Setting up advertisement...");
+    if (advertisement->isRegistered()) {
+        Logger::info("Unregistering advertisement object to refresh interfaces");
+        advertisement->unregisterObject();  // 기존 등록 해제
+    }
+    
+    if (!advertisement->setupDBusInterfaces()) {
+        Logger::error("Failed to setup advertisement interfaces");
+        return false;
+    }
+    
+    // 4. 애플리케이션을 BlueZ에 등록
     Logger::info("Registering GATT application with BlueZ...");
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");
         return false;
     }
     
-    // 6. 광고 설정 및 등록
-    Logger::info("Setting up and registering advertisement...");
-    if (!advertisement->setupDBusInterfaces()) {
-        Logger::error("Failed to setup advertisement interfaces");
-        application->unregisterFromBlueZ();
-        return false;
-    }
+    // 설정 반영될 시간 주기
+    sleep(1);
     
+    // 5. 광고 등록
+    Logger::info("Registering advertisement with BlueZ...");
     if (!advertisement->registerWithBlueZ()) {
         Logger::error("Failed to register advertisement with BlueZ");
         application->unregisterFromBlueZ();
         return false;
     }
     
-    // 7. 광고 활성화
+    // 설정 반영될 시간 주기
+    sleep(1);
+    
+    // 6. 광고 활성화
+    Logger::info("Enabling advertising...");
     if (!mgmt->setAdvertising(1)) {
         Logger::error("Failed to enable advertising");
         advertisement->unregisterFromBlueZ();
@@ -269,6 +269,19 @@ bool Server::start(bool secureMode) {
     if (!mgmt->setDiscoverable(1, advTimeout)) {
         Logger::warn("Failed to make device discoverable");
         // Not critical, continue anyway
+    }
+    
+    // 연결 상태 확인
+    Logger::info("BLE stack initialized successfully");
+    Logger::info("Checking for any connected devices...");
+    auto connectedDevices = ConnectionManager::getInstance().getConnectedDevices();
+    if (!connectedDevices.empty()) {
+        Logger::info("Currently connected devices: " + std::to_string(connectedDevices.size()));
+        for (const auto& device : connectedDevices) {
+            Logger::info("  - " + device);
+        }
+    } else {
+        Logger::info("No devices currently connected");
     }
     
     running = true;
