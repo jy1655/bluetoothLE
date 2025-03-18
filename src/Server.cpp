@@ -194,7 +194,7 @@ bool Server::start(bool secureMode) {
         return false;
     }
     
-    // 3. 모든 서비스, 특성, 설명자의 D-Bus 인터페이스 설정
+    // 3. 모든 서비스, 특성, 설명자의 D-Bus 인터페이스를 먼저 설정
     Logger::info("Setting up D-Bus interfaces for all GATT objects...");
     for (auto& service : application->getServices()) {
         if (!service->isRegistered()) {
@@ -231,14 +231,13 @@ bool Server::start(bool secureMode) {
         }
     }
     
-    // 4. 애플리케이션 객체 D-Bus에 등록 (한 번만 등록)
-    Logger::info("Registering GATT application object with D-Bus...");
-    if (!application->registerObject()) {
-        Logger::error("Failed to register application object with D-Bus");
+    // 4. 애플리케이션의 D-Bus 인터페이스 설정 (ensureInterfacesRegistered() 사용)
+    if (!application->ensureInterfacesRegistered()) {
+        Logger::error("Failed to setup application D-Bus interfaces");
         return false;
     }
     
-    // 5. 애플리케이션을 BlueZ에 등록
+    // 5. 애플리케이션을 BlueZ에 등록 (이제 D-Bus에 모든 객체가 이미 등록된 상태)
     Logger::info("Registering GATT application with BlueZ...");
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");

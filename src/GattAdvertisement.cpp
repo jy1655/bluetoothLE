@@ -209,31 +209,25 @@ bool GattAdvertisement::registerWithBlueZ() {
             return true;
         }
         
-        // 1. 먼저 D-Bus 인터페이스가 설정되어 있는지 확인
-        if (!isRegistered()) {
-            if (!setupDBusInterfaces()) {
-                Logger::error("Failed to setup D-Bus interfaces for advertisement");
-                return false;
-            }
-            
-            // 객체가 D-Bus에 완전히 등록될 시간을 줌
-            usleep(100000); // 100ms
-        }
+        // isRegistered() 검사 제거 - setupDBusInterfaces()가 이미 성공했으므로
+        // D-Bus 등록은 이미 되어 있다고 가정
         
-        // 2. 옵션 딕셔너리 생성
+        // BlueZ에 등록 요청 전송
+        Logger::info("Sending RegisterAdvertisement request to BlueZ");
+        
+        // 옵션 딕셔너리 생성
         GVariantBuilder options_builder;
         g_variant_builder_init(&options_builder, G_VARIANT_TYPE("a{sv}"));
         
-        // 3. 파라미터 생성 - "@a{sv}" 형식 사용 (중요!)
+        // 파라미터 생성
         GVariant* params = g_variant_new("(o@a{sv})", 
                                         getPath().c_str(),
                                         g_variant_builder_end(&options_builder));
         
-        // 4. 참조 카운트 관리
+        // 참조 카운트 관리
         GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
         
-        // 5. BlueZ에 등록 요청 전송
-        Logger::info("Sending RegisterAdvertisement request to BlueZ");
+        // BlueZ에 등록 요청 전송
         GVariantPtr result = getConnection().callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(BlueZConstants::ADAPTER_PATH),
@@ -241,19 +235,18 @@ bool GattAdvertisement::registerWithBlueZ() {
             BlueZConstants::REGISTER_ADVERTISEMENT,
             std::move(parameters),
             "",
-            10000  // 10초로 타임아웃 설정
+            10000
         );
         
-        // 결과가 없어도 등록 성공으로 처리 (타임아웃 가능성)
         registered = true;
         Logger::info("Successfully registered advertisement with BlueZ");
         return true;
     } catch (const std::exception& e) {
+        // 타임아웃 예외 처리 등 기존 코드 유지
         std::string error = e.what();
         if (error.find("Timeout") != std::string::npos) {
-            // 타임아웃 오류는 실제로는 정상 동작일 수 있음
             Logger::warn("BlueZ advertisement registration timed out but continuing operation");
-            registered = true;  // 타임아웃 무시하고 성공으로 처리
+            registered = true;
             return true;
         }
         

@@ -109,6 +109,43 @@ std::vector<GattServicePtr> GattApplication::getServices() const {
     return services;
 }
 
+bool GattApplication::ensureInterfacesRegistered() {
+    // 1. 먼저 모든 서비스와 특성이 D-Bus에 등록되어 있는지 확인
+    std::lock_guard<std::mutex> lock(servicesMutex);
+    for (auto& service : services) {
+        if (!service->isRegistered()) {
+            if (!service->setupDBusInterfaces()) {
+                Logger::error("Failed to setup interfaces for service: " + service->getUuid().toString());
+                return false;
+            }
+        }
+    }
+    
+    // 2. ObjectManager 인터페이스 추가 
+    if (!addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
+        Logger::error("Failed to add ObjectManager interface");
+        return false;
+    }
+    
+    // 3. GetManagedObjects 메서드 등록
+    if (!addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
+                 [this](const DBusMethodCall& call) { 
+                     handleGetManagedObjects(call); 
+                 })) {
+        Logger::error("Failed to add GetManagedObjects method");
+        return false;
+    }
+    
+    // 4. 애플리케이션 객체 등록
+    if (!isRegistered() && !registerObject()) {
+        Logger::error("Failed to register application object");
+        return false;
+    }
+    
+    Logger::info("All D-Bus interfaces registered for GATT application");
+    return true;
+}
+
 bool GattApplication::registerWithBlueZ() {
     try {
         // 이미 BlueZ에 등록된 경우
@@ -117,36 +154,14 @@ bool GattApplication::registerWithBlueZ() {
             return true;
         }
 
-        // 이미 객체가 등록되었는지 확인
-        if (!isRegistered()) {
-            if (!setupDBusInterfaces()) {
-                Logger::error("Failed to setup D-Bus interfaces");
-                return false;
-            }
-        }
+        // D-Bus 등록 상태 확인 부분 제거 - ensureInterfacesRegistered()가 이미 성공했으므로
+        // 아래 코드는 삭제
+        // if (!isRegistered()) {
+        //     Logger::error("Application not registered with D-Bus. Call ensureInterfacesRegistered() first");
+        //     return false;
+        // }
         
-        // 1. 모든 서비스 인터페이스 설정 (아직 등록되지 않은 경우)
-        for (auto& service : getServices()) {
-            if (!service->isRegistered()) {
-                if (!service->setupDBusInterfaces()) {
-                    Logger::error("Failed to setup service interfaces");
-                    return false;
-                }
-            }
-        }
-        
-        // 2. 애플리케이션 인터페이스 설정 및 D-Bus 등록 (아직 등록되지 않은 경우)
-        if (!isRegistered()) {
-            if (!setupDBusInterfaces()) {
-                Logger::error("Failed to setup application interfaces");
-                return false;
-            }
-            
-            // D-Bus 등록이 완료될 때까지 짧은 대기
-            usleep(100000); // 100ms
-        }
-        
-        // 3. BlueZ에 등록 요청
+        // BlueZ에 등록 요청만 담당
         Logger::info("Sending RegisterApplication request to BlueZ");
         
         // 옵션 딕셔너리 생성
@@ -176,11 +191,11 @@ bool GattApplication::registerWithBlueZ() {
         Logger::info("Successfully registered application with BlueZ");
         return true;
     } catch (const std::exception& e) {
+        // 나머지 코드는 동일하게 유지
         std::string error = e.what();
         if (error.find("Timeout") != std::string::npos) {
-            // 타임아웃 오류는 실제로는 정상 동작일 수 있음
             Logger::warn("BlueZ registration timed out but continuing operation");
-            registered = true;  // 타임아웃 무시하고 성공으로 처리
+            registered = true;
             return true;
         }
         

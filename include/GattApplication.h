@@ -34,6 +34,8 @@ public:
 
     // D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
+    bool ensureInterfacesRegistered();
+    
     // D-Bus 메서드 핸들러
     void handleGetManagedObjects(const DBusMethodCall& call);
     
