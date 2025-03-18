@@ -39,7 +39,7 @@ public:
     // D-Bus 메서드 핸들러
     void handleGetManagedObjects(const DBusMethodCall& call);
     
-private:
+//private:
     
     
     // 관리 객체 딕셔너리 생성

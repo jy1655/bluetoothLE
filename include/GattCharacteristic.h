@@ -174,7 +174,7 @@ public:
      */
     GattService& getService() const { return service; }
     
-private:
+//private:
     // D-Bus 메서드 핸들러
     void handleReadValue(const DBusMethodCall& call);
     void handleWriteValue(const DBusMethodCall& call);

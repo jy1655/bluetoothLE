@@ -162,6 +162,29 @@ bool GattApplication::ensureInterfacesRegistered() {
 
 bool GattApplication::registerWithBlueZ() {
     try {
+        // 디버그: BlueZ가 지원하는 인터페이스 확인
+        GVariantPtr introspect = getConnection().callMethod(
+            BlueZConstants::BLUEZ_SERVICE,
+            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+            "org.freedesktop.DBus.Introspectable",
+            "Introspect"
+        );
+
+        if (introspect) {
+            // 인터페이스 출력
+            const gchar* xml = nullptr;
+            g_variant_get(introspect.get(), "(s)", &xml);
+            Logger::debug("BlueZ adapter introspection: " + std::string(xml ? xml : "NULL"));
+            
+            // GattManager1 인터페이스 확인
+            if (xml && std::string(xml).find("org.bluez.GattManager1") == std::string::npos) {
+                Logger::error("BlueZ adapter does not support GattManager1 interface");
+                return false;
+            }
+        } else {
+            Logger::error("Failed to introspect BlueZ adapter");
+        }
+
         // 이미 BlueZ에 등록된 경우
         if (registered) {
             Logger::info("Application already registered with BlueZ");

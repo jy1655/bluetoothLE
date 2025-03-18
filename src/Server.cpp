@@ -60,6 +60,7 @@ bool Server::initialize(const std::string& name) {
     deviceName = name;
     Logger::info("Initializing BLE Server with name: " + deviceName);
     
+    /*
     // Step 1: Initialize HCI adapter
     hciAdapter = std::make_unique<HciAdapter>();
     if (!hciAdapter->initialize()) {
@@ -67,9 +68,11 @@ bool Server::initialize(const std::string& name) {
         return false;
     }
     
+
     // Step 2: Initialize Bluetooth management
     mgmt = std::make_unique<Mgmt>(*hciAdapter);
-    
+    */
+
     // Step 3: Setup D-Bus name and connection
     if (!DBusName::getInstance().initialize("com.example.ble")) {
         Logger::error("Failed to initialize D-Bus name");
@@ -125,6 +128,13 @@ bool Server::initialize(const std::string& name) {
 }
 
 bool Server::start(bool secureMode) {
+    // BlueZ 명령줄 도구를 사용해 HCI 설정 초기화
+    system("sudo hciconfig hci0 down");
+    system("sudo hciconfig hci0 up");
+    system("sudo hciconfig hci0 name JetsonBLE");
+    system("sudo hciconfig hci0 leadv 3");
+
+    // BlueZ만 사용하는 방식으로 수정
     if (!initialized) {
         Logger::error("Cannot start: Server not initialized");
         return false;
@@ -137,134 +147,28 @@ bool Server::start(bool secureMode) {
     
     Logger::info("Starting BLE Server...");
     
-    // 어댑터 다시 초기화
-    Logger::info("Resetting Bluetooth adapter...");
-    system("sudo hciconfig hci0 down");
-    sleep(1);
-    system("sudo hciconfig hci0 up");
-    sleep(1);
-    
-    // Step 1: Configure BLE controller
-    if (!mgmt->setPowered(true)) {
-        Logger::error("Failed to power on BLE adapter");
+    // 1. BlueZ 상태 확인
+    if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+        Logger::error("BlueZ service is not active");
         return false;
     }
     
-    // 설정 반영될 시간 주기
-    sleep(1);
-    
-    if (!mgmt->setBredr(false)) {
-        Logger::warn("Failed to disable BR/EDR mode");
-        // Not critical, continue anyway
-    }
-    
-    if (!mgmt->setLE(true)) {
-        Logger::error("Failed to enable LE mode");
-        return false;
-    }
-    
-    // 설정 반영될 시간 주기
-    sleep(1);
-    
-    // 디바이스 이름 설정
-    Logger::info("Setting device name to: " + deviceName);
-    if (!mgmt->setName(deviceName, deviceName.substr(0, std::min(deviceName.length(), 
-                                                               static_cast<size_t>(Mgmt::kMaxAdvertisingShortNameLength))))) {
-        Logger::warn("Failed to set adapter name via Mgmt");
-        // 대체 방법으로 HciAdapter 직접 사용
-        if (!hciAdapter->setAdapterName(deviceName)) {
-            Logger::warn("Failed to set adapter name via HciAdapter");
-        }
-    }
-    
-    // 설정 반영될 시간 주기
-    sleep(1);
-    
-    // 설정 확인 (디버깅 목적)
-    Logger::info("Checking current adapter settings...");
+    // 2. 장치 이름 설정은 BlueZ D-Bus를 통해 수행
+    // hciconfig만 사용해 상태 확인
+    Logger::info("Current adapter settings:");
     system("hciconfig -a hci0");
     
-    // Configure security if enabled
-    if (secureMode) {
-        Logger::info("Enabling BLE security features...");
-        
-        if (!mgmt->setSecureConnections(1)) {
-            Logger::warn("Failed to enable secure connections");
-            // Not critical, continue anyway
-        }
-        
-        if (!mgmt->setBondable(true)) {
-            Logger::warn("Failed to make device bondable");
-            // Not critical, continue anyway
-        }
-    }
-    
-    // *** 중요: 객체 등록 순서 변경 ***
-    // 1. 애플리케이션/광고 객체 초기화 - 항상 새로 시작하도록 기존 등록 해제
-    if (application->isRegistered()) {
-        Logger::info("Unregistering application to refresh");
-        application->unregisterObject();
-    }
-    
-    if (advertisement->isRegistered()) {
-        Logger::info("Unregistering advertisement to refresh");
-        advertisement->unregisterObject();
-    }
-    
-    // 2. 서비스 설정
-    for (auto& service : application->getServices()) {
-        if (!service->isRegistered() && !service->setupDBusInterfaces()) {
-            Logger::error("Failed to setup D-Bus interfaces for service: " + service->getUuid().toString());
-            return false;
-        }
-    }
-    
     // 3. 애플리케이션 등록
-    Logger::info("Registering GATT application with BlueZ...");
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");
         return false;
     }
     
-    // 설정 반영될 시간 주기
-    sleep(1);
-    
     // 4. 광고 등록
-    Logger::info("Registering advertisement with BlueZ...");
     if (!advertisement->registerWithBlueZ()) {
         Logger::error("Failed to register advertisement with BlueZ");
         application->unregisterFromBlueZ();
         return false;
-    }
-    
-    // 설정 반영될 시간 주기
-    sleep(1);
-    
-    // 5. 광고 활성화
-    Logger::info("Enabling advertising...");
-    if (!mgmt->setAdvertising(1)) {
-        Logger::error("Failed to enable advertising");
-        advertisement->unregisterFromBlueZ();
-        application->unregisterFromBlueZ();
-        return false;
-    }
-    
-    if (!mgmt->setDiscoverable(1, advTimeout)) {
-        Logger::warn("Failed to make device discoverable");
-        // Not critical, continue anyway
-    }
-    
-    // 연결 상태 확인
-    Logger::info("BLE stack initialized successfully");
-    Logger::info("Checking for any connected devices...");
-    auto connectedDevices = ConnectionManager::getInstance().getConnectedDevices();
-    if (!connectedDevices.empty()) {
-        Logger::info("Currently connected devices: " + std::to_string(connectedDevices.size()));
-        for (const auto& device : connectedDevices) {
-            Logger::info("  - " + device);
-        }
-    } else {
-        Logger::info("No devices currently connected");
     }
     
     running = true;
@@ -278,51 +182,31 @@ void Server::stop() {
     }
     
     Logger::info("Stopping BLE Server...");
-    
-    // Set running to false immediately to prevent new operations
     running = false;
     
     try {
-        // Step 1: Stop advertising 
-        if (mgmt) {
-            Logger::debug("Disabling BLE advertising...");
-            mgmt->setAdvertising(0);
-        }
-        
-        // Step 2: Unregister advertisement from BlueZ
+        // BlueZ 관련 부분만 유지
         if (advertisement) {
             Logger::debug("Unregistering advertisement from BlueZ...");
             advertisement->unregisterFromBlueZ();
         }
         
-        // Step 3: Unregister GATT application from BlueZ
         if (application) {
             Logger::debug("Unregistering GATT application from BlueZ...");
             application->unregisterFromBlueZ();
         }
         
-        // Step 4: Power down BLE controller
-        if (mgmt) {
-            Logger::debug("Powering down BLE controller...");
-            mgmt->setPowered(false);
-        }
+        // 시스템 명령어로 광고 중지 (필요한 경우)
+        system("sudo hciconfig hci0 noleadv");
         
-        // Step 5: Stop HCI adapter
-        if (hciAdapter) {
-            Logger::debug("Stopping HCI adapter...");
-            hciAdapter->stop();
-        }
-        
-        // Step 6: Shutdown ConnectionManager
+        // ConnectionManager 종료
         if (ConnectionManager::getInstance().isInitialized()) {
-            Logger::debug("Shutting down ConnectionManager...");
             ConnectionManager::getInstance().shutdown();
         }
         
         Logger::info("BLE Server stopped successfully");
     } catch (const std::exception& e) {
         Logger::error("Exception during server shutdown: " + std::string(e.what()));
-        // Even if there's an exception, we want to mark the server as stopped
     }
 }
 
