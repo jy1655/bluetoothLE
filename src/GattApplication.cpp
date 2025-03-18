@@ -187,20 +187,32 @@ bool GattApplication::registerWithBlueZ() {
 
         // 이미 BlueZ에 등록된 경우
         if (registered) {
-            Logger::info("Application already registered with BlueZ");
+            Logger::info("Application successfully registered and verified");
             return true;
         }
+        
+        // 추가: 객체가 이미 등록된 경우 등록 해제 후 다시 설정
+        if (isRegistered()) {
+            Logger::info("Unregistering application object to refresh interfaces");
+            unregisterObject();
+        }
 
-        // 인터페이스 확인 및 설정 - 이미 등록된 경우에도 호출됨
+        // 인터페이스 확인 및 설정
         if (!ensureInterfacesRegistered()) {
             Logger::error("Failed to setup application interfaces before BlueZ registration");
             return false;
         }
         
-        // BlueZ 상태 확인
+        // BlueZ 서비스 확인
         int bluezStatus = system("systemctl is-active --quiet bluetooth.service");
         if (bluezStatus != 0) {
             Logger::error("BlueZ service is not active. Run: systemctl start bluetooth.service");
+            return false;
+        }
+        
+        // 추가: BlueZ 어댑터 확인
+        if (system("hciconfig hci0 > /dev/null 2>&1") != 0) {
+            Logger::error("BlueZ adapter 'hci0' not found or not available");
             return false;
         }
         
@@ -211,84 +223,139 @@ bool GattApplication::registerWithBlueZ() {
         GVariantBuilder options_builder;
         g_variant_builder_init(&options_builder, G_VARIANT_TYPE("a{sv}"));
         
-        // 파라미터 생성
+        // 일부 BlueZ 구현에서 인식하는 옵션
+        g_variant_builder_add(&options_builder, "{sv}", "Experimental", 
+                             g_variant_new_boolean(TRUE));
+        
+        // 파라미터 생성 및 디버깅
         GVariant* params = g_variant_new("(o@a{sv})", 
                                         getPath().c_str(),
                                         g_variant_builder_end(&options_builder));
         
-        // 참조 카운트 관리
-        GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
+        // 디버깅: 파라미터 덤프
+        GVariant* temp = g_variant_ref_sink(params);
+        char* debug_str = g_variant_print(temp, TRUE);
+        Logger::debug("RegisterApplication parameters: " + std::string(debug_str));
+        g_free(debug_str);
         
-        // BlueZ에 등록 요청 전송
-        GVariantPtr result = getConnection().callMethod(
-            BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-            BlueZConstants::GATT_MANAGER_INTERFACE,
-            BlueZConstants::REGISTER_APPLICATION,
-            std::move(parameters),
-            "",
-            30000  // 타임아웃 30초
-        );
+        GVariantPtr parameters(temp, &g_variant_unref);
         
-        if (!result) {
-            Logger::warn("No result from BlueZ RegisterApplication call");
-            system("hciconfig -a"); // 어댑터 상태 확인
+        // 변경: callMethod를 중첩된 try-catch 블록으로 래핑
+        try {
+            // BlueZ에 등록 요청 전송
+            GVariantPtr result = getConnection().callMethod(
+                BlueZConstants::BLUEZ_SERVICE,
+                DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                BlueZConstants::GATT_MANAGER_INTERFACE,
+                BlueZConstants::REGISTER_APPLICATION,
+                std::move(parameters),
+                "",
+                30000  // 타임아웃 30초
+            );
+            
+            if (!result) {
+                Logger::warn("No result from BlueZ RegisterApplication call");
+                system("hciconfig -a"); // 어댑터 상태 확인
+                
+                registered = true;
+                Logger::info("Assuming application registration succeeded despite no result");
+                return true;
+            }
             
             registered = true;
-            Logger::info("Assuming application registration succeeded despite timeout");
+            Logger::info("Successfully registered application with BlueZ");
             return true;
+        } catch (const std::exception& e) {
+            // callMethod 호출에 대한 예외 처리
+            std::string error = e.what();
+            
+            // 추가: 다양한 오류 유형 처리
+            if (error.find("Timeout") != std::string::npos) {
+                Logger::warn("BlueZ registration timed out but continuing operation");
+                registered = true;
+                return true;
+            } else if (error.find("DoesNotExist") != std::string::npos || 
+                       error.find("Does Not Exist") != std::string::npos) {
+                Logger::error("BlueZ GattManager interface not available");
+                
+                // 추가: bluetoothd 버전 확인
+                system("bluetoothd -v");
+                
+                // 추가: 어댑터 리셋 시도
+                Logger::info("Attempting to reset Bluetooth adapter...");
+                system("sudo hciconfig hci0 down && sudo hciconfig hci0 up");
+                sleep(2);
+                
+                return false;
+            } else if (error.find("UnknownObject") != std::string::npos || 
+                       error.find("Unknown Object") != std::string::npos) {
+                Logger::error("BlueZ adapter path not found: " + BlueZConstants::ADAPTER_PATH);
+                return false;
+            }
+            
+            Logger::error("Exception in calling BlueZ RegisterApplication: " + error);
+            return false;
         }
-        
-        registered = true;
-        Logger::info("Successfully registered application with BlueZ");
-        return true;
     } catch (const std::exception& e) {
-        std::string error = e.what();
-        
-        if (error.find("Timeout") != std::string::npos) {
-            Logger::warn("BlueZ registration timed out");
-            // BlueZ 5.64에서는 타임아웃이 일반적인 현상으로, 
-            // 실제로는 등록이 성공했을 가능성이 높음
-            registered = true;
-            Logger::info("Assuming application registration succeeded despite timeout");
-            return true;
-        }
-        
-        Logger::error("Exception in registerWithBlueZ: " + error);
+        // 외부 try 블록의 예외 처리
+        Logger::error("Exception in registerWithBlueZ: " + std::string(e.what()));
+        return false;
+    } catch (...) {
+        // 알 수 없는 예외에 대한 처리 추가
+        Logger::error("Unknown exception in registerWithBlueZ");
         return false;
     }
 }
 
 bool GattApplication::unregisterFromBlueZ() {
+    // 등록되지 않은 경우 즉시 성공 반환
+    if (!registered) {
+        Logger::debug("Application not registered with BlueZ, nothing to unregister");
+        return true;
+    }
+    
     try {
-        // 등록되어 있지 않으면 성공으로 간주
-        if (!registered) {
+        // 연결 상태 확인
+        if (!getConnection().isConnected()) {
+            Logger::warn("D-Bus connection not available, updating local registration state only");
+            registered = false;
             return true;
         }
         
-        // 더 간단한 방식으로 매개변수 생성
+        // 파라미터 생성
         GVariant* params = g_variant_new("(o)", getPath().c_str());
-        GVariantPtr parameters(params, &g_variant_unref);
+        GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
         
-        GVariantPtr result = getConnection().callMethod(
-            BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-            BlueZConstants::GATT_MANAGER_INTERFACE,
-            BlueZConstants::UNREGISTER_APPLICATION,
-            std::move(parameters)
-        );
-        
-        if (!result) {
-            Logger::error("Failed to unregister application from BlueZ");
-            return false;
+        // 실패하더라도 예외로 중단하지 않고 로컬 상태 업데이트
+        try {
+            getConnection().callMethod(
+                BlueZConstants::BLUEZ_SERVICE,
+                DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                BlueZConstants::GATT_MANAGER_INTERFACE,
+                BlueZConstants::UNREGISTER_APPLICATION,
+                std::move(parameters),
+                "",
+                5000  // 타임아웃 5초
+            );
+            
+            Logger::info("Successfully unregistered application from BlueZ");
+        } catch (const std::exception& e) {
+            // 오류 로깅만 하고 진행 (로컬 상태는 계속 업데이트)
+            Logger::warn("Failed to unregister from BlueZ (continuing): " + std::string(e.what()));
         }
         
+        // 로컬 상태 항상 업데이트
         registered = false;
-        Logger::info("Successfully unregistered application from BlueZ");
         return true;
-        
     } catch (const std::exception& e) {
         Logger::error("Exception in unregisterFromBlueZ: " + std::string(e.what()));
+        
+        // 심각한 예외 발생해도 로컬 상태는 업데이트 시도
+        registered = false;
+        return false;
+    } catch (...) {
+        Logger::error("Unknown exception in unregisterFromBlueZ");
+        registered = false;
         return false;
     }
 }

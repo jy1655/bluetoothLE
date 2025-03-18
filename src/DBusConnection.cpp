@@ -111,7 +111,7 @@ GVariantPtr DBusConnection::callMethod(
         parameters.get(),  // null 가능
         replyType,
         G_DBUS_CALL_FLAGS_NONE,
-        timeoutMs,
+        timeoutMs > 0 ? timeoutMs : -1, 
         nullptr,
         &error
     );

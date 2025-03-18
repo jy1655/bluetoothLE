@@ -247,16 +247,29 @@ bool GattAdvertisement::registerWithBlueZ() {
         Logger::info("Sending RegisterAdvertisement request to BlueZ");
         
         // 옵션 딕셔너리 생성
+        // 옵션 딕셔너리에 유용한 정보 추가
         GVariantBuilder options_builder;
         g_variant_builder_init(&options_builder, G_VARIANT_TYPE("a{sv}"));
+        
+        // 지원되는 옵션 추가 - BlueZ 5.64에서 인식하는 옵션
+        g_variant_builder_add(&options_builder, "{sv}", "MinAdvInterval", 
+                             g_variant_new_uint16(0x0020)); // 20ms
+        g_variant_builder_add(&options_builder, "{sv}", "MaxAdvInterval", 
+                             g_variant_new_uint16(0x0030)); // 30ms
         
         // 파라미터 생성
         GVariant* params = g_variant_new("(o@a{sv})", 
                                         getPath().c_str(),
                                         g_variant_builder_end(&options_builder));
         
+        // 디버깅: 파라미터 덤프
+        GVariant* temp = g_variant_ref_sink(params);
+        char* debug_str = g_variant_print(temp, TRUE);
+        Logger::debug("RegisterAdvertisement parameters: " + std::string(debug_str));
+        g_free(debug_str);
+        
         // 참조 카운트 관리
-        GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
+        GVariantPtr parameters(temp, &g_variant_unref);
         
         try {
             // BlueZ에 등록 요청 전송
@@ -384,13 +397,11 @@ GVariant* GattAdvertisement::getServiceUUIDsProperty() {
 
 GVariant* GattAdvertisement::getManufacturerDataProperty() {
     try {
-        // 제조사 데이터가 없는 경우 빈 맵 반환
         if (manufacturerData.empty()) {
-            Logger::debug("No manufacturer data, returning empty map");
-            return g_variant_new("a{qv}", NULL);
+            // 유효한 빈 사전 형식 제공
+            return g_variant_new_array(G_VARIANT_TYPE("{qv}"), NULL, 0);
         }
         
-        // 빌더 초기화
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{qv}"));
         
@@ -398,27 +409,26 @@ GVariant* GattAdvertisement::getManufacturerDataProperty() {
             uint16_t id = pair.first;
             const std::vector<uint8_t>& data = pair.second;
             
-            Logger::debug("Adding manufacturer data for ID: " + Utils::hex(id) + 
-                         " with " + std::to_string(data.size()) + " bytes");
+            // 바이트 배열을 ay 형식으로 변환
+            GVariant* bytes = g_variant_new_fixed_array(
+                G_VARIANT_TYPE_BYTE,
+                data.data(),
+                data.size(),
+                sizeof(uint8_t)
+            );
             
-            // 바이트 배열 생성 (여기서는 스마트 포인터 사용하지 않음)
-            // Utils::gvariantFromByteArray는 이미 floating reference 반환
-            GVariant* dataVariant = Utils::gvariantFromByteArray(data.data(), data.size());
+            // 올바른 variant 래핑
+            GVariant* dataVariant = g_variant_new_variant(bytes);
             
-            // 빌더에 추가 (소유권이 빌더로 이전됨)
             g_variant_builder_add(&builder, "{qv}", id, dataVariant);
-            
-            // dataVariant는 여기서 추가 해제하지 않음 - 빌더가 소유
         }
         
-        // 빌더에서 GVariant 생성하고 즉시 반환
-        // g_variant_builder_end()는 빌더의 내용을 소비하고 builder를 재설정함
         GVariant* result = g_variant_builder_end(&builder);
         
-        // 타입 확인용 디버그 로그
-        const GVariantType* type = g_variant_get_type(result);
-        Logger::debug("ManufacturerData property type: " + 
-                     std::string(g_variant_type_peek_string(type)));
+        // 디버깅: 형식 검증 
+        char* debug_str = g_variant_print(result, TRUE);
+        Logger::debug("ManufacturerData property: " + std::string(debug_str));
+        g_free(debug_str);
         
         return result;
     } catch (const std::exception& e) {
