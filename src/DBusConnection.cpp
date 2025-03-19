@@ -119,6 +119,11 @@ GVariantPtr DBusConnection::callMethod(
     if (replyType) {
         g_variant_type_free(replyType);
     }
+
+    // DBusConnection.cpp에서 callMethod() 함수에 자세한 로깅 추가
+    Logger::debug("Calling D-Bus method: " + destination + 
+        " " + path.toString() + " " + 
+        interface + "." + method);
     
     if (error) {
         Logger::error("D-Bus method call failed: " + std::string(error->message));

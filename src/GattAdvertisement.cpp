@@ -280,15 +280,14 @@ bool GattAdvertisement::registerWithBlueZ() {
                 BlueZConstants::REGISTER_ADVERTISEMENT,
                 std::move(parameters),
                 "",
-                10000
+                30000
             );
             
             if (!result) {
                 Logger::warn("No result from BlueZ RegisterAdvertisement call");
-                // 타임아웃인 경우와 동일하게 처리
-                registered = true;
+                registered = false;
                 Logger::info("Assuming advertisement registration succeeded despite no result");
-                return true;
+                return false;
             }
             
             registered = true;

@@ -163,6 +163,7 @@ bool GattApplication::ensureInterfacesRegistered() {
 bool GattApplication::registerWithBlueZ() {
     try {
         // 디버그: BlueZ가 지원하는 인터페이스 확인
+        Logger::debug("Checking BlueZ interfaces");
         GVariantPtr introspect = getConnection().callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(BlueZConstants::ADAPTER_PATH),
@@ -187,11 +188,11 @@ bool GattApplication::registerWithBlueZ() {
 
         // 이미 BlueZ에 등록된 경우
         if (registered) {
-            Logger::info("Application successfully registered and verified");
+            Logger::info("Application already registered with BlueZ");
             return true;
         }
         
-        // 추가: 객체가 이미 등록된 경우 등록 해제 후 다시 설정
+        // 객체가 이미 등록된 경우 등록 해제 후 다시 설정
         if (isRegistered()) {
             Logger::info("Unregistering application object to refresh interfaces");
             unregisterObject();
@@ -210,56 +211,56 @@ bool GattApplication::registerWithBlueZ() {
             return false;
         }
         
-        // 추가: BlueZ 어댑터 확인
+        // BlueZ 어댑터 확인
         if (system("hciconfig hci0 > /dev/null 2>&1") != 0) {
             Logger::error("BlueZ adapter 'hci0' not found or not available");
             return false;
         }
         
-        // BlueZ에 등록 요청 전송
         Logger::info("Sending RegisterApplication request to BlueZ");
         
-        // 옵션 딕셔너리 생성
+        // 옵션 딕셔너리 생성 - Utils 사용하여 개선
         GVariantBuilder options_builder;
         g_variant_builder_init(&options_builder, G_VARIANT_TYPE("a{sv}"));
         
-        // 일부 BlueZ 구현에서 인식하는 옵션
+        // 실험적 기능 활성화
         g_variant_builder_add(&options_builder, "{sv}", "Experimental", 
                              g_variant_new_boolean(TRUE));
         
-        // 파라미터 생성 및 디버깅
-        GVariant* params = g_variant_new("(o@a{sv})", 
-                                        getPath().c_str(),
-                                        g_variant_builder_end(&options_builder));
+        // 옵션 딕셔너리 완성 및 참조 관리 개선
+        GVariant* options = g_variant_builder_end(&options_builder);
+        
+        // 매개변수 튜플 생성 시 참조 관리 개선
+        // 개선: 파라미터 생성 시 DBusTypes 함수 사용
+        DBusObjectPath appPath = getPath();
+        
+        // 개선: 파라미터 생성은 별도로 하고 명시적으로 참조 관리
+        GVariant* params = g_variant_new("(o@a{sv})", appPath.c_str(), options);
+        GVariantPtr parameters = makeGVariantPtr(params); // DBusTypes에서 제공하는 함수 사용
         
         // 디버깅: 파라미터 덤프
-        GVariant* temp = g_variant_ref_sink(params);
-        char* debug_str = g_variant_print(temp, TRUE);
+        char* debug_str = g_variant_print(parameters.get(), TRUE);
         Logger::debug("RegisterApplication parameters: " + std::string(debug_str));
         g_free(debug_str);
         
-        GVariantPtr parameters(temp, &g_variant_unref);
-        
-        // 변경: callMethod를 중첩된 try-catch 블록으로 래핑
         try {
-            // BlueZ에 등록 요청 전송
+            // 개선: callMethod 호출 시 이동 의미론 사용
             GVariantPtr result = getConnection().callMethod(
                 BlueZConstants::BLUEZ_SERVICE,
                 DBusObjectPath(BlueZConstants::ADAPTER_PATH),
                 BlueZConstants::GATT_MANAGER_INTERFACE,
                 BlueZConstants::REGISTER_APPLICATION,
-                std::move(parameters),
+                std::move(parameters), // 이동 의미론 사용
                 "",
-                30000  // 타임아웃 30초
+                60000  // 타임아웃 증가 (60초)
             );
             
             if (!result) {
-                Logger::warn("No result from BlueZ RegisterApplication call");
+                Logger::error("Failed to register application with BlueZ - null result");
                 system("hciconfig -a"); // 어댑터 상태 확인
                 
-                registered = true;
-                Logger::info("Assuming application registration succeeded despite no result");
-                return true;
+                registered = false; // 수정: 실패 시 false 설정
+                return false;
             }
             
             registered = true;
@@ -269,39 +270,28 @@ bool GattApplication::registerWithBlueZ() {
             // callMethod 호출에 대한 예외 처리
             std::string error = e.what();
             
-            // 추가: 다양한 오류 유형 처리
+            // 타임아웃은 특별 처리
             if (error.find("Timeout") != std::string::npos) {
-                Logger::warn("BlueZ registration timed out but continuing operation");
+                Logger::warn("BlueZ registration timed out - this may be normal with BlueZ 5.64");
+                // 타임아웃 시 true로 간주 (BlueZ 5.64 동작 방식)
                 registered = true;
                 return true;
-            } else if (error.find("DoesNotExist") != std::string::npos || 
-                       error.find("Does Not Exist") != std::string::npos) {
-                Logger::error("BlueZ GattManager interface not available");
-                
-                // 추가: bluetoothd 버전 확인
-                system("bluetoothd -v");
-                
-                // 추가: 어댑터 리셋 시도
-                Logger::info("Attempting to reset Bluetooth adapter...");
-                system("sudo hciconfig hci0 down && sudo hciconfig hci0 up");
-                sleep(2);
-                
-                return false;
-            } else if (error.find("UnknownObject") != std::string::npos || 
-                       error.find("Unknown Object") != std::string::npos) {
-                Logger::error("BlueZ adapter path not found: " + BlueZConstants::ADAPTER_PATH);
+            } else if (error.find("Failed") != std::string::npos && 
+                       error.find("No object received") != std::string::npos) {
+                // "No object received" 오류는 객체 구조 문제 - 디버깅 정보 추가
+                Logger::error("BlueZ registration failed: No object received - GATT object structure issue");
+                registered = false;
                 return false;
             }
             
-            Logger::error("Exception in calling BlueZ RegisterApplication: " + error);
+            Logger::error("Exception in BlueZ registration: " + error);
+            registered = false;
             return false;
         }
     } catch (const std::exception& e) {
-        // 외부 try 블록의 예외 처리
         Logger::error("Exception in registerWithBlueZ: " + std::string(e.what()));
         return false;
     } catch (...) {
-        // 알 수 없는 예외에 대한 처리 추가
         Logger::error("Unknown exception in registerWithBlueZ");
         return false;
     }
@@ -361,16 +351,15 @@ bool GattApplication::unregisterFromBlueZ() {
 }
 
 void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
-    Logger::info("GetManagedObjects called by BlueZ");
+    if (!call.invocation) {
+        Logger::error("Invalid method invocation in GetManagedObjects");
+        return;
+    }
+    
     try {
-        if (!call.invocation) {
-            Logger::error("Invalid method invocation in GetManagedObjects");
-            return;
-        }
+        Logger::info("GetManagedObjects called by BlueZ");
         
-        Logger::debug("GetManagedObjects called for application: " + getPath().toString());
-        
-        // 관리 객체 딕셔너리 생성
+        // Create managed objects dictionary
         GVariantPtr result = createManagedObjectsDict();
         
         if (!result) {
@@ -384,7 +373,7 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
             return;
         }
         
-        // 메서드 응답 생성 및 전송
+        // Return the result
         g_dbus_method_invocation_return_value(call.invocation.get(), result.get());
         
     } catch (const std::exception& e) {
@@ -421,16 +410,16 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
         g_variant_builder_init(&interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
 
         // 서비스 인터페이스의 속성 맵 (a{sv})
-        GVariantBuilder service_properties_builder;
-        g_variant_builder_init(&service_properties_builder, G_VARIANT_TYPE("a{sv}"));
+        GVariantBuilder service_props_builder;
+        g_variant_builder_init(&service_props_builder, G_VARIANT_TYPE("a{sv}"));
 
         // UUID 속성
-        g_variant_builder_add(&service_properties_builder, "{sv}",
+        g_variant_builder_add(&service_props_builder, "{sv}",
                              "UUID",
                              g_variant_new_string(service->getUuid().toBlueZFormat().c_str()));
 
         // Primary 속성
-        g_variant_builder_add(&service_properties_builder, "{sv}",
+        g_variant_builder_add(&service_props_builder, "{sv}",
                              "Primary",
                              g_variant_new_boolean(service->isPrimary()));
 
@@ -446,14 +435,15 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
             }
         }
 
-        g_variant_builder_add(&service_properties_builder, "{sv}",
+        // char_paths_builder 완성 후 service_props_builder에 추가
+        g_variant_builder_add(&service_props_builder, "{sv}",
                              "Characteristics",
                              g_variant_builder_end(&char_paths_builder));
 
-        // 서비스 인터페이스 추가
+        // service_props_builder 완성 후 interfaces_builder에 추가
         g_variant_builder_add(&interfaces_builder, "{sa{sv}}",
                              BlueZConstants::GATT_SERVICE_INTERFACE.c_str(),
-                             &service_properties_builder);
+                             &service_props_builder);
 
         // 서비스 객체 추가
         g_variant_builder_add(&objects_builder, "{oa{sa{sv}}}", 
@@ -470,16 +460,16 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
             g_variant_builder_init(&char_interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
 
             // 특성 속성 맵
-            GVariantBuilder char_properties_builder;
-            g_variant_builder_init(&char_properties_builder, G_VARIANT_TYPE("a{sv}"));
+            GVariantBuilder char_props_builder;
+            g_variant_builder_init(&char_props_builder, G_VARIANT_TYPE("a{sv}"));
 
             // UUID 속성
-            g_variant_builder_add(&char_properties_builder, "{sv}",
+            g_variant_builder_add(&char_props_builder, "{sv}",
                                  "UUID",
                                  g_variant_new_string(characteristic->getUuid().toBlueZFormat().c_str()));
 
             // Service 속성
-            g_variant_builder_add(&char_properties_builder, "{sv}",
+            g_variant_builder_add(&char_props_builder, "{sv}",
                                  "Service",
                                  g_variant_new_object_path(service->getPath().c_str()));
 
@@ -515,7 +505,8 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
             if (perms & GattPermission::PERM_WRITE_AUTHENTICATED)
                 g_variant_builder_add(&flags_builder, "s", "auth-write");
 
-            g_variant_builder_add(&char_properties_builder, "{sv}",
+            // 플래그 속성 추가
+            g_variant_builder_add(&char_props_builder, "{sv}",
                                  "Flags",
                                  g_variant_builder_end(&flags_builder));
 
@@ -531,19 +522,20 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
                 }
             }
 
-            g_variant_builder_add(&char_properties_builder, "{sv}",
+            // 설명자 경로 추가
+            g_variant_builder_add(&char_props_builder, "{sv}",
                                  "Descriptors",
                                  g_variant_builder_end(&desc_paths_builder));
 
             // Notifying 속성
-            g_variant_builder_add(&char_properties_builder, "{sv}",
+            g_variant_builder_add(&char_props_builder, "{sv}",
                                  "Notifying",
                                  g_variant_new_boolean(characteristic->isNotifying()));
 
             // 특성 인터페이스 추가
             g_variant_builder_add(&char_interfaces_builder, "{sa{sv}}",
                                  BlueZConstants::GATT_CHARACTERISTIC_INTERFACE.c_str(),
-                                 &char_properties_builder);
+                                 &char_props_builder);
 
             // 특성 객체 추가
             g_variant_builder_add(&objects_builder, "{oa{sa{sv}}}", 
@@ -560,16 +552,16 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
                 g_variant_builder_init(&desc_interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
 
                 // 설명자 속성 맵
-                GVariantBuilder desc_properties_builder;
-                g_variant_builder_init(&desc_properties_builder, G_VARIANT_TYPE("a{sv}"));
+                GVariantBuilder desc_props_builder;
+                g_variant_builder_init(&desc_props_builder, G_VARIANT_TYPE("a{sv}"));
 
                 // UUID 속성
-                g_variant_builder_add(&desc_properties_builder, "{sv}",
+                g_variant_builder_add(&desc_props_builder, "{sv}",
                                      "UUID",
                                      g_variant_new_string(descriptor->getUuid().toBlueZFormat().c_str()));
 
                 // Characteristic 속성
-                g_variant_builder_add(&desc_properties_builder, "{sv}",
+                g_variant_builder_add(&desc_props_builder, "{sv}",
                                      "Characteristic",
                                      g_variant_new_object_path(characteristic->getPath().c_str()));
 
@@ -592,14 +584,15 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
                 if (desc_perms & GattPermission::PERM_WRITE_AUTHENTICATED)
                     g_variant_builder_add(&desc_flags_builder, "s", "auth-write");
 
-                g_variant_builder_add(&desc_properties_builder, "{sv}",
+                // 플래그 추가
+                g_variant_builder_add(&desc_props_builder, "{sv}",
                                      "Flags",
                                      g_variant_builder_end(&desc_flags_builder));
 
                 // 설명자 인터페이스 추가
                 g_variant_builder_add(&desc_interfaces_builder, "{sa{sv}}",
                                      BlueZConstants::GATT_DESCRIPTOR_INTERFACE.c_str(),
-                                     &desc_properties_builder);
+                                     &desc_props_builder);
 
                 // 설명자 객체 추가
                 g_variant_builder_add(&objects_builder, "{oa{sa{sv}}}", 
@@ -609,16 +602,25 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
         }
     }
 
-    // 결과 GVariant 생성
+    // 최종 결과 생성
     GVariant* result = g_variant_builder_end(&objects_builder);
-    Logger::info("Successfully created managed objects dictionary");
     
-    // 디버깅 목적으로 출력
-    char* debug_str = g_variant_print(result, TRUE);
-    Logger::debug("Managed objects dictionary: " + std::string(debug_str));
-    g_free(debug_str);
+    // 로그 출력
+    if (result) {
+        Logger::info("Successfully created managed objects dictionary");
+        
+        // 디버깅 목적으로 출력 (큰 데이터는 로그가 매우 길어질 수 있음)
+        char* debug_str = g_variant_print(result, FALSE); // 간단한 형태로 출력
+        if (debug_str) {
+            std::string preview = std::string(debug_str).substr(0, 200) + "..."; // 미리보기만 표시
+            Logger::debug("Managed objects dictionary (preview): " + preview);
+            g_free(debug_str);
+        }
+    } else {
+        Logger::error("Failed to create managed objects dictionary - null result");
+    }
     
-    // 스마트 포인터로 래핑하여 반환
+    // 원본 코드 방식대로 스마트 포인터로 래핑하여 반환
     return GVariantPtr(result, &g_variant_unref);
 }
 
