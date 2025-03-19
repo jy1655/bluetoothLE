@@ -46,10 +46,7 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
         
         // 값 변경 시 D-Bus 속성 변경 알림
         if (isRegistered()) {
-            GVariantPtr valueVariant(
-                Utils::gvariantFromByteArray(value.data(), value.size()),
-                &g_variant_unref
-            );
+            GVariantPtr valueVariant = Utils::gvariantPtrFromByteArray(value.data(), value.size());
             
             if (valueVariant) {
                 // 속성 변경 알림
@@ -160,10 +157,7 @@ void GattDescriptor::handleReadValue(const DBusMethodCall& call) {
         }
         
         // 결과 반환
-        GVariantPtr resultVariant(
-            Utils::gvariantFromByteArray(returnValue.data(), returnValue.size()),
-            &g_variant_unref
-        );
+        GVariantPtr resultVariant = Utils::gvariantPtrFromByteArray(returnValue.data(), returnValue.size());
         
         if (!resultVariant) {
             Logger::error("Failed to create GVariant for descriptor read response");

@@ -96,7 +96,6 @@ GVariantPtr DBusObject::getProperty(const std::string& interface, const std::str
         return makeNullGVariantPtr();
     }
     
-    // 속성 찾기
     for (const auto& prop : ifaceIt->second) {
         if (prop.name == name) {
             if (!prop.readable) {
@@ -105,10 +104,15 @@ GVariantPtr DBusObject::getProperty(const std::string& interface, const std::str
             }
             
             if (prop.getter) {
-                GVariant* value = prop.getter();
-                if (value) {
-                    // 반환된 GVariant를 적절히 스마트 포인터로 래핑
-                    return makeGVariantPtr(value);
+                try {
+                    GVariant* value = prop.getter();
+                    if (value) {
+                        // makeGVariantPtr는 이미 내부적으로 참조 카운트를 관리함
+                        // 불필요한 g_variant_ref 호출 제거
+                        return makeGVariantPtr(value, true);  // true = 소유권 가져오기
+                    }
+                } catch (const std::exception& e) {
+                    Logger::error("Exception in property getter: " + std::string(e.what()));
                 }
             } else {
                 Logger::error("No getter for property: " + interface + "." + name);
@@ -138,8 +142,18 @@ bool DBusObject::emitSignal(const std::string& interface, const std::string& nam
         return false;
     }
     
-    // 시그널 발생 - 이동 의미론 사용
-    return connection.emitSignal(path, interface, name, std::move(parameters));
+    if (parameters) {
+        // parameters가 이미 튜플 타입인지 확인
+        if (!g_variant_is_of_type(parameters.get(), G_VARIANT_TYPE_TUPLE)) {
+            Logger::error("Signal parameters must be a tuple");
+            return false;
+        }
+        return connection.emitSignal(path, interface, name, std::move(parameters));
+    } else {
+        // 빈 튜플 생성 (NULL 파라미터 대신)
+        GVariant* empty_tuple = g_variant_new_tuple(NULL, 0);
+        return connection.emitSignal(path, interface, name, makeGVariantPtr(empty_tuple));
+    }
 }
 
 bool DBusObject::registerObject() {
@@ -191,15 +205,15 @@ bool DBusObject::unregisterObject() {
         return true;
     }
     
-    registered = !connection.unregisterObject(path);
-    if (!registered) {
-        Logger::info("Unregistered D-Bus object at path: " + path.toString());
+    bool unregResult = connection.unregisterObject(path);
+    if (unregResult) {
+        registered = false;
         Logger::info("Unregistered D-Bus object: " + path.toString());
+        return true;
     } else {
         Logger::error("Failed to unregister D-Bus object: " + path.toString());
+        return false;
     }
-    
-    return !registered;
 }
 
 std::string DBusObject::generateIntrospectionXml() const {
