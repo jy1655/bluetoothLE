@@ -84,18 +84,23 @@ bool DBusName::initialize(const std::string& name) {
 void DBusName::shutdown() {
     if (busNameAcquired && connection) {
         try {
-            // 복잡한 GVariant 생성을 위한 안전한 방법
-            GVariant* paramsRaw = g_variant_new("(s)", busName.c_str());
-            // makeGVariantPtr 함수를 사용하여 스마트 포인터로 래핑
-            // floating reference를 적절히 처리
-            GVariantPtr params = makeGVariantPtr(g_variant_ref_sink(paramsRaw));
+            // 빌더 사용해서 GVariant 생성
+            GVariantBuilder builder;
+            g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
+            g_variant_builder_add(&builder, "s", busName.c_str());
+            
+            // 빌더로부터 GVariant 생성
+            GVariant* params = g_variant_builder_end(&builder);
+            
+            // 스마트 포인터로 래핑하여 메모리 관리
+            GVariantPtr params_ptr(g_variant_ref_sink(params), &g_variant_unref);
             
             connection->callMethod(
                 "org.freedesktop.DBus",
                 DBusObjectPath("/org/freedesktop/DBus"),
                 "org.freedesktop.DBus",
                 "ReleaseName",
-                std::move(params)  // 이동 의미론 사용하여 소유권 이전
+                std::move(params_ptr)  // 소유권 이전
             );
         } catch (...) {
             // 종료 과정에서 예외가 발생해도 무시

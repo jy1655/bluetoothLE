@@ -650,6 +650,8 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
             std::ofstream out("/home/aidall1/Developments/BLE/bluetoothLE/test_build/managed_objects.txt");
             out << debug_str;
             out.close();
+
+            g_free(debug_str);
         }
         if (!g_variant_is_of_type(result, G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
             Logger::error("Created variant has incorrect type: " + 

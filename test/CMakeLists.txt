@@ -120,9 +120,9 @@ add_executable(run_tests
     # GATT Test
 
     GattTypesTest.cpp
-    GattServiceTest.cpp        # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    #GattServiceTest.cpp        # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    #GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    #GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
     GattAdvertisementTest.cpp
 

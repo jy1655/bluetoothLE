@@ -55,7 +55,7 @@ public:
 
     GattCharacteristic& getCharacteristic() const { return characteristic; }
     
-//private:
+private:
     
     // 속성
     GattUuid uuid;

@@ -136,24 +136,32 @@ bool DBusObject::emitPropertyChanged(const std::string& interface, const std::st
     return connection.emitPropertyChanged(path, interface, name, std::move(value));
 }
 
-bool DBusObject::emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters) {
+bool DBusObject::emitSignal(
+    const std::string& interface,
+    const std::string& name,
+    GVariantPtr parameters)
+{
     if (!registered) {
         Logger::error("Cannot emit signals on unregistered object: " + path.toString());
         return false;
     }
     
-    if (parameters) {
-        // parameters가 이미 튜플 타입인지 확인
-        if (!g_variant_is_of_type(parameters.get(), G_VARIANT_TYPE_TUPLE)) {
-            Logger::error("Signal parameters must be a tuple");
-            return false;
-        }
-        return connection.emitSignal(path, interface, name, std::move(parameters));
-    } else {
-        // 빈 튜플 생성 (NULL 파라미터 대신)
+    // parameters가 nullptr이면 빈 튜플 생성, 그렇지 않으면 파라미터 확인
+    if (!parameters) {
+        // 빈 튜플 생성
         GVariant* empty_tuple = g_variant_new_tuple(NULL, 0);
-        return connection.emitSignal(path, interface, name, makeGVariantPtr(empty_tuple));
+        GVariantPtr empty_params(g_variant_ref_sink(empty_tuple), &g_variant_unref);
+        return connection.emitSignal(path, interface, name, std::move(empty_params));
     }
+    
+    // parameters가 튜플 타입인지 확인
+    if (!g_variant_is_of_type(parameters.get(), G_VARIANT_TYPE_TUPLE)) {
+        Logger::error("Signal parameters must be a tuple");
+        return false;
+    }
+    
+    // std::move로 소유권을 명확하게 이전 - 중요!
+    return connection.emitSignal(path, interface, name, std::move(parameters));
 }
 
 bool DBusObject::registerObject() {

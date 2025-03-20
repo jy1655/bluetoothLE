@@ -272,21 +272,23 @@ GVariant *Utils::gvariantFromStringArray(const std::vector<const char *> &arr)
 }
 
 // Returns an GVariant* containing an object path ("o") from an DBusObjectPath
-GVariant *Utils::gvariantFromObject(const DBusObjectPath &path)
+GVariant* Utils::gvariantFromObject(const DBusObjectPath& path)
 {
-    // 내부적으로 스마트 포인터 버전 사용
+    // 스마트 포인터 버전 사용
     GVariantPtr ptr = gvariantPtrFromObject(path);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
+    if (!ptr) {
+        return nullptr;
+    }
+    
+    // 호출자에게 참조 반환 (호출자가 해제 책임)
+    return g_variant_ref(ptr.get());
 }
 
 // Returns an GVariant* containing a boolean
-GVariant *Utils::gvariantFromBoolean(bool b)
-{
-    // 내부적으로 스마트 포인터 버전 사용
+GVariant* Utils::gvariantFromBoolean(bool b) {
+    // 스마트 포인터 버전 사용하고 참조만 전달
     GVariantPtr ptr = gvariantPtrFromBoolean(b);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
+    return g_variant_ref(ptr.get()); // 호출자에게 소유권 이전
 }
 
 // Returns an GVariant* containing a 16-bit integer
@@ -445,7 +447,18 @@ GVariantPtr Utils::gvariantPtrFromStringArray(const std::vector<const char*>& ar
 // Returns a GVariantPtr containing an object path ("o") from a DBusObjectPath
 GVariantPtr Utils::gvariantPtrFromObject(const DBusObjectPath& path)
 {
-    return makeGVariantPtr(g_variant_new_object_path(path.c_str()));
+    if (path.toString().empty()) {
+        return makeNullGVariantPtr();
+    }
+    
+    // g_variant_new_object_path는 floating reference를 반환
+    GVariant* variant = g_variant_new_object_path(path.c_str());
+    if (!variant) {
+        return makeNullGVariantPtr();
+    }
+    
+    // floating reference를 sink하여 참조 카운트 관리
+    return GVariantPtr(g_variant_ref_sink(variant), &g_variant_unref);
 }
 
 // Returns a GVariantPtr containing a boolean

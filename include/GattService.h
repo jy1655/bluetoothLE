@@ -50,7 +50,7 @@ public:
     // BlueZ D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
     
-//private:
+private:
     
     // 속성
     GattUuid uuid;
