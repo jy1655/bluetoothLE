@@ -179,7 +179,7 @@ bool GattApplication::registerWithBlueZ() {
         if (introspect) {
             // 인터페이스 출력
             const gchar* xml = nullptr;
-            g_variant_get(introspect.get(), "(s)", &xml);
+            g_variant_get(introspect.get(), "(&s)", &xml);
             
             // xml은 GVariant 내부 메모리를 참조하므로 복사해서 사용
             std::string xml_copy;

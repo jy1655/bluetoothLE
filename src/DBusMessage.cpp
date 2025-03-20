@@ -27,9 +27,9 @@ DBusMessage DBusMessage::createMethodCall(
         Logger::error("Failed to create method call message");
         throw DBusError(DBusError::ERROR_FAILED, "Failed to create method call message");
     }
-    
+
     GDBusMessage* owned_msg = reinterpret_cast<GDBusMessage*>(g_object_ref_sink(G_OBJECT(msg)));
-    return DBusMessage(msg);
+    return DBusMessage(owned_msg);
 }
 
 // 메서드 응답 메시지 생성
@@ -70,7 +70,7 @@ DBusMessage DBusMessage::createSignal(
     }
     // 참조 카운트 관리 개선: floating reference는 sink 시켜 참조 카운트 관리
     GDBusMessage* owned_msg = reinterpret_cast<GDBusMessage*>(g_object_ref_sink(G_OBJECT(msg)));
-    return DBusMessage(msg);
+    return DBusMessage(owned_msg);
 }
 
 // 에러 메시지 생성
