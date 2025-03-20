@@ -133,9 +133,9 @@ GVariantPtr DBusConnection::callMethod(
     }
     
     if (result) {
-        // floating reference를 명시적으로 sink하고 래핑
-        GVariant* sinked_result = g_variant_ref_sink(result);
-        return GVariantPtr(sinked_result, &gvariant_deleter);
+        // g_dbus_connection_call_sync는 이미 sink된 GVariant를 반환하므로
+        // 추가 sink 없이 참조만 증가
+        return GVariantPtr(g_variant_ref(result), &g_variant_unref);
     }
     
     return makeNullGVariantPtr();

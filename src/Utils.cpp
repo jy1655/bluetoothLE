@@ -250,8 +250,8 @@ GVariant *Utils::gvariantFromStringArray(const char *pStr, ...)
 GVariant* Utils::gvariantFromStringArray(const std::vector<std::string>& arr) {
     // 내부적으로 스마트 포인터 버전 사용
     GVariantPtr ptr = gvariantPtrFromStringArray(arr);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
+    // 중요: ref_sink 대신 g_variant_ref만 사용
+    return g_variant_ref(ptr.get());
 }
 
 // Returns an array of strings ("as") from an array of C strings

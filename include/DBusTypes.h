@@ -209,16 +209,17 @@ inline GErrorPtr makeNullGErrorPtr() {
  *                       false인 경우 참조만 함 (참조 카운트 증가)
  * @return GVariantPtr 스마트 포인터
  */
-inline GVariantPtr makeGVariantPtr(GVariant* variant, bool take_ownership = true) {
+ inline GVariantPtr makeGVariantPtr(GVariant* variant, bool take_ownership = true) {
     if (!variant) {
         return makeNullGVariantPtr();
     }
     
-    // floating reference를 sink하거나 참조 카운트를 늘림
     if (take_ownership) {
-        return GVariantPtr(g_variant_ref_sink(variant), &gvariant_deleter);
+        // 소유권을 가져갈 때는 floating reference를 sink
+        return GVariantPtr(g_variant_ref_sink(variant), &g_variant_unref);
     } else {
-        return GVariantPtr(g_variant_ref(variant), &gvariant_deleter);
+        // 참조만 할 때는 ref만 증가
+        return GVariantPtr(g_variant_ref(variant), &g_variant_unref);
     }
 }
 

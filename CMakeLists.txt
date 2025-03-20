@@ -43,6 +43,7 @@ set(SOURCES
 # Create executable
 add_executable(ble_peripheral 
     ${SOURCES}
+    reset_bluetooth.sh
     src/main.cpp
 )
 

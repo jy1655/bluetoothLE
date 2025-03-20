@@ -2,12 +2,17 @@
 #include "GattApplication.h"
 #include "Logger.h"
 #include "Utils.h"
+#include <fstream>
+
 
 namespace ggk {
 
 GattApplication::GattApplication(DBusConnection& connection, const DBusObjectPath& path)
     : DBusObject(connection, path),
       registered(false) {
+        if (path.toString().find("/org/bluez/") == 0) {
+            Logger::warn("Path starts with /org/bluez/ which is reserved by BlueZ");
+        }
 }
 
 bool GattApplication::setupDBusInterfaces() {
@@ -226,6 +231,9 @@ bool GattApplication::registerWithBlueZ() {
         // 실험적 기능 활성화
         g_variant_builder_add(&options_builder, "{sv}", "Experimental", 
                              g_variant_new_boolean(TRUE));
+
+        g_variant_builder_add(&options_builder, "{sv}", "UseObjectPaths", 
+                             g_variant_new_boolean(TRUE)); // 객체 경로 사용 명시
         
         // 옵션 딕셔너리 완성 및 참조 관리 개선
         GVariant* options = g_variant_builder_end(&options_builder);
@@ -374,6 +382,11 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
             return;
         }
         
+        // 중요: 반환 전에 로그 추가
+        char* debug_str = g_variant_print(result.get(), TRUE);
+        Logger::debug("Returning managed objects: " + std::string(debug_str).substr(0, 500) + "...");
+        g_free(debug_str);
+        
         // Return the result
         g_dbus_method_invocation_return_value(call.invocation.get(), result.get());
         
@@ -395,12 +408,32 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
     GVariantBuilder objects_builder;
     g_variant_builder_init(&objects_builder, G_VARIANT_TYPE("a{oa{sa{sv}}}"));
 
+    // 애플리케이션 루트 객체의 인터페이스 맵 생성
+    GVariantBuilder app_interfaces_builder;
+    g_variant_builder_init(&app_interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
+    
+    // ObjectManager 인터페이스 추가 (속성 없음)
+    GVariantBuilder empty_props;
+    g_variant_builder_init(&empty_props, G_VARIANT_TYPE("a{sv}"));
+    
+    // ObjectManager 인터페이스를 애플리케이션에 추가
+    g_variant_builder_add(&app_interfaces_builder, "{sa{sv}}",
+                         "org.freedesktop.DBus.ObjectManager",
+                         &empty_props);
+    
+    // 애플리케이션 루트 객체를 객체 맵에 추가
+    g_variant_builder_add(&objects_builder, "{oa{sa{sv}}}", 
+                         getPath().c_str(),
+                         &app_interfaces_builder);
+
     // 서비스 목록 가져오기
     std::vector<GattServicePtr> servicesList;
     {
         std::lock_guard<std::mutex> lock(servicesMutex);
         servicesList = services;
     }
+
+    Logger::debug("Processing " + std::to_string(servicesList.size()) + " services");
 
     // 서비스 처리
     for (const auto& service : servicesList) {
@@ -611,11 +644,25 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
         Logger::info("Successfully created managed objects dictionary");
         
         // 디버깅 목적으로 출력 (큰 데이터는 로그가 매우 길어질 수 있음)
-        char* debug_str = g_variant_print(result, FALSE); // 간단한 형태로 출력
+        char* debug_str = g_variant_print(result, TRUE); // 간단한 형태로 출력
         if (debug_str) {
-            std::string preview = std::string(debug_str).substr(0, 200) + "..."; // 미리보기만 표시
-            Logger::debug("Managed objects dictionary (preview): " + preview);
-            g_free(debug_str);
+            // 파일에 전체 내용 저장 (선택 사항)
+            std::ofstream out("/home/aidall1/Developments/BLE/bluetoothLE/test_build/managed_objects.txt");
+            out << debug_str;
+            out.close();
+        }
+        if (!g_variant_is_of_type(result, G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
+            Logger::error("Created variant has incorrect type: " + 
+                         std::string(g_variant_get_type_string(result)));
+        } else {
+            // 크기 검증 (최소한 루트 객체 하나는 있어야 함)
+            gsize n_children = g_variant_n_children(result);
+            Logger::debug("Managed objects dictionary contains " + 
+                         std::to_string(n_children) + " objects");
+            
+            if (n_children < 1) {
+                Logger::warn("Managed objects dictionary is empty!");
+            }
         }
     } else {
         Logger::error("Failed to create managed objects dictionary - null result");
