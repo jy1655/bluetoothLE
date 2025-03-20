@@ -257,19 +257,12 @@ bool GattAdvertisement::registerWithBlueZ() {
         g_variant_builder_add(&options_builder, "{sv}", "MaxAdvInterval", 
                              g_variant_new_uint16(0x0030)); // 30ms
         
-        // 파라미터 생성
-        GVariant* params = g_variant_new("(o@a{sv})", 
-                                        getPath().c_str(),
-                                        g_variant_builder_end(&options_builder));
-        
-        // 디버깅: 파라미터 덤프
-        GVariant* temp = g_variant_ref_sink(params);
-        char* debug_str = g_variant_print(temp, TRUE);
-        Logger::debug("RegisterAdvertisement parameters: " + std::string(debug_str));
-        g_free(debug_str);
-        
-        // 참조 카운트 관리
-        GVariantPtr parameters(temp, &g_variant_unref);
+        // 파라미터 생성 시 명시적 참조 관리
+        GVariant* params_raw = g_variant_new("(o@a{sv})", 
+            getPath().c_str(),
+            g_variant_builder_end(&options_builder));
+        GVariant* params_sinked = g_variant_ref_sink(params_raw);
+        GVariantPtr parameters(params_sinked, &gvariant_deleter);
         
         try {
             // BlueZ에 등록 요청 전송

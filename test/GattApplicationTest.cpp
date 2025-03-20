@@ -76,13 +76,13 @@ TEST_F(GattApplicationTest, AddGattCharacteristic) {
     );
 
     auto characteristic = service->createCharacteristic(
-        GattUuid("87654321-4321-6789-4321-56789abcdef0"),
+        GattUuid("4393fc59-4d51-43ce-a284-cdce8f5fcc7d"),
         GattProperty::PROP_READ | GattProperty::PROP_WRITE,
         GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED
     );
 
     ASSERT_NE(characteristic, nullptr);
-    EXPECT_EQ(characteristic->getUuid().toString(), "87654321-4321-6789-4321-56789abcdef0");
+    EXPECT_EQ(characteristic->getUuid().toString(), "4393fc59-4d51-43ce-a284-cdce8f5fcc7d");
     EXPECT_EQ(characteristic->getProperties(), (GattProperty::PROP_READ | GattProperty::PROP_WRITE));
     EXPECT_EQ(characteristic->getPermissions(), (GattPermission::PERM_READ_ENCRYPTED | GattPermission::PERM_WRITE_ENCRYPTED));
 }
@@ -93,19 +93,19 @@ TEST_F(GattApplicationTest, RegisterWithBlueZ) {
     
     app.reset(new GattApplication(
         connection, 
-        DBusObjectPath("/com/example/gatt/bluez_reg_test")
+        DBusObjectPath("/com/example/ble/bluez_reg_test")
     ));
 
     auto service = std::make_shared<GattService>(
         connection,
-        DBusObjectPath("/com/example/gatt/bluez_reg_test/service1"),
-        GattUuid("12345678-1234-5678-1234-56789abcdef0"),
+        DBusObjectPath("/com/example/ble/bluez_reg_test/service1"),
+        GattUuid("0193d852-eba5-7d28-9abe-e30a67d39d72"),
         true
     );
 
     // 서비스에 특성 추가
     auto characteristic = service->createCharacteristic(
-        GattUuid("87654321-4321-6789-4321-56789abcdef0"),
+        GattUuid("4393fc59-4d51-43ce-a284-cdce8f5fcc7d"),
         GattProperty::PROP_READ | GattProperty::PROP_NOTIFY,
         GattPermission::PERM_READ
     );

@@ -133,10 +133,9 @@ GVariantPtr DBusConnection::callMethod(
     }
     
     if (result) {
-        // 중요: GLib 문서에 따르면 g_dbus_connection_call_sync는 
-        // floating reference를 반환함
-        // makeGVariantPtr은 기본적으로 g_variant_ref_sink를 호출
-        return makeGVariantPtr(result);
+        // floating reference를 명시적으로 sink하고 래핑
+        GVariant* sinked_result = g_variant_ref_sink(result);
+        return GVariantPtr(sinked_result, &gvariant_deleter);
     }
     
     return makeNullGVariantPtr();

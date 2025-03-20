@@ -14,10 +14,10 @@ const GattUuid BATTERY_SERVICE_UUID = GattUuid::fromShortUuid(0x180F); // Standa
 const GattUuid BATTERY_LEVEL_UUID = GattUuid::fromShortUuid(0x2A19);   // Standard Battery Level Characteristic
 
 // Custom Service and Characteristic UUIDs
-const GattUuid CUSTOM_SERVICE_UUID("12345678-1234-5678-1234-56789ABCDEF0");
-const GattUuid CUSTOM_READ_CHAR_UUID("12345678-1234-5678-1234-56789ABCDEF1");
-const GattUuid CUSTOM_WRITE_CHAR_UUID("12345678-1234-5678-1234-56789ABCDEF2");
-const GattUuid CUSTOM_NOTIFY_CHAR_UUID("12345678-1234-5678-1234-56789ABCDEF3");
+const GattUuid CUSTOM_SERVICE_UUID("0193d852-eba5-7d28-9abe-e30a67d39d72");
+const GattUuid CUSTOM_READ_CHAR_UUID("944ecf35-cdc3-4b74-b477-5bcfe548c98e");
+const GattUuid CUSTOM_WRITE_CHAR_UUID("92da1d1a-e24f-4270-8890-8bfcf74b3398");
+const GattUuid CUSTOM_NOTIFY_CHAR_UUID("4393fc59-4d51-43ce-a284-cdce8f5fcc7d");
 
 // Signal handling will be done by the Server class
 // We still need this for the main loop though

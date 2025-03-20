@@ -234,9 +234,10 @@ bool GattApplication::registerWithBlueZ() {
         // 개선: 파라미터 생성 시 DBusTypes 함수 사용
         DBusObjectPath appPath = getPath();
         
-        // 개선: 파라미터 생성은 별도로 하고 명시적으로 참조 관리
-        GVariant* params = g_variant_new("(o@a{sv})", appPath.c_str(), options);
-        GVariantPtr parameters = makeGVariantPtr(params); // DBusTypes에서 제공하는 함수 사용
+        // 파라미터 생성 시 명시적 참조 관리
+        GVariant* params_raw = g_variant_new("(o@a{sv})", appPath.c_str(), options);
+        GVariant* params_sinked = g_variant_ref_sink(params_raw);
+        GVariantPtr parameters(params_sinked, &gvariant_deleter);
         
         // 디버깅: 파라미터 덤프
         char* debug_str = g_variant_print(parameters.get(), TRUE);

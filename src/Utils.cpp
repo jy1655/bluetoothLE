@@ -181,9 +181,9 @@ std::string Utils::bluetoothAddressString(uint8_t *pAddress)
 GVariant *Utils::gvariantFromString(const char *pStr)
 {
     // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromString(pStr);
+    GVariant* variant = g_variant_new_string(pStr);
     // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
+    return g_variant_ref_sink(variant);
 }
 
 // Returns a GVariant containing a floating reference to a utf8 string
