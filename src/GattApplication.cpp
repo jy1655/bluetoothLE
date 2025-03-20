@@ -180,10 +180,19 @@ bool GattApplication::registerWithBlueZ() {
             // 인터페이스 출력
             const gchar* xml = nullptr;
             g_variant_get(introspect.get(), "(s)", &xml);
-            Logger::debug("BlueZ adapter introspection: " + std::string(xml ? xml : "NULL"));
+            
+            // xml은 GVariant 내부 메모리를 참조하므로 복사해서 사용
+            std::string xml_copy;
+            if (xml) {
+                xml_copy = xml;
+                Logger::debug("BlueZ adapter introspection: " + xml_copy);
+                
+                // xml_copy를 사용한 후 xml에 대한 참조는 해제할 필요 없음
+                // (g_variant_get에서 "(&s)"가 아닌 "(s)"를 사용했으므로)
+            }
             
             // GattManager1 인터페이스 확인
-            if (xml && std::string(xml).find("org.bluez.GattManager1") == std::string::npos) {
+            if (!xml_copy.empty() && xml_copy.find("org.bluez.GattManager1") == std::string::npos) {
                 Logger::error("BlueZ adapter does not support GattManager1 interface");
                 return false;
             }

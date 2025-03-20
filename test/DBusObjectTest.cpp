@@ -103,9 +103,14 @@ TEST_F(DBusObjectTest, SetAndGetProperty) {
 }
     
 TEST_F(DBusObjectTest, EmitSignal) {
-    GVariantPtr params(g_variant_new("(s)", "SignalData"), &g_variant_unref);
+    // floating reference를 sink하여 참조 카운트 증가
+    GVariant* params_raw = g_variant_new("(s)", "SignalData");
+    GVariant* params_sink = g_variant_ref_sink(params_raw);
+    // 이제 정상적인 참조 카운트를 가진 GVariant를 GVariantPtr에 전달
+    GVariantPtr params(params_sink, &g_variant_unref);
     
     EXPECT_TRUE(dbusObject->emitSignal("org.example.TestInterface", "TestSignal", std::move(params)));
+    // params는 이제 null 상태이므로 더 이상 접근하지 않아야 함
 }
     
 // 직접 메서드 테스트 (단위 테스트)

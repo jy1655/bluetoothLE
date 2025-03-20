@@ -146,12 +146,16 @@ bool DBusObject::emitSignal(
         return false;
     }
     
-    // parameters가 nullptr이면 빈 튜플 생성, 그렇지 않으면 파라미터 확인
+    // parameters가 nullptr이면 빈 튜플 생성
     if (!parameters) {
         // 빈 튜플 생성
         GVariant* empty_tuple = g_variant_new_tuple(NULL, 0);
-        GVariantPtr empty_params(g_variant_ref_sink(empty_tuple), &g_variant_unref);
-        return connection.emitSignal(path, interface, name, std::move(empty_params));
+        // floating reference를 sink하여 참조 카운트 관리
+        GVariant* owned_empty_tuple = g_variant_ref_sink(empty_tuple);
+        // 소유권이 있는 새 GVariantPtr 생성
+        GVariantPtr owned_params(owned_empty_tuple, &g_variant_unref);
+        // 소유권을 connection.emitSignal()에 전달
+        return connection.emitSignal(path, interface, name, std::move(owned_params));
     }
     
     // parameters가 튜플 타입인지 확인
@@ -160,8 +164,14 @@ bool DBusObject::emitSignal(
         return false;
     }
     
-    // std::move로 소유권을 명확하게 이전 - 중요!
-    return connection.emitSignal(path, interface, name, std::move(parameters));
+    // 원본 GVariant에 대한 새 참조 생성 (소유권 복제)
+    GVariant* param_raw = parameters.get();
+    GVariant* param_copy = g_variant_ref(param_raw);
+    // 새 참조를 소유하는 GVariantPtr 생성
+    GVariantPtr owned_params(param_copy, &g_variant_unref);
+    
+    // 새 소유권을 connection.emitSignal()에 전달
+    return connection.emitSignal(path, interface, name, std::move(owned_params));
 }
 
 bool DBusObject::registerObject() {

@@ -172,7 +172,10 @@ cmake ../test
 make
 sudo ./run_tests  # 테스트 실행
 ```
-
+메모리 누수 디버깅
+```sh
+sudo valgrind --leak-check=full ./run_tests
+```
 
 
 
