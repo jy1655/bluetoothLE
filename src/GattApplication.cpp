@@ -79,7 +79,7 @@ bool GattApplication::addService(GattServicePtr service) {
     
     std::lock_guard<std::mutex> lock(servicesMutex);
     
-    // Check for duplicate services
+    // 중복 서비스 확인
     for (const auto& existingService : services) {
         if (existingService->getUuid().toString() == uuidStr) {
             Logger::warn("Service already exists: " + uuidStr);
@@ -87,18 +87,8 @@ bool GattApplication::addService(GattServicePtr service) {
         }
     }
     
-    // Add service
+    // 서비스 추가
     services.push_back(service);
-    
-    // 이 부분 제거 - 자동 등록 하지 않음
-    // if (registered && !service->isRegistered()) {
-    //    if (!service->setupDBusInterfaces()) {
-    //        Logger::error("Failed to setup interfaces for service: " + uuidStr);
-    //        // Remove the service since setup failed
-    //        services.pop_back();
-    //        return false;
-    //    }
-    // }
     
     Logger::info("Added service to application: " + uuidStr);
     return true;
@@ -141,15 +131,13 @@ std::vector<GattServicePtr> GattApplication::getServices() const {
 }
 
 bool GattApplication::ensureInterfacesRegistered() {
-    // 이미 등록되었다면 건너뜀
     if (registered) {
-        Logger::debug("Application object already registered, skipping interface setup");
         return true;
     }
 
-    Logger::info("Ensuring all interfaces are registered for application: " + getPath().toString());
+    Logger::info("Registering all DBus interfaces in proper order");
     
-    // 1. 먼저 모든 서비스를 수집하고 특성/설명자도 함께 수집
+    // 1. Collect all objects
     std::vector<GattServicePtr> allServices;
     std::vector<GattCharacteristicPtr> allCharacteristics;
     std::vector<GattDescriptorPtr> allDescriptors;
@@ -157,17 +145,17 @@ bool GattApplication::ensureInterfacesRegistered() {
     {
         std::lock_guard<std::mutex> lock(servicesMutex);
         
-        // 서비스 수집
+        // Collect services and their children
         for (auto& service : services) {
             allServices.push_back(service);
             
-            // 각 서비스의 특성 수집
+            // Collect characteristics
             for (const auto& charPair : service->getCharacteristics()) {
                 auto characteristic = charPair.second;
                 if (characteristic) {
                     allCharacteristics.push_back(characteristic);
                     
-                    // 각 특성의 설명자 수집
+                    // Collect descriptors
                     for (const auto& descPair : characteristic->getDescriptors()) {
                         auto descriptor = descPair.second;
                         if (descriptor) {
@@ -179,51 +167,48 @@ bool GattApplication::ensureInterfacesRegistered() {
         }
     }
     
-    // 2. 모든 서비스를 먼저 등록 (BlueZ 계층 구조 준수)
+    // 2. Register in hierarchical order
+    
+    // Services first
     for (auto& service : allServices) {
         if (!service->isRegistered()) {
-            Logger::debug("Registering service: " + service->getUuid().toString());
             if (!service->setupDBusInterfaces()) {
-                Logger::error("Failed to setup interfaces for service: " + service->getUuid().toString());
+                Logger::error("Failed to register service: " + service->getUuid().toString());
                 return false;
             }
         }
     }
     
-    // 3. 그 다음 모든 특성 등록
+    // Then characteristics
     for (auto& characteristic : allCharacteristics) {
         if (!characteristic->isRegistered()) {
-            Logger::debug("Registering characteristic: " + characteristic->getUuid().toString());
             if (!characteristic->setupDBusInterfaces()) {
-                Logger::error("Failed to setup interfaces for characteristic: " + 
+                Logger::error("Failed to register characteristic: " + 
                              characteristic->getUuid().toString());
                 return false;
             }
         }
     }
     
-    // 4. 마지막으로 모든 설명자 등록
+    // Then descriptors
     for (auto& descriptor : allDescriptors) {
         if (!descriptor->isRegistered()) {
-            Logger::debug("Registering descriptor: " + descriptor->getUuid().toString());
             if (!descriptor->setupDBusInterfaces()) {
-                Logger::error("Failed to setup interfaces for descriptor: " + 
+                Logger::error("Failed to register descriptor: " + 
                              descriptor->getUuid().toString());
                 return false;
             }
         }
     }
     
-    // 5. 애플리케이션 객체 자체를 D-Bus에 등록
+    // Finally, register the application object itself
     if (!addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
         Logger::error("Failed to add ObjectManager interface");
         return false;
     }
     
     if (!addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
-                 [this](const DBusMethodCall& call) { 
-                     handleGetManagedObjects(call); 
-                 })) {
+                 [this](const DBusMethodCall& call) { handleGetManagedObjects(call); })) {
         Logger::error("Failed to add GetManagedObjects method");
         return false;
     }
@@ -234,10 +219,7 @@ bool GattApplication::ensureInterfacesRegistered() {
     }
     
     registered = true;
-    Logger::info("All D-Bus interfaces registered successfully");
-    
-    // 검증 수행
-    logObjectHierarchy();
+    Logger::info("All DBus interfaces registered successfully");
     
     return true;
 }
@@ -382,64 +364,59 @@ void GattApplication::logObjectHierarchy() const {
 
 bool GattApplication::registerWithBlueZ() {
     try {
-        // 1. 확인할 인터페이스 목록
-        if (!validateObjectHierarchy()) {
-            Logger::error("Object hierarchy validation failed - check your GATT structure");
-            // 문제 확인을 위한 계층 구조 로깅
-            logObjectHierarchy();
-        }
-        
-        // 2. 이미 등록되었는지 확인
-        if (registered) {
-            Logger::info("Application already registered with BlueZ");
-            return true;
-        }
-        
-        // 3. 등록 준비 - 아직 등록되지 않은 경우 등록
-        if (!registered) {
+        // 1. 모든 객체가 등록되었는지 확인하고, 등록되지 않았다면 등록 시도
+        if (!isRegistered() || !ensureInterfacesRegistered()) {
+            Logger::info("Ensuring all objects are registered with D-Bus");
             if (!ensureInterfacesRegistered()) {
                 Logger::error("Failed to register application objects with D-Bus");
                 return false;
             }
         }
+        // 2. 객체 계층 검증 - 경고만 하고 진행
+        if (!validateObjectHierarchy()) {
+            Logger::warn("Some objects may not be registered properly");
+            logObjectHierarchy();
+            // 진행은 계속함 (실패 반환하지 않음)
+        }
         
-        // 4. BlueZ 서비스 상태 확인
-        int bluezStatus = system("systemctl is-active --quiet bluetooth.service");
-        if (bluezStatus != 0) {
+        // 2. 이미 BlueZ에 등록되었는지 확인
+        if (registered && isRegistered()) {
+            Logger::info("Application already registered with BlueZ");
+            return true;
+        }
+
+        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
             Logger::error("BlueZ service is not active. Run: systemctl start bluetooth.service");
             return false;
         }
         
-        // 5. BlueZ 어댑터 가용성 확인
-        if (system("hciconfig hci0 > /dev/null 2>&1") != 0) {
-            Logger::error("BlueZ adapter 'hci0' not found or not available");
+        // 3. 모든 객체의 D-Bus 인터페이스 등록
+        if (!ensureInterfacesRegistered()) {
+            Logger::error("Failed to register application objects with D-Bus");
             return false;
         }
         
+        // 4. BlueZ 서비스 확인
+        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+            Logger::error("BlueZ service is not active. Run: systemctl start bluetooth.service");
+            return false;
+        }
+        
+        // 5. BlueZ RegisterApplication 호출
         Logger::info("Sending RegisterApplication request to BlueZ");
         
-        // 6. 등록 옵션 설정 - GVariantBuilder 수정
+        // 간소화된 옵션 생성
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
-        g_variant_builder_add(&builder, "{sv}", "Experimental", g_variant_new_boolean(TRUE));
-        GVariant* dict = g_variant_builder_end(&builder);
         
-        // 7. 등록 매개변수 생성 - 더 간단한 방식으로
-        GVariant* params = g_variant_new("(o@a{sv})", 
+        // 단일 매개변수 생성
+        GVariant* params = g_variant_new("(oa{sv})", 
                                         getPath().c_str(), 
-                                        dict);
-        
-        // floating reference 고정
+                                        g_variant_builder_end(&builder));
         g_variant_ref_sink(params);
         
-        // 8. 디버깅을 위한 매개변수 로깅
-        char* debug_str = g_variant_print(params, TRUE);
-        Logger::debug("RegisterApplication parameters: " + std::string(debug_str));
-        g_free(debug_str);
-        
-        // 9. BlueZ RegisterApplication 메서드 호출
+        // BlueZ 호출
         try {
-            // 간소화된 호출 방식
             GError* error = nullptr;
             GDBusConnection* conn = getConnection().getRawConnection();
             
@@ -450,14 +427,13 @@ bool GattApplication::registerWithBlueZ() {
                 BlueZConstants::GATT_MANAGER_INTERFACE.c_str(),
                 BlueZConstants::REGISTER_APPLICATION.c_str(),
                 params,
-                nullptr,  // 반환 타입 없음
+                nullptr,
                 G_DBUS_CALL_FLAGS_NONE,
-                60000,  // 60초 타임아웃
+                30000,  // 30초 타임아웃
                 nullptr,
                 &error
             );
             
-            // params 참조 해제
             g_variant_unref(params);
             
             if (error) {
@@ -475,11 +451,8 @@ bool GattApplication::registerWithBlueZ() {
             Logger::info("Successfully registered application with BlueZ");
             return true;
         } catch (const std::exception& e) {
-            // params 참조 해제 확인
             g_variant_unref(params);
-            
-            std::string error = e.what();
-            Logger::error("Exception in BlueZ registration: " + error);
+            Logger::error("Exception in BlueZ registration: " + std::string(e.what()));
             return false;
         }
     } catch (const std::exception& e) {

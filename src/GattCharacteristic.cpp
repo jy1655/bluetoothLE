@@ -120,9 +120,6 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
         return nullptr;
     }
     
-    Logger::debug("Creating descriptor UUID: " + uuid.toString() + 
-                 ", permissions: " + Utils::hex(permissions));
-
     std::string uuidStr = uuid.toString();
     
     std::lock_guard<std::mutex> lock(descriptorsMutex);
@@ -132,14 +129,14 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
     if (it != descriptors.end()) {
         if (!it->second) {
             Logger::error("Found null descriptor entry for UUID: " + uuidStr);
-            descriptors.erase(it);  // 잘못된 항목 제거
+            descriptors.erase(it);
         } else {
             return it->second;
         }
     }
     
     try {
-        // 새 경로 생성
+        // 새 경로 생성 - 일관된 명명 규칙 사용
         std::string descNum = "desc" + std::to_string(descriptors.size() + 1);
         DBusObjectPath descriptorPath = getPath() + descNum;
         
@@ -157,12 +154,6 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
             return nullptr;
         }
         
-        // 이 부분 제거 - setupDBusInterfaces 호출하지 않음
-        // if (!descriptor->setupDBusInterfaces()) {
-        //    Logger::error("Failed to setup descriptor interfaces for: " + uuidStr);
-        //    return nullptr;
-        // }
-        
         // 맵에 추가
         descriptors[uuidStr] = descriptor;
         
@@ -173,7 +164,6 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
         return nullptr;
     }
 }
-
 GattDescriptorPtr GattCharacteristic::getDescriptor(const GattUuid& uuid) const {
     std::string uuidStr = uuid.toString();
     
@@ -258,12 +248,12 @@ bool GattCharacteristic::stopNotify() {
     return true;
 }
 
-// GattCharacteristic 클래스에 추가:
 void GattCharacteristic::ensureCCCDExists() {
     if (properties & GattProperty::PROP_NOTIFY || properties & GattProperty::PROP_INDICATE) {
         // CCCD가 이미 존재하는지 확인
         bool hasCccd = false;
         std::lock_guard<std::mutex> lock(descriptorsMutex);
+        
         for (const auto& pair : descriptors) {
             if (pair.second && pair.second->getUuid().toBlueZShortFormat() == "00002902") {
                 hasCccd = true;
@@ -271,23 +261,33 @@ void GattCharacteristic::ensureCCCDExists() {
             }
         }
         
-        // CCCD가 없으면 생성
+        // CCCD가 없으면 자동으로 생성
         if (!hasCccd) {
-            Logger::info("CCCD 자동 추가 - 특성: " + uuid.toString());
+            Logger::info("Auto-adding CCCD for characteristic: " + uuid.toString());
+            
+            // 락을 해제한 상태에서 createDescriptor 호출 (재귀적 락 방지)
+            lock.~lock_guard(); // 명시적으로 락 해제
+            
             GattDescriptorPtr cccd = createDescriptor(
                 GattUuid::fromShortUuid(0x2902),
                 GattPermission::PERM_READ | GattPermission::PERM_WRITE
             );
             
             if (cccd) {
+                // 표준 초기값 설정 - 알림 비활성화
                 std::vector<uint8_t> initialValue = {0x00, 0x00};
                 cccd->setValue(initialValue);
+                Logger::debug("CCCD created and initialized");
+            } else {
+                Logger::error("Failed to create CCCD for characteristic: " + uuid.toString());
             }
         }
     }
 }
 
 bool GattCharacteristic::setupDBusInterfaces() {
+    // NOTIFY/INDICATE 속성이 있는 특성의 CCCD 자동 추가
+    ensureCCCDExists();
     // 속성 정의
     std::vector<DBusProperty> properties = {
         {
@@ -336,8 +336,6 @@ bool GattCharacteristic::setupDBusInterfaces() {
             nullptr
         }
     };
-
-    ensureCCCDExists();
     
     // 인터페이스 추가
     if (!addInterface(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, properties)) {

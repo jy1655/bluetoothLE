@@ -34,14 +34,14 @@ GattCharacteristicPtr GattService::createCharacteristic(
     if (it != characteristics.end()) {
         if (!it->second) {
             Logger::error("Found null characteristic entry for UUID: " + uuidStr);
-            characteristics.erase(it);  // 잘못된 항목 제거
+            characteristics.erase(it);
         } else {
             return it->second;
         }
     }
     
     try {
-        // 새 경로 생성
+        // 일관된 경로 명명 규칙 적용
         std::string charNum = "char" + std::to_string(characteristics.size() + 1);
         DBusObjectPath charPath = getPath() + charNum;
         
@@ -59,12 +59,6 @@ GattCharacteristicPtr GattService::createCharacteristic(
             Logger::error("Failed to create characteristic for UUID: " + uuidStr);
             return nullptr;
         }
-        
-        // 이 부분 제거 - setupDBusInterfaces 호출하지 않음
-        // if (!characteristic->setupDBusInterfaces()) {
-        //    Logger::error("Failed to setup characteristic interfaces for: " + uuidStr);
-        //    return nullptr;
-        // }
         
         // 맵에 추가
         characteristics[uuidStr] = characteristic;

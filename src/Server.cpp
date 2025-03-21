@@ -160,16 +160,6 @@ bool Server::start(bool secureMode) {
     if (system("sudo hciconfig hci0 leadv 3") != 0) {
         Logger::warn("LE 광고 활성화 실패 - 계속 진행");
     }
-    
-    // 어댑터 안정화 대기
-    sleep(2);
-    // BlueZ 도구를 사용한 HCI 설정 초기화
-    system("sudo hciconfig hci0 down");
-    system("sudo hciconfig hci0 up");
-    system("sudo hciconfig hci0 name JetsonBLE");
-    system("sudo hciconfig hci0 leadv 3");
-    // 5초 대기 추가 - 장치 안정화 시간 확보
-    sleep(2);
 
     // BlueZ를 사용하는 방식으로 수정
     if (!initialized) {
@@ -203,15 +193,20 @@ bool Server::start(bool secureMode) {
     system("hciconfig -a hci0");
     
     // 3. 애플리케이션 등록
-    if (!application->registerWithBlueZ()) {
-        Logger::error("Failed to register GATT application with BlueZ");
+    if (!application->ensureInterfacesRegistered()) {
+        Logger::error("Failed to register application interfaces with D-Bus");
         return false;
     }
     
-    // 4. 광고 등록
-    if (!advertisement->registerWithBlueZ()) {
-        Logger::error("Failed to register advertisement with BlueZ");
-        application->unregisterFromBlueZ();
+    // 객체 계층 검증 및 로깅
+    if (!application->validateObjectHierarchy()) {
+        Logger::warn("Object hierarchy validation issues detected, see log for details");
+        application->logObjectHierarchy();
+    }
+    
+    // 3. 애플리케이션 등록
+    if (!application->registerWithBlueZ()) {
+        Logger::error("Failed to register GATT application with BlueZ");
         return false;
     }
     
@@ -287,22 +282,16 @@ bool Server::addService(GattServicePtr service) {
 }
 
 GattServicePtr Server::createService(const GattUuid& uuid, bool isPrimary) {
-    if (!initialized) {
+    if (!initialized || !application) {
         Logger::error("Cannot create service: Server not initialized");
         return nullptr;
     }
     
-    if (!application) {
-        Logger::error("Cannot create service: Application not available");
-        return nullptr;
-    }
+    // 일관된 경로 명명 규칙 사용
+    std::string serviceNum = "service" + std::to_string(application->getServices().size() + 1);
+    std::string servicePath = application->getPath().toString() + "/" + serviceNum;
     
-    // Create a path based on the UUID
-    std::string uuidStr = uuid.toString();
-    std::string servicePath = application->getPath().toString() + "/service" + 
-                              std::to_string(application->getServices().size() + 1);
-    
-    // Create the service
+    // 서비스 생성
     auto service = std::make_shared<GattService>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath(servicePath),
@@ -310,6 +299,12 @@ GattServicePtr Server::createService(const GattUuid& uuid, bool isPrimary) {
         isPrimary
     );
     
+    if (!service) {
+        Logger::error("Failed to create service: " + uuid.toString());
+        return nullptr;
+    }
+    
+    Logger::info("Created service: " + uuid.toString() + " at path: " + servicePath);
     return service;
 }
 

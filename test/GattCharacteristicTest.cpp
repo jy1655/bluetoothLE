@@ -104,6 +104,39 @@ TEST_F(GattCharacteristicGvariantTest, GetPropertiesProperty) {
     g_variant_unref(result);
 }
 
+// test/GattCharacteristicTest.cpp에 추가
+TEST_F(GattCharacteristicGvariantTest, AutoCCCDCreation) {
+    // NOTIFY 속성을 가진 특성 생성
+    auto characteristic = service->createCharacteristic(
+        GattUuid("test-uuid-notify"),
+        GattProperty::PROP_NOTIFY,
+        GattPermission::PERM_READ
+    );
+    
+    // setupDBusInterfaces 호출 전에는 CCCD가 없어야 함
+    bool hasCccdBefore = false;
+    for (const auto& pair : characteristic->getDescriptors()) {
+        if (pair.second->getUuid().toBlueZShortFormat() == "00002902") {
+            hasCccdBefore = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(hasCccdBefore) << "CCCD should not exist before setupDBusInterfaces";
+    
+    // setupDBusInterfaces 호출
+    ASSERT_TRUE(characteristic->setupDBusInterfaces());
+    
+    // setupDBusInterfaces 호출 후에는 CCCD가 자동으로 생성되어야 함
+    bool hasCccdAfter = false;
+    for (const auto& pair : characteristic->getDescriptors()) {
+        if (pair.second->getUuid().toBlueZShortFormat() == "00002902") {
+            hasCccdAfter = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(hasCccdAfter) << "CCCD should be automatically created during setupDBusInterfaces";
+}
+
 // getDescriptorsProperty 빈 배열 테스트
 TEST_F(GattCharacteristicGvariantTest, GetEmptyDescriptorsProperty) {
     // 설명자가 추가되기 전 (빈 배열 상태)
