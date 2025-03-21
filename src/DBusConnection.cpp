@@ -93,22 +93,28 @@ GVariantPtr DBusConnection::callMethod(
     
     GError* error = nullptr;
     GVariantType* replyType = nullptr;
+    
+    // replyType을 위한 RAII 가드 추가
+    std::unique_ptr<GVariantType, void(*)(GVariantType*)> replyTypeGuard(nullptr, 
+        [](GVariantType* p) { if (p) g_variant_type_free(p); });
+    
     if (!replySignature.empty()) {
         if (!g_variant_type_string_is_valid(replySignature.c_str())) {
             Logger::error("Invalid reply signature: " + replySignature);
             return makeNullGVariantPtr();
         }
         replyType = g_variant_type_new(replySignature.c_str());
+        replyTypeGuard.reset(replyType); // 자동 해제를 위해 가드에 등록
     }
     
-    // g_dbus_connection_call_sync 호출
+    // 메서드 호출
     GVariant* result = g_dbus_connection_call_sync(
         connection.get(),
         destination.c_str(),
         path.c_str(),
         interface.c_str(),
         method.c_str(),
-        parameters.get(),  // null 가능
+        parameters.get(),
         replyType,
         G_DBUS_CALL_FLAGS_NONE,
         timeoutMs > 0 ? timeoutMs : -1, 
@@ -116,11 +122,7 @@ GVariantPtr DBusConnection::callMethod(
         &error
     );
     
-    if (replyType) {
-        g_variant_type_free(replyType);
-    }
-
-    // DBusConnection.cpp에서 callMethod() 함수에 자세한 로깅 추가
+    // 로깅
     Logger::debug("Calling D-Bus method: " + destination + 
         " " + path.toString() + " " + 
         interface + "." + method);
@@ -128,14 +130,13 @@ GVariantPtr DBusConnection::callMethod(
     if (error) {
         Logger::error("D-Bus method call failed: " + std::string(error->message));
         g_error_free(error);
-        error = nullptr;
         return makeNullGVariantPtr();
     }
     
     if (result) {
         // g_dbus_connection_call_sync는 이미 sink된 GVariant를 반환하므로
-        // 추가 sink 없이 참조만 증가
-        return GVariantPtr(g_variant_ref(result), &g_variant_unref);
+        // 추가 sink 없이 바로 GVariantPtr로 래핑
+        return GVariantPtr(result, &g_variant_unref);
     }
     
     return makeNullGVariantPtr();

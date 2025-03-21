@@ -21,9 +21,9 @@ GattApplication::GattApplication(DBusConnection& connection, const DBusObjectPat
 }
 
 bool GattApplication::setupDBusInterfaces() {
-    // If already registered, no need to set up again
-    if (isRegistered()) {
-        Logger::debug("Application already registered with D-Bus");
+    // If already registered, just return success
+    if (DBusObject::isRegistered()) {
+        Logger::debug("Application object already registered with D-Bus");
         return true;
     }
 
@@ -62,6 +62,9 @@ bool GattApplication::setupDBusInterfaces() {
         return false;
     }
     
+    // 5. Explicitly set registered flag to true
+    registered = true;
+    
     Logger::info("Registered GATT application: " + getPath().toString());
     return true;
 }
@@ -88,7 +91,7 @@ bool GattApplication::addService(GattServicePtr service) {
     services.push_back(service);
     
     // If the application is already registered, we need to set up the service now
-    if (isRegistered() && !service->isRegistered()) {
+    if (registered && !service->isRegistered()) {
         if (!service->setupDBusInterfaces()) {
             Logger::error("Failed to setup interfaces for service: " + uuidStr);
             // Remove the service since setup failed
@@ -139,7 +142,7 @@ std::vector<GattServicePtr> GattApplication::getServices() const {
 
 bool GattApplication::ensureInterfacesRegistered() {
     // If already registered, we're good
-    if (isRegistered()) {
+    if (registered) {
         Logger::debug("Application object already registered, skipping interface setup");
         return true;
     }
@@ -186,7 +189,10 @@ bool GattApplication::ensureInterfacesRegistered() {
         return false;
     }
     
-    // 7. Only validate after everything is registered
+    // 7. Set the registered flag
+    registered = true;
+    
+    // 8. Only validate after everything is registered
     if (!validateObjectHierarchy()) {
         Logger::warn("Object hierarchy validation failed, registration may fail");
     }
@@ -211,7 +217,7 @@ bool GattApplication::validateObjectHierarchy() const {
     bool valid = true;
     
     // Check application
-    if (!isRegistered()) {
+    if (!registered) {
         Logger::warn("Application object not registered");
         valid = false;
     }
@@ -289,34 +295,6 @@ void GattApplication::logObjectHierarchy() const {
 
 bool GattApplication::registerWithBlueZ() {
     try {
-        // 1. Debug: Check BlueZ interfaces
-        Logger::debug("Checking BlueZ interfaces");
-        GVariantPtr introspect = getConnection().callMethod(
-            BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-            "org.freedesktop.DBus.Introspectable",
-            "Introspect"
-        );
-
-        if (introspect) {
-            // Log BlueZ adapter introspection
-            const gchar* xml = nullptr;
-            g_variant_get(introspect.get(), "(&s)", &xml);
-            
-            if (xml) {
-                std::string xml_copy = xml;
-                Logger::debug("BlueZ adapter introspection: " + xml_copy);
-                
-                // Check for GattManager1 interface
-                if (xml_copy.find("org.bluez.GattManager1") == std::string::npos) {
-                    Logger::error("BlueZ adapter does not support GattManager1 interface");
-                    return false;
-                }
-            }
-        } else {
-            Logger::error("Failed to introspect BlueZ adapter");
-        }
-
         // 2. Check if already registered
         if (registered) {
             Logger::info("Application already registered with BlueZ");
@@ -324,14 +302,14 @@ bool GattApplication::registerWithBlueZ() {
         }
         
         // 3. Prepare for registration - unregister if already registered
-        if (!isRegistered()) {
+        if (!registered) {
             if (!ensureInterfacesRegistered()) {
                 Logger::error("Failed to register application objects with D-Bus");
                 return false;
             }
             
             // Double-check application registration succeeded
-            if (!isRegistered()) {
+            if (!registered) {
                 Logger::error("Application registration with D-Bus failed");
                 return false;
             }
@@ -392,7 +370,6 @@ bool GattApplication::registerWithBlueZ() {
             if (!result) {
                 Logger::error("Failed to register application with BlueZ - null result");
                 system("hciconfig -a"); // Log adapter state for debugging
-                registered = false;
                 return false;
             }
             
@@ -416,12 +393,10 @@ bool GattApplication::registerWithBlueZ() {
                 // Dump object hierarchy to log for debugging
                 logObjectHierarchy();
                 
-                registered = false;
                 return false;
             }
             
             Logger::error("Exception in BlueZ registration: " + error);
-            registered = false;
             return false;
         }
     } catch (const std::exception& e) {
