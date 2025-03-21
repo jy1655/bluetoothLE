@@ -11,7 +11,7 @@ make
 
 ```bash
 sudo ./ble_peripheral
-```
+``` 
 
 
 #### For Debug
