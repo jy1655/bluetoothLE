@@ -128,13 +128,15 @@ bool Server::initialize(const std::string& name) {
 }
 
 bool Server::start(bool secureMode) {
-    // BlueZ 명령줄 도구를 사용해 HCI 설정 초기화
+    // BlueZ 도구를 사용한 HCI 설정 초기화
     system("sudo hciconfig hci0 down");
     system("sudo hciconfig hci0 up");
     system("sudo hciconfig hci0 name JetsonBLE");
     system("sudo hciconfig hci0 leadv 3");
+    // 5초 대기 추가 - 장치 안정화 시간 확보
+    sleep(2);
 
-    // BlueZ만 사용하는 방식으로 수정
+    // BlueZ를 사용하는 방식으로 수정
     if (!initialized) {
         Logger::error("Cannot start: Server not initialized");
         return false;
@@ -150,11 +152,18 @@ bool Server::start(bool secureMode) {
     // 1. BlueZ 상태 확인
     if (system("systemctl is-active --quiet bluetooth.service") != 0) {
         Logger::error("BlueZ service is not active");
-        return false;
+        // 자동 재시작 시도
+        Logger::info("Attempting to restart BlueZ service...");
+        system("sudo systemctl restart bluetooth.service");
+        sleep(2);  // 재시작 대기
+        
+        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+            Logger::error("Failed to restart BlueZ service");
+            return false;
+        }
     }
     
-    // 2. 장치 이름 설정은 BlueZ D-Bus를 통해 수행
-    // hciconfig만 사용해 상태 확인
+    // 2. 장치 이름 상태 확인
     Logger::info("Current adapter settings:");
     system("hciconfig -a hci0");
     

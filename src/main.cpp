@@ -25,36 +25,40 @@ static std::atomic<bool> running(true);
 
 // Helper function to setup a battery service
 GattServicePtr setupBatteryService(Server& server) {
-    // Create Battery Service
+    // 기존 코드는 그대로 유지
     auto batteryService = server.createService(BATTERY_SERVICE_UUID);
     if (!batteryService) {
         Logger::error("Failed to create Battery Service");
         return nullptr;
     }
     
-    // Create Battery Level Characteristic
+    // 배터리 레벨 특성 생성
     auto batteryLevel = batteryService->createCharacteristic(
         BATTERY_LEVEL_UUID,
         GattProperty::PROP_READ | GattProperty::PROP_NOTIFY,
         GattPermission::PERM_READ
     );
     
-    if (!batteryLevel) {
-        Logger::error("Failed to create Battery Level Characteristic");
-        return nullptr;
-    }
+    // 중요: NOTIFY 플래그가 있으므로 CCCD 설명자 추가
+    auto cccd = batteryLevel->createDescriptor(
+        GattUuid::fromShortUuid(0x2902), // CCCD UUID
+        GattPermission::PERM_READ | GattPermission::PERM_WRITE
+    );
     
-    // Set initial battery level value (80%)
-    std::vector<uint8_t> initialLevel = {80};
-    batteryLevel->setValue(initialLevel);
+    // CCCD 초기값 설정 (알림 비활성화 상태)
+    std::vector<uint8_t> initialCccdValue = {0x00, 0x00};
+    cccd->setValue(initialCccdValue);
     
-    // Add read callback
+    // 초기값 설정
+    std::vector<uint8_t> initialValue = {80};
+    batteryLevel->setValue(initialValue);
+    
+    // 기존 코드는 그대로 유지
     batteryLevel->setReadCallback([]() -> std::vector<uint8_t> {
-        // In a real application, read the actual battery level
         return {80};
     });
     
-    // Add the service to the server
+    // 서비스 추가
     if (!server.addService(batteryService)) {
         Logger::error("Failed to add Battery Service to server");
         return nullptr;
@@ -65,14 +69,14 @@ GattServicePtr setupBatteryService(Server& server) {
 
 // Helper function to setup a custom service
 GattServicePtr setupCustomService(Server& server) {
-    // Create Custom Service
+    // 기존 코드는 그대로 유지
     auto customService = server.createService(CUSTOM_SERVICE_UUID);
     if (!customService) {
         Logger::error("Failed to create Custom Service");
         return nullptr;
     }
     
-    // Create a readable characteristic
+    // 읽기 특성 설정 - 변경 없음
     auto readChar = customService->createCharacteristic(
         CUSTOM_READ_CHAR_UUID,
         GattProperty::PROP_READ,
@@ -80,17 +84,14 @@ GattServicePtr setupCustomService(Server& server) {
     );
     
     if (readChar) {
-        // Set initial value (MUST be done before server starts)
         std::vector<uint8_t> initialData = {'H', 'e', 'l', 'l', 'o'};
         readChar->setValue(initialData);
-        
-        // Add read callback (this is called during runtime)
         readChar->setReadCallback([]() -> std::vector<uint8_t> {
             return {'H', 'e', 'l', 'l', 'o'};
         });
     }
     
-    // Create a writable characteristic
+    // 쓰기 특성 설정 - 변경 없음
     auto writeChar = customService->createCharacteristic(
         CUSTOM_WRITE_CHAR_UUID,
         GattProperty::PROP_WRITE,
@@ -98,16 +99,14 @@ GattServicePtr setupCustomService(Server& server) {
     );
     
     if (writeChar) {
-        // Add write callback
         writeChar->setWriteCallback([](const std::vector<uint8_t>& value) -> bool {
-            // Print received data
             std::string data(value.begin(), value.end());
             Logger::info("Received data: " + data);
             return true;
         });
     }
     
-    // Create a notify characteristic
+    // 알림 특성 설정 - CCCD 추가
     auto notifyChar = customService->createCharacteristic(
         CUSTOM_NOTIFY_CHAR_UUID,
         GattProperty::PROP_NOTIFY,
@@ -115,15 +114,24 @@ GattServicePtr setupCustomService(Server& server) {
     );
     
     if (notifyChar) {
-        // Empty initial value
+        // 중요: CCCD 설명자 추가
+        auto cccd = notifyChar->createDescriptor(
+            GattUuid::fromShortUuid(0x2902), // CCCD UUID
+            GattPermission::PERM_READ | GattPermission::PERM_WRITE
+        );
+        
+        // CCCD 초기값 설정 (알림 비활성화 상태)
+        std::vector<uint8_t> initialCccdValue = {0x00, 0x00};
+        cccd->setValue(initialCccdValue);
+        
+        // 빈 초기값 설정
         notifyChar->setValue({});
         
-        // Store this for notifications (can be accessed from elsewhere)
-        // In a real app, you'd use a better way to share this reference
+        // 전역 참조 저장
         static GattCharacteristicPtr notifyCharPtr = notifyChar;
     }
     
-    // Add the service to the server
+    // 서비스 추가
     if (!server.addService(customService)) {
         Logger::error("Failed to add Custom Service to server");
         return nullptr;
