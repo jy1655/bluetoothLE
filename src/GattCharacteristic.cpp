@@ -140,7 +140,8 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
     
     try {
         // 새 경로 생성
-        DBusObjectPath descriptorPath = getPath() + "/desc" + std::to_string(descriptors.size() + 1);
+        std::string descNum = "desc" + std::to_string(descriptors.size() + 1);
+        DBusObjectPath descriptorPath = getPath() + descNum;
         
         // 설명자 생성
         GattDescriptorPtr descriptor = std::make_shared<GattDescriptor>(

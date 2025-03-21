@@ -42,7 +42,8 @@ GattCharacteristicPtr GattService::createCharacteristic(
     
     try {
         // 새 경로 생성
-        DBusObjectPath charPath = getPath() + "/char" + std::to_string(characteristics.size() + 1);
+        std::string charNum = "char" + std::to_string(characteristics.size() + 1);
+        DBusObjectPath charPath = getPath() + charNum;
         
         // 특성 생성
         GattCharacteristicPtr characteristic = std::make_shared<GattCharacteristic>(
