@@ -157,12 +157,11 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
             return nullptr;
         }
         
-        Logger::debug("About to setup descriptor DBus interfaces");
-        // 설명자 등록
-        if (!descriptor->setupDBusInterfaces()) {
-            Logger::error("Failed to setup descriptor interfaces for: " + uuidStr);
-            return nullptr;
-        }
+        // 이 부분 제거 - setupDBusInterfaces 호출하지 않음
+        // if (!descriptor->setupDBusInterfaces()) {
+        //    Logger::error("Failed to setup descriptor interfaces for: " + uuidStr);
+        //    return nullptr;
+        // }
         
         // 맵에 추가
         descriptors[uuidStr] = descriptor;

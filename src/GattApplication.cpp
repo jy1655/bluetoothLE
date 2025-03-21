@@ -90,15 +90,15 @@ bool GattApplication::addService(GattServicePtr service) {
     // Add service
     services.push_back(service);
     
-    // If the application is already registered, we need to set up the service now
-    if (registered && !service->isRegistered()) {
-        if (!service->setupDBusInterfaces()) {
-            Logger::error("Failed to setup interfaces for service: " + uuidStr);
-            // Remove the service since setup failed
-            services.pop_back();
-            return false;
-        }
-    }
+    // 이 부분 제거 - 자동 등록 하지 않음
+    // if (registered && !service->isRegistered()) {
+    //    if (!service->setupDBusInterfaces()) {
+    //        Logger::error("Failed to setup interfaces for service: " + uuidStr);
+    //        // Remove the service since setup failed
+    //        services.pop_back();
+    //        return false;
+    //    }
+    // }
     
     Logger::info("Added service to application: " + uuidStr);
     return true;
@@ -141,40 +141,58 @@ std::vector<GattServicePtr> GattApplication::getServices() const {
 }
 
 bool GattApplication::ensureInterfacesRegistered() {
-    // If already registered, we're good
+    // 이미 등록되었다면 건너뜀
     if (registered) {
         Logger::debug("Application object already registered, skipping interface setup");
         return true;
     }
 
-    // 1. Make sure all services are registered first
+    Logger::info("Ensuring all interfaces are registered for application: " + getPath().toString());
+    
+    // 1. 먼저 모든 서비스를 D-Bus에 등록
     std::lock_guard<std::mutex> lock(servicesMutex);
     for (auto& service : services) {
         if (!service->isRegistered()) {
+            Logger::debug("Registering service: " + service->getUuid().toString());
             if (!service->setupDBusInterfaces()) {
                 Logger::error("Failed to setup interfaces for service: " + service->getUuid().toString());
                 return false;
             }
         }
-    }
-    
-    // 2. Log the object hierarchy for debugging AFTER registering services
-    logObjectHierarchy();
-    
-    // 3. Add standard services if needed
-    if (!standardServicesAdded) {
-        if (!registerStandardServices()) {
-            Logger::warn("Failed to add standard services, continuing anyway");
+        
+        // 2. 서비스의 모든 특성을 D-Bus에 등록
+        for (const auto& charPair : service->getCharacteristics()) {
+            auto characteristic = charPair.second;
+            if (characteristic && !characteristic->isRegistered()) {
+                Logger::debug("Registering characteristic: " + characteristic->getUuid().toString());
+                if (!characteristic->setupDBusInterfaces()) {
+                    Logger::error("Failed to setup interfaces for characteristic: " + 
+                                 characteristic->getUuid().toString());
+                    return false;
+                }
+                
+                // 3. 특성의 모든 설명자를 D-Bus에 등록
+                for (const auto& descPair : characteristic->getDescriptors()) {
+                    auto descriptor = descPair.second;
+                    if (descriptor && !descriptor->isRegistered()) {
+                        Logger::debug("Registering descriptor: " + descriptor->getUuid().toString());
+                        if (!descriptor->setupDBusInterfaces()) {
+                            Logger::error("Failed to setup interfaces for descriptor: " + 
+                                         descriptor->getUuid().toString());
+                            return false;
+                        }
+                    }
+                }
+            }
         }
     }
     
-    // 4. Add ObjectManager interface
+    // 4. 애플리케이션 객체 자체를 D-Bus에 등록
     if (!addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
         Logger::error("Failed to add ObjectManager interface");
         return false;
     }
     
-    // 5. Add GetManagedObjects method
     if (!addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
                  [this](const DBusMethodCall& call) { 
                      handleGetManagedObjects(call); 
@@ -183,21 +201,14 @@ bool GattApplication::ensureInterfacesRegistered() {
         return false;
     }
     
-    // 6. Register the application object itself
     if (!registerObject()) {
         Logger::error("Failed to register application object");
         return false;
     }
     
-    // 7. Set the registered flag
     registered = true;
+    Logger::info("All D-Bus interfaces registered successfully");
     
-    // 8. Only validate after everything is registered
-    if (!validateObjectHierarchy()) {
-        Logger::warn("Object hierarchy validation failed, registration may fail");
-    }
-    
-    Logger::info("All D-Bus interfaces registered for GATT application");
     return true;
 }
 
