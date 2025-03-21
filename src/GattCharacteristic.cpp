@@ -258,6 +258,35 @@ bool GattCharacteristic::stopNotify() {
     return true;
 }
 
+// GattCharacteristic 클래스에 추가:
+void GattCharacteristic::ensureCCCDExists() {
+    if (properties & GattProperty::PROP_NOTIFY || properties & GattProperty::PROP_INDICATE) {
+        // CCCD가 이미 존재하는지 확인
+        bool hasCccd = false;
+        std::lock_guard<std::mutex> lock(descriptorsMutex);
+        for (const auto& pair : descriptors) {
+            if (pair.second && pair.second->getUuid().toBlueZShortFormat() == "00002902") {
+                hasCccd = true;
+                break;
+            }
+        }
+        
+        // CCCD가 없으면 생성
+        if (!hasCccd) {
+            Logger::info("CCCD 자동 추가 - 특성: " + uuid.toString());
+            GattDescriptorPtr cccd = createDescriptor(
+                GattUuid::fromShortUuid(0x2902),
+                GattPermission::PERM_READ | GattPermission::PERM_WRITE
+            );
+            
+            if (cccd) {
+                std::vector<uint8_t> initialValue = {0x00, 0x00};
+                cccd->setValue(initialValue);
+            }
+        }
+    }
+}
+
 bool GattCharacteristic::setupDBusInterfaces() {
     // 속성 정의
     std::vector<DBusProperty> properties = {
@@ -307,6 +336,8 @@ bool GattCharacteristic::setupDBusInterfaces() {
             nullptr
         }
     };
+
+    ensureCCCDExists();
     
     // 인터페이스 추가
     if (!addInterface(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, properties)) {

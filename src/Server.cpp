@@ -128,6 +128,41 @@ bool Server::initialize(const std::string& name) {
 }
 
 bool Server::start(bool secureMode) {
+    // BlueZ 서비스가 활성화되어 있는지 확인
+    if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+        Logger::warn("BlueZ 서비스가 활성화되어 있지 않습니다");
+        Logger::info("BlueZ 서비스 시작 시도...");
+        system("sudo systemctl start bluetooth.service");
+        sleep(2);  // 서비스 시작 대기
+    }
+    
+    // bluetoothd 버전 확인
+    Logger::info("BlueZ 버전 확인:");
+    system("bluetoothd -v");
+    
+    // HCI 인터페이스 초기화
+    if (system("sudo hciconfig hci0 down") != 0) {
+        Logger::warn("HCI 인터페이스 다운 실패 - 계속 진행");
+    }
+    
+    if (system("sudo hciconfig hci0 up") != 0) {
+        Logger::error("HCI 인터페이스 업 실패");
+        Logger::info("블루투스 어댑터가 연결되어 있는지 확인하세요");
+        return false;
+    }
+    
+    // 장치 이름 설정
+    if (system(("sudo hciconfig hci0 name " + deviceName).c_str()) != 0) {
+        Logger::warn("장치 이름 설정 실패 - 계속 진행");
+    }
+    
+    // LE 광고 활성화
+    if (system("sudo hciconfig hci0 leadv 3") != 0) {
+        Logger::warn("LE 광고 활성화 실패 - 계속 진행");
+    }
+    
+    // 어댑터 안정화 대기
+    sleep(2);
     // BlueZ 도구를 사용한 HCI 설정 초기화
     system("sudo hciconfig hci0 down");
     system("sudo hciconfig hci0 up");

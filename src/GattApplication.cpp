@@ -419,14 +419,10 @@ bool GattApplication::registerWithBlueZ() {
         Logger::info("Sending RegisterApplication request to BlueZ");
         
         // 6. 등록 옵션 설정 - GVariantBuilder 수정
-        // 문제가 있는 부분 수정: GVariantBuilder를 직접 사용하는 대신 딕셔너리 생성
-        GVariant* options = g_variant_new_dict_entry(
-            g_variant_new_string("Experimental"),
-            g_variant_new_variant(g_variant_new_boolean(TRUE))
-        );
-        
-        // 옵션을 포함한 dictionary 생성
-        GVariant* dict = g_variant_new_array(G_VARIANT_TYPE("{sv}"), &options, 1);
+        GVariantBuilder builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+        g_variant_builder_add(&builder, "{sv}", "Experimental", g_variant_new_boolean(TRUE));
+        GVariant* dict = g_variant_builder_end(&builder);
         
         // 7. 등록 매개변수 생성 - 더 간단한 방식으로
         GVariant* params = g_variant_new("(o@a{sv})", 

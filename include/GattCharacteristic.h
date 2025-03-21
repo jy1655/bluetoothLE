@@ -173,6 +173,8 @@ public:
      * @brief 부모 서비스 가져오기
      */
     GattService& getService() const { return service; }
+
+    void ensureCCCDExists();
     
 private:
     // D-Bus 메서드 핸들러
