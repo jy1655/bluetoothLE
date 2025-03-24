@@ -11,13 +11,28 @@ namespace ggk {
 // Static signal handling variables
 static std::atomic<bool> g_signalReceived(false);
 static std::function<void()> g_shutdownCallback = nullptr;
+
 static void signalHandler(int signal) {
+    static int signalCount = 0;
+    
     ggk::Logger::info("Received signal: " + std::to_string(signal));
     g_signalReceived = true;
     
-    // Call the shutdown callback if registered
-    if (g_shutdownCallback) {
+    // 첫 번째 신호는 정상 종료 시도
+    if (signalCount++ == 0 && g_shutdownCallback) {
         g_shutdownCallback();
+        
+        // 종료 타이머 설정 (5초 후 강제 종료)
+        std::thread([]{
+            sleep(5);
+            Logger::error("Forced exit due to timeout during shutdown");
+            exit(1);
+        }).detach();
+    } 
+    // 두 번째 신호부터는 즉시 종료
+    else if (signalCount > 1) {
+        Logger::warn("Forced exit requested");
+        exit(1);
     }
 }
 
@@ -236,11 +251,20 @@ void Server::stop() {
         }
         
         // 시스템 명령어로 광고 중지 (필요한 경우)
-        system("sudo hciconfig hci0 noleadv");
+        std::thread([]{
+            system("sudo hciconfig hci0 noleadv");
+        }).detach();
         
         // ConnectionManager 종료
         if (ConnectionManager::getInstance().isInitialized()) {
             ConnectionManager::getInstance().shutdown();
+        }
+
+        // 이벤트 스레드 정리 코드 추가 필요
+        if (eventThread.joinable()) {
+            Logger::debug("Waiting for event thread to terminate...");
+            eventThread.join();
+            Logger::debug("Event thread terminated successfully");
         }
         
         Logger::info("BLE Server stopped successfully");

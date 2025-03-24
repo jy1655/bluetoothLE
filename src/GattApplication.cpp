@@ -494,8 +494,14 @@ bool GattApplication::unregisterFromBlueZ() {
             
             Logger::info("Successfully unregistered application from BlueZ");
         } catch (const std::exception& e) {
-            // Log error but continue
-            Logger::warn("Failed to unregister from BlueZ (continuing): " + std::string(e.what()));
+            // DoesNotExist 오류의 경우 이미 BlueZ에서 해제된 것으로 간주
+            std::string error = e.what();
+            if (error.find("DoesNotExist") != std::string::npos || 
+                error.find("Does Not Exist") != std::string::npos) {
+                Logger::info("Application already unregistered or not found in BlueZ");
+            } else {
+                Logger::warn("Failed to unregister from BlueZ: " + error);
+            }
         }
         
         // Update local state
