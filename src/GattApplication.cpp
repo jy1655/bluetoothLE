@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include "Utils.h"
 #include <fstream>
+#include <unistd.h>
 
 namespace ggk {
 
@@ -409,16 +410,18 @@ bool GattApplication::registerWithBlueZ() {
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
         
-        // 단일 매개변수 생성
+        // Add important options
+        g_variant_builder_add(&builder, "{sv}", "RegisterAll", g_variant_new_boolean(true)); 
+        
         GVariant* params = g_variant_new("(oa{sv})", 
-                                        getPath().c_str(), 
-                                        g_variant_builder_end(&builder));
+                                      getPath().c_str(), 
+                                      g_variant_builder_end(&builder));
         g_variant_ref_sink(params);
         
         // BlueZ 호출
         try {
-            GError* error = nullptr;
             GDBusConnection* conn = getConnection().getRawConnection();
+            GError* error = nullptr;
             
             GVariant* result = g_dbus_connection_call_sync(
                 conn,
@@ -429,7 +432,7 @@ bool GattApplication::registerWithBlueZ() {
                 params,
                 nullptr,
                 G_DBUS_CALL_FLAGS_NONE,
-                30000,  // 30초 타임아웃
+                30000,  // 30-second timeout
                 nullptr,
                 &error
             );

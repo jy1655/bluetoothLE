@@ -252,10 +252,17 @@ bool GattAdvertisement::registerWithBlueZ() {
         g_variant_builder_init(&options_builder, G_VARIANT_TYPE("a{sv}"));
         
         // 지원되는 옵션 추가 - BlueZ 5.64에서 인식하는 옵션
-        g_variant_builder_add(&options_builder, "{sv}", "MinAdvInterval", 
-                             g_variant_new_uint16(0x0020)); // 20ms
-        g_variant_builder_add(&options_builder, "{sv}", "MaxAdvInterval", 
-                             g_variant_new_uint16(0x0030)); // 30ms
+        g_variant_builder_add(&options_builder, "{sv}", "ConnectableAdvertisement", 
+            g_variant_new_boolean(true));
+
+        g_variant_builder_add(&options_builder, "{sv}", "MinInterval", 
+                    g_variant_new_uint16(0x00A0));  // 약 160ms
+
+        g_variant_builder_add(&options_builder, "{sv}", "MaxInterval", 
+                    g_variant_new_uint16(0x00C8));  // 약 200ms
+
+        g_variant_builder_add(&options_builder, "{sv}", "Mode", 
+                    g_variant_new_string("peripheral"));  // peripheral 명시
         
         // 파라미터 생성 시 명시적 참조 관리
         GVariant* params_raw = g_variant_new("(o@a{sv})", 
