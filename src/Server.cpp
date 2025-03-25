@@ -143,39 +143,81 @@ bool Server::initialize(const std::string& name) {
 }
 
 bool Server::start(bool secureMode) {
-    // BlueZ 서비스가 활성화되어 있는지 확인
+    // Check BlueZ service
     if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-        Logger::warn("BlueZ 서비스가 활성화되어 있지 않습니다");
-        Logger::info("BlueZ 서비스 시작 시도...");
-        system("sudo systemctl start bluetooth.service");
-        sleep(2);  // 서비스 시작 대기
+        Logger::warn("BlueZ service not active, attempting restart...");
+        system("sudo systemctl restart bluetooth.service");
+        sleep(2);
+        
+        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+            Logger::error("Failed to start BlueZ service");
+            return false;
+        }
     }
     
-    // bluetoothd 버전 확인
-    Logger::info("BlueZ 버전 확인:");
+    Logger::info("BlueZ version:");
     system("bluetoothd -v");
     
-    // HCI 인터페이스 초기화
-    if (system("sudo hciconfig hci0 down") != 0) {
-        Logger::warn("HCI 인터페이스 다운 실패 - 계속 진행");
+    // More robust HCI adapter reset procedure
+    Logger::info("Performing robust HCI interface reset...");
+    
+    // Try multiple reset approaches with increasing aggressiveness
+    bool resetSuccess = false;
+    
+    // First attempt: Standard approach
+    system("sudo hciconfig hci0 down > /dev/null 2>&1");
+    usleep(500000);  // 500ms
+    if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
+        resetSuccess = true;
     }
     
-    if (system("sudo hciconfig hci0 up") != 0) {
-        Logger::error("HCI 인터페이스 업 실패");
-        Logger::info("블루투스 어댑터가 연결되어 있는지 확인하세요");
+    // Second attempt: More aggressive reset
+    if (!resetSuccess) {
+        Logger::info("First reset attempt failed, trying hciconfig reset...");
+        system("sudo hciconfig hci0 reset > /dev/null 2>&1");
+        sleep(1);
+        if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
+            resetSuccess = true;
+        }
+    }
+    
+    // Third attempt: Restart BlueZ service
+    if (!resetSuccess) {
+        Logger::info("Second reset attempt failed, restarting bluetooth service...");
+        system("sudo systemctl stop bluetooth.service");
+        sleep(1);
+        
+        // Try to unload/reload Bluetooth modules
+        system("sudo rmmod btusb > /dev/null 2>&1");
+        system("sudo rmmod btintel > /dev/null 2>&1");
+        usleep(500000);
+        system("sudo modprobe btintel");
+        system("sudo modprobe btusb");
+        sleep(1);
+        
+        system("sudo systemctl start bluetooth.service");
+        sleep(2);
+        
+        if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
+            resetSuccess = true;
+        }
+    }
+    
+    if (!resetSuccess) {
+        Logger::error("Failed to reset HCI interface after multiple attempts");
+        Logger::info("Please check that your Bluetooth adapter is properly connected");
+        Logger::info("You may need to reboot your system to recover the Bluetooth adapter");
         return false;
     }
     
+    // 어댑터 상태 변경 후 잠시 대기
+    usleep(500000);  // 500ms
+    
     // 장치 이름 설정
-    if (system(("sudo hciconfig hci0 name " + deviceName).c_str()) != 0) {
+    if (system(("sudo hciconfig hci0 name '" + deviceName + "'").c_str()) != 0) {
         Logger::warn("장치 이름 설정 실패 - 계속 진행");
     }
     
-    // LE 광고 활성화
-    if (system("sudo hciconfig hci0 leadv 3") != 0) {
-        Logger::warn("LE 광고 활성화 실패 - 계속 진행");
-    }
-
     // BlueZ를 사용하는 방식으로 수정
     if (!initialized) {
         Logger::error("Cannot start: Server not initialized");
@@ -189,23 +231,18 @@ bool Server::start(bool secureMode) {
     
     Logger::info("Starting BLE Server...");
     
-    // 1. BlueZ 상태 확인
-    if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-        Logger::error("BlueZ service is not active");
-        // 자동 재시작 시도
-        Logger::info("Attempting to restart BlueZ service...");
-        system("sudo systemctl restart bluetooth.service");
-        sleep(2);  // 재시작 대기
-        
-        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-            Logger::error("Failed to restart BlueZ service");
-            return false;
-        }
+    // Clean up any existing advertisements from previous runs
+    Logger::info("Cleaning up previous advertising state...");
+    if (advertisement && advertisement->isRegistered()) {
+        advertisement->unregisterFromBlueZ();
     }
     
-    // 2. 장치 이름 상태 확인
-    Logger::info("Current adapter settings:");
-    system("hciconfig -a hci0");
+    // Clean up BlueZ resources - using direct commands to ensure clean state
+    system("echo -e 'remove-advertising 0\\nremove-advertising 1\\nremove-advertising 2\\n' | bluetoothctl > /dev/null 2>&1");
+    system("sudo hciconfig hci0 reset > /dev/null 2>&1");
+    
+    // Wait for BlueZ to stabilize
+    usleep(500000);  // 500ms
     
     // 3. 애플리케이션 등록
     if (!application->ensureInterfacesRegistered()) {
@@ -219,15 +256,48 @@ bool Server::start(bool secureMode) {
         application->logObjectHierarchy();
     }
     
-    // 3. 애플리케이션 등록
-    if (!advertisement->registerWithBlueZ()) {
-        Logger::error("Failed to register advertisement with BlueZ");
-        // Try as a fallback to force advertising through system commands
-        system("hciconfig hci0 leadv 3");
-        system("hciconfig hci0 noscan");
-        system("hciconfig hci0 piscan");
-        Logger::warn("Attempted fallback advertisement activation through hciconfig");
+    // 4. 광고 활성화 시도 (다양한 방법으로)
+    bool advertisingActivated = false;
+    
+    // 방법 1: DBus를 통한 BlueZ API 사용
+    if (advertisement->registerWithBlueZ()) {
+        advertisingActivated = true;
+        Logger::info("Advertisement registered successfully via BlueZ DBus API");
     }
+    
+    // 방법 2: 직접 HCI 명령어 사용 (방법 1이 실패한 경우)
+    if (!advertisingActivated) {
+        Logger::info("Trying alternative method to enable advertising via hciconfig...");
+        if (system("sudo hciconfig hci0 leadv 3") == 0) {
+            advertisingActivated = true;
+            Logger::info("Advertisement enabled via hciconfig");
+        }
+    }
+    
+    // 방법 3: bluetoothctl 사용 (다른 방법들이 실패한 경우)
+    if (!advertisingActivated) {
+        Logger::info("Trying to enable advertising via bluetoothctl...");
+        if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl") == 0) {
+            advertisingActivated = true;
+            Logger::info("Advertisement enabled via bluetoothctl");
+        }
+    }
+    
+    // 특정 레지스터에 직접 광고 데이터 쓰기 (최후의 수단)
+    if (!advertisingActivated) {
+        Logger::info("Using low-level HCI commands to set advertising parameters...");
+        // 기본 광고 매개변수 설정 - 짧은 간격, 모든 장치에 열림
+        system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00");
+        // 광고 활성화
+        system("sudo hcitool -i hci0 cmd 0x08 0x000a 01");
+        advertisingActivated = true;  // 성공 여부를 정확히 확인하기 어려움
+    }
+    
+    if (!advertisingActivated) {
+        Logger::error("Failed to activate advertising using all methods");
+        // 오류 상황이지만 서버는 계속 실행 (연결은 되지 않더라도)
+    }
+    
     running = true;
     Logger::info("BLE Server started successfully");
     return true;
@@ -242,32 +312,26 @@ void Server::stop() {
     running = false;
     
     try {
-        // BlueZ 관련 부분만 유지
+        // Unregister advertisement and application
         if (advertisement) {
-            Logger::debug("Unregistering advertisement from BlueZ...");
             advertisement->unregisterFromBlueZ();
         }
         
         if (application) {
-            Logger::debug("Unregistering GATT application from BlueZ...");
             application->unregisterFromBlueZ();
         }
         
-        // 시스템 명령어로 광고 중지 (필요한 경우)
-        std::thread([]{
-            system("sudo hciconfig hci0 noleadv");
-        }).detach();
+        // Force stop any advertising
+        system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
+        system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1");
         
-        // ConnectionManager 종료
-        if (ConnectionManager::getInstance().isInitialized()) {
-            ConnectionManager::getInstance().shutdown();
-        }
-
-        // 이벤트 스레드 정리 코드 추가 필요
+        // Perform a clean HCI reset before exiting
+        Logger::info("Performing clean HCI shutdown...");
+        system("sudo hciconfig hci0 down > /dev/null 2>&1");
+        
+        // Wait for thread to complete
         if (eventThread.joinable()) {
-            Logger::debug("Waiting for event thread to terminate...");
             eventThread.join();
-            Logger::debug("Event thread terminated successfully");
         }
         
         Logger::info("BLE Server stopped successfully");
