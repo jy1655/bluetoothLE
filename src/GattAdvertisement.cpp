@@ -246,33 +246,20 @@ bool GattAdvertisement::registerWithBlueZ() {
         // BlueZ에 등록 요청 전송
         Logger::info("Sending RegisterAdvertisement request to BlueZ");
         
-        // 옵션 딕셔너리 생성
-        // 옵션 딕셔너리에 유용한 정보 추가
-        GVariantBuilder options_builder;
-        g_variant_builder_init(&options_builder, G_VARIANT_TYPE("a{sv}"));
-        
-        // 지원되는 옵션 추가 - BlueZ 5.64에서 인식하는 옵션
-        g_variant_builder_add(&options_builder, "{sv}", "ConnectableAdvertisement", 
-            g_variant_new_boolean(true));
-
-        g_variant_builder_add(&options_builder, "{sv}", "MinInterval", 
-                    g_variant_new_uint16(0x00A0));  // 약 160ms
-
-        g_variant_builder_add(&options_builder, "{sv}", "MaxInterval", 
-                    g_variant_new_uint16(0x00C8));  // 약 200ms
-
-        g_variant_builder_add(&options_builder, "{sv}", "Mode", 
-                    g_variant_new_string("peripheral"));  // peripheral 명시
-        
-        // 파라미터 생성 시 명시적 참조 관리
-        GVariant* params_raw = g_variant_new("(o@a{sv})", 
-            getPath().c_str(),
-            g_variant_builder_end(&options_builder));
-        GVariant* params_sinked = g_variant_ref_sink(params_raw);
-        GVariantPtr parameters(params_sinked, &gvariant_deleter);
-        
         try {
-            // BlueZ에 등록 요청 전송
+            // 빈 딕셔너리를 Utils 헬퍼 함수를 사용해 생성
+            GVariantPtr emptyOptions = Utils::createEmptyDictionaryPtr();
+            
+            // 튜플 형태로 파라미터 생성
+            GVariant* tuple = g_variant_new("(o@a{sv})", 
+                                         getPath().c_str(), 
+                                         emptyOptions.get());
+            
+            // 튜플에 대한 참조 관리
+            GVariant* owned_tuple = g_variant_ref_sink(tuple);
+            GVariantPtr parameters(owned_tuple, &g_variant_unref);
+            
+            // BlueZ 호출
             GVariantPtr result = getConnection().callMethod(
                 BlueZConstants::BLUEZ_SERVICE,
                 DBusObjectPath(BlueZConstants::ADAPTER_PATH),
@@ -280,50 +267,43 @@ bool GattAdvertisement::registerWithBlueZ() {
                 BlueZConstants::REGISTER_ADVERTISEMENT,
                 std::move(parameters),
                 "",
-                30000
+                5000
             );
             
-            if (!result) {
-                Logger::warn("No result from BlueZ RegisterAdvertisement call");
-                registered = false;
-                Logger::info("Assuming advertisement registration succeeded despite no result");
-                return false;
-            }
-            
+            // 호출이 성공하면
             registered = true;
-            Logger::info("Successfully registered advertisement with BlueZ");
+            Logger::info("Successfully registered advertisement via DBus");
             return true;
-        } catch (const std::exception& e) {
-            std::string error = e.what();
+        }
+        catch (const std::exception& e) {
+            std::string errorMsg = e.what();
+            Logger::error("DBus method failed: " + errorMsg);
             
-            // 타임아웃 예외 처리
-            if (error.find("Timeout") != std::string::npos) {
-                Logger::warn("BlueZ advertisement registration timed out but continuing operation");
-                registered = true;
-                return true;
+            // 타임아웃이나 특정 오류의 경우 bluetoothctl 대체 방법 시도
+            if (errorMsg.find("Timeout") != std::string::npos ||
+                errorMsg.find("org.freedesktop.DBus.Error") != std::string::npos) {
+                
+                Logger::info("Trying alternative method via bluetoothctl...");
+                std::string cmd = "echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl";
+                int result = system(cmd.c_str());
+                
+                if (result == 0) {
+                    registered = true;
+                    Logger::info("Advertisement enabled via bluetoothctl");
+                    return true;
+                }
             }
             
-            // DoesNotExist 오류 처리
-            if (error.find("DoesNotExist") != std::string::npos || 
-                error.find("Does Not Exist") != std::string::npos) {
-                Logger::error("BlueZ advertising interface not available. Check if bluetoothd supports LE advertising");
-                
-                // bluetoothd 버전 확인
-                system("bluetoothd -v");
-                
-                // 어댑터를 리셋해 볼 수 있음
-                Logger::info("Attempting to reset Bluetooth adapter...");
-                system("sudo hciconfig hci0 down && sudo hciconfig hci0 up");
-                sleep(2);
-                
-                return false;
-            }
-            
-            Logger::error("Exception in registerWithBlueZ: " + error);
+            Logger::error("Failed to register advertisement using all methods");
             return false;
         }
-    } catch (const std::exception& e) {
-        Logger::error("Exception in registerWithBlueZ outer block: " + std::string(e.what()));
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in registerWithBlueZ: " + std::string(e.what()));
+        return false;
+    }
+    catch (...) {
+        Logger::error("Unknown exception in registerWithBlueZ");
         return false;
     }
 }

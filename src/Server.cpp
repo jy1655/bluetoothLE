@@ -220,11 +220,14 @@ bool Server::start(bool secureMode) {
     }
     
     // 3. 애플리케이션 등록
-    if (!application->registerWithBlueZ()) {
-        Logger::error("Failed to register GATT application with BlueZ");
-        return false;
+    if (!advertisement->registerWithBlueZ()) {
+        Logger::error("Failed to register advertisement with BlueZ");
+        // Try as a fallback to force advertising through system commands
+        system("hciconfig hci0 leadv 3");
+        system("hciconfig hci0 noscan");
+        system("hciconfig hci0 piscan");
+        Logger::warn("Attempted fallback advertisement activation through hciconfig");
     }
-    
     running = true;
     Logger::info("BLE Server started successfully");
     return true;
@@ -377,6 +380,15 @@ void Server::configureAdvertisement(
     
     // Store timeout for discoverable mode
     advTimeout = timeout;
+
+    system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00");
+    system("sudo hcitool -i hci0 cmd 0x08 0x000a 01");
+    
+    // Additional debug printing
+    Logger::info("Advertisement configured with service UUIDs:");
+    for (const auto& service : application->getServices()) {
+        Logger::info("  - " + service->getUuid().toString());
+    }
     
     Logger::info("Advertisement configured");
 }

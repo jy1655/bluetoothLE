@@ -1,98 +1,72 @@
 #!/usr/bin/python3
-
 import dbus
 import dbus.service
 import dbus.mainloop.glib
 from gi.repository import GLib
 import sys
 
-BLUEZ_SERVICE_NAME = 'org.bluez'
-GATT_MANAGER_IFACE = 'org.bluez.GattManager1'
-DBUS_OM_IFACE = 'org.freedesktop.DBus.ObjectManager'
-GATT_SERVICE_IFACE = 'org.bluez.GattService1'
-
-class Service(dbus.service.Object):
-    def __init__(self, bus, path, uuid):
-        self.path = path
-        self.uuid = uuid
-        dbus.service.Object.__init__(self, bus, path)
-    
-    def get_properties(self):
-        return {
-            GATT_SERVICE_IFACE: {
-                'UUID': self.uuid,
-                'Primary': True
-            }
-        }
-
-class Application(dbus.service.Object):
+class Advertisement(dbus.service.Object):
     def __init__(self, bus, path):
-        self.path = path
-        self.services = []
         dbus.service.Object.__init__(self, bus, path)
-        
-        # 최소한 하나의 서비스 추가
-        self.add_service(Service(bus, path + '/service0', '180F'))  # Battery Service
-    
-    def add_service(self, service):
-        self.services.append(service)
-    
-    def get_path(self):
-        return dbus.ObjectPath(self.path)
-    
-    @dbus.service.method(DBUS_OM_IFACE, out_signature='a{oa{sa{sv}}}')
-    def GetManagedObjects(self):
-        response = {}
-        print('GetManagedObjects called, returning services:', len(self.services))
-        
-        for service in self.services:
-            response[service.path] = service.get_properties()
-        
-        print('Response:', response)
-        return response
 
-if __name__ == '__main__':
+    @dbus.service.method("org.freedesktop.DBus.Properties",
+                         in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface):
+        print(f"GetAll called for interface: {interface}")
+        if interface != "org.bluez.LEAdvertisement1":
+            raise dbus.exceptions.DBusException(
+                "org.bluez.InvalidArgsException",
+                f"Interface {interface} not supported")
+        
+        # 가능한 단순한 속성 반환
+        properties = {
+            "Type": dbus.String("peripheral"),
+            "LocalName": dbus.String("JetsonBLE"),
+            "IncludeTxPower": dbus.Boolean(True)
+        }
+        return properties
+
+    @dbus.service.method("org.bluez.LEAdvertisement1", in_signature="", out_signature="")
+    def Release(self):
+        print("Release called")
+
+def main():
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
     
-    # Get adapter interface
-    adapter = dbus.Interface(
-        bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez/hci0'),
-        'org.bluez.Adapter1'
-    )
+    # 어댑터 가져오기
+    adapter_obj = bus.get_object("org.bluez", "/org/bluez/hci0")
+    adapter = dbus.Interface(adapter_obj, "org.bluez.LEAdvertisingManager1")
     
-    # Power on adapter
-    props = dbus.Interface(
-        bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez/hci0'),
-        'org.freedesktop.DBus.Properties'
-    )
+    # 어댑터가 켜져 있는지 확인
+    props = dbus.Interface(adapter_obj, "org.freedesktop.DBus.Properties")
+    if not props.Get("org.bluez.Adapter1", "Powered"):
+        props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
     
+    # 광고 객체 생성
+    adv_path = "/org/test/advertisement"
+    advertisement = Advertisement(bus, adv_path)
+    
+    print(f"Registering advertisement at path: {adv_path}")
+    
+    # 빈 옵션으로 광고 등록
     try:
-        props.Set('org.bluez.Adapter1', 'Powered', dbus.Boolean(1))
-        print('Bluetooth adapter powered on')
-    except Exception as e:
-        print(f'Error setting adapter power: {e}')
-    
-    # Create and register application
-    app = Application(bus, '/com/example/gatt')
-    
-    # Get GattManager1 interface
-    print('Getting GattManager interface...')
-    manager = dbus.Interface(
-        bus.get_object(BLUEZ_SERVICE_NAME, '/org/bluez/hci0'),
-        GATT_MANAGER_IFACE
-    )
-    
-    print('Registering application...')
-    try:
-        manager.RegisterApplication(app.get_path(), {})
-        print('Application successfully registered!')
-    except dbus.exceptions.DBusException as e:
-        print(f'Failed to register: {e}')
-    
-    mainloop = GLib.MainLoop()
-    print('Running main loop...')
-    try:
+        adapter.RegisterAdvertisement(adv_path, {})
+        print("Advertisement registered successfully!")
+        
+        # 메인 루프 시작
+        mainloop = GLib.MainLoop()
+        print("Running... Press Ctrl+C to stop")
         mainloop.run()
+    except dbus.exceptions.DBusException as e:
+        print(f"Failed to register advertisement: {e}")
     except KeyboardInterrupt:
-        print('Exiting...')
+        print("\nUnregistering advertisement...")
+        try:
+            adapter.UnregisterAdvertisement(adv_path)
+            print("Advertisement unregistered")
+        except Exception as e:
+            print(f"Error unregistering: {e}")
+
+if __name__ == "__main__":
+    main()
