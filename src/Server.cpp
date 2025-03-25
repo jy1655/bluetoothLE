@@ -161,23 +161,35 @@ bool Server::start(bool secureMode) {
     // More robust HCI adapter reset procedure
     Logger::info("Performing robust HCI interface reset...");
     
+    // Check if HCI0 exists first
+    if (system("ls /sys/class/bluetooth/hci0 > /dev/null 2>&1") != 0) {
+        Logger::error("HCI0 interface does not exist. Check if Bluetooth adapter is present.");
+        return false;
+    }
+    
     // Try multiple reset approaches with increasing aggressiveness
     bool resetSuccess = false;
     
     // First attempt: Standard approach
     system("sudo hciconfig hci0 down > /dev/null 2>&1");
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1s wait - increased wait time
     if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
-        resetSuccess = true;
+        if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") == 0) {
+            resetSuccess = true;
+            Logger::info("HCI interface reset successful using standard method");
+        }
     }
     
     // Second attempt: More aggressive reset
     if (!resetSuccess) {
         Logger::info("First reset attempt failed, trying hciconfig reset...");
         system("sudo hciconfig hci0 reset > /dev/null 2>&1");
-        sleep(1);
+        sleep(2);  // Increased wait time
         if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
-            resetSuccess = true;
+            if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") == 0) {
+                resetSuccess = true;
+                Logger::info("HCI interface reset successful using reset command");
+            }
         }
     }
     
@@ -185,21 +197,24 @@ bool Server::start(bool secureMode) {
     if (!resetSuccess) {
         Logger::info("Second reset attempt failed, restarting bluetooth service...");
         system("sudo systemctl stop bluetooth.service");
-        sleep(1);
+        sleep(2);  // Increased wait time
         
         // Try to unload/reload Bluetooth modules
         system("sudo rmmod btusb > /dev/null 2>&1");
         system("sudo rmmod btintel > /dev/null 2>&1");
-        usleep(500000);
+        sleep(1);  // Increased wait time
         system("sudo modprobe btintel");
         system("sudo modprobe btusb");
-        sleep(1);
+        sleep(2);  // Increased wait time
         
         system("sudo systemctl start bluetooth.service");
-        sleep(2);
+        sleep(3);  // Increased wait time
         
         if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
-            resetSuccess = true;
+            if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") == 0) {
+                resetSuccess = true;
+                Logger::info("HCI interface reset successful after service restart");
+            }
         }
     }
     
@@ -211,11 +226,13 @@ bool Server::start(bool secureMode) {
     }
     
     // 어댑터 상태 변경 후 잠시 대기
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1s wait - increased wait time
     
     // 장치 이름 설정
     if (system(("sudo hciconfig hci0 name '" + deviceName + "'").c_str()) != 0) {
-        Logger::warn("장치 이름 설정 실패 - 계속 진행");
+        Logger::warn("Failed to set device name - continuing anyway");
+    } else {
+        Logger::info("Successfully set device name to: " + deviceName);
     }
     
     // BlueZ를 사용하는 방식으로 수정
@@ -238,11 +255,12 @@ bool Server::start(bool secureMode) {
     }
     
     // Clean up BlueZ resources - using direct commands to ensure clean state
+    Logger::info("Removing any stale advertisement instances...");
     system("echo -e 'remove-advertising 0\\nremove-advertising 1\\nremove-advertising 2\\n' | bluetoothctl > /dev/null 2>&1");
-    system("sudo hciconfig hci0 reset > /dev/null 2>&1");
+    system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
     
     // Wait for BlueZ to stabilize
-    usleep(500000);  // 500ms
+    usleep(1000000);  // 1s wait - increased wait time
     
     // 3. 애플리케이션 등록
     if (!application->ensureInterfacesRegistered()) {
@@ -263,12 +281,14 @@ bool Server::start(bool secureMode) {
     if (advertisement->registerWithBlueZ()) {
         advertisingActivated = true;
         Logger::info("Advertisement registered successfully via BlueZ DBus API");
+    } else {
+        Logger::warn("Failed to register advertisement via BlueZ DBus API, trying alternative methods");
     }
     
     // 방법 2: 직접 HCI 명령어 사용 (방법 1이 실패한 경우)
     if (!advertisingActivated) {
         Logger::info("Trying alternative method to enable advertising via hciconfig...");
-        if (system("sudo hciconfig hci0 leadv 3") == 0) {
+        if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
             advertisingActivated = true;
             Logger::info("Advertisement enabled via hciconfig");
         }
@@ -277,7 +297,7 @@ bool Server::start(bool secureMode) {
     // 방법 3: bluetoothctl 사용 (다른 방법들이 실패한 경우)
     if (!advertisingActivated) {
         Logger::info("Trying to enable advertising via bluetoothctl...");
-        if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl") == 0) {
+        if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
             advertisingActivated = true;
             Logger::info("Advertisement enabled via bluetoothctl");
         }
@@ -286,16 +306,19 @@ bool Server::start(bool secureMode) {
     // 특정 레지스터에 직접 광고 데이터 쓰기 (최후의 수단)
     if (!advertisingActivated) {
         Logger::info("Using low-level HCI commands to set advertising parameters...");
-        // 기본 광고 매개변수 설정 - 짧은 간격, 모든 장치에 열림
-        system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00");
+        // 광고 간격: 100ms (0x00A0)
+        system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00 > /dev/null 2>&1");
+        sleep(1);
         // 광고 활성화
-        system("sudo hcitool -i hci0 cmd 0x08 0x000a 01");
-        advertisingActivated = true;  // 성공 여부를 정확히 확인하기 어려움
+        if (system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1") == 0) {
+            Logger::info("Advertisement enabled via direct HCI commands");
+            advertisingActivated = true;
+        }
     }
     
     if (!advertisingActivated) {
         Logger::error("Failed to activate advertising using all methods");
-        // 오류 상황이지만 서버는 계속 실행 (연결은 되지 않더라도)
+        Logger::warn("Server will start but may not be discoverable");
     }
     
     running = true;
