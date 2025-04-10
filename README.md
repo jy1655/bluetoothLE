@@ -132,11 +132,53 @@ https://developer.nvidia.com/embedded/jetpack<br>
 Kernel: 5.15.148-tegra<br>
 BlueZ: 5.64-0ubuntu1.4<br>
 
+## Bluez 5.82 업그레이드
+먼저 기존 시스템 설치된 BlueZ 삭제
+```bash
+sudo apt-get remove bluez
+```
 
+필수 패키지 설치
+```bash
+sudo apt-get update
+sudo apt-get install -y libglib2.0-dev libdbus-1-dev libudev-dev libical-dev libreadline-dev python3-docutils
+```
 
+5.82버전 다운로드
+```bash
+wget https://github.com/bluez/bluez/archive/refs/tags/5.82.tar.gz
 
+```
+압축해제 및 이동
+```bash
+tar -xzf 5.82.tar.gz
+cd bluez-5.82
+```
 
+./configure파일 생성용 필수 도구 설치
+```bash
+sudo apt update
+sudo apt install autoconf automake libtool pkg-config
+```
 
+configure 스크립트 생성 (autotools 빌드 준비)
+```bash
+./bootstrap
+```
+
+configure 및 make install 진행
+```bash
+./configure --prefix=/usr --mandir=/usr/share/man --sysconfdir=/etc --localstatedir=/var --libexecdir=/usr/lib
+make -j "$(nproc)"
+sudo make install
+```
+
+bashrc 경로 설정(5.82가 나온다면 정상처리된것)
+```bash
+echo 'export PATH=$PATH:/usr/lib/bluetooth' >> ~/.bashrc
+source ~/.bashrc
+bluetoothd -v
+```
 
 
 # TEST

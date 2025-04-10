@@ -212,47 +212,199 @@ void GattAdvertisement::handleRelease(const DBusMethodCall& call) {
 
 bool GattAdvertisement::registerWithBlueZ() {
     try {
-        // 이미 BlueZ에 등록된 경우
+        // 1. Check if already registered
         if (registered) {
             Logger::info("Advertisement already registered with BlueZ");
             return true;
         }
         
-        // 객체가 이미 등록되어 있으면 등록 해제 후 다시 설정
-        if (isRegistered()) {
-            Logger::info("Unregistering advertisement object to refresh interfaces");
-            unregisterObject();
-        }
-
-        // 기존 광고 정리
-        cleanupExistingAdvertisements();
-        
-        // D-Bus 인터페이스 설정
+        // 2. Ensure interfaces are set up with D-Bus
         if (!setupDBusInterfaces()) {
             Logger::error("Failed to setup advertisement D-Bus interfaces");
             return false;
         }
         
-        // BlueZ 서비스가 실행 중인지 확인
+        // 3. Clean up any existing advertisements
+        cleanupExistingAdvertisements();
+        
+        // 4. Verify BlueZ service is running
         int bluezStatus = system("systemctl is-active --quiet bluetooth.service");
         if (bluezStatus != 0) {
             Logger::error("BlueZ service is not active. Cannot register advertisement.");
             return false;
         }
         
-        // 표준 DBus API 사용해 등록 시도
+        // 5. Register with BlueZ using D-Bus API
         if (registerWithDBusApi()) {
             Logger::info("Successfully registered advertisement via BlueZ DBus API");
+            registered = true;
+            return activateAdvertising();
+        }
+        
+        // 6. Registration failed, try alternative methods
+        Logger::warn("Failed to register advertisement via standard D-Bus API, trying alternatives");
+        
+        // Use direct HCI commands as fallback
+        if (activateAdvertisingFallback()) {
+            Logger::info("Advertisement activated via fallback methods");
+            registered = true;
             return true;
         }
         
-        Logger::warn("Failed to register advertisement via standard methods.");
+        Logger::error("All advertisement registration methods failed");
         return false;
     }
     catch (const std::exception& e) {
         Logger::error("Exception in registerWithBlueZ: " + std::string(e.what()));
         return false;
     }
+}
+
+bool GattAdvertisement::activateAdvertising() {
+    Logger::info("Activating BLE advertisement");
+    
+    // First try using hciconfig
+    if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
+        Logger::info("Advertisement activated via hciconfig");
+        return true;
+    }
+    
+    // Next try using bluetoothctl
+    if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
+        Logger::info("Advertisement activated via bluetoothctl");
+        return true;
+    }
+    
+    // Finally try direct HCI commands
+    return activateAdvertisingFallback();
+}
+
+bool GattAdvertisement::activateAdvertisingFallback() {
+    Logger::info("Using direct HCI commands for advertising");
+    
+    // 1. Build raw advertising data
+    std::vector<uint8_t> adData = buildRawAdvertisingData();
+    
+    if (adData.empty()) {
+        Logger::error("Failed to build advertising data");
+        return false;
+    }
+    
+    // 2. Log the advertising data for debugging
+    Logger::debug("Raw advertising data: " + Utils::hex(adData.data(), adData.size()));
+    
+    // 3. Format HCI command for setting advertising data
+    std::string hciCmd = "sudo hcitool -i hci0 cmd 0x08 0x0008";
+    hciCmd += " " + std::to_string(adData.size());  // Length byte
+    
+    // Add each byte as hex
+    for (uint8_t byte : adData) {
+        char hex[4];
+        sprintf(hex, " %02X", byte);
+        hciCmd += hex;
+    }
+    
+    // 4. Execute the command to set advertising data
+    Logger::debug("Executing HCI command: " + hciCmd);
+    if (system(hciCmd.c_str()) != 0) {
+        Logger::error("Failed to set advertising data with HCI command");
+        return false;
+    }
+    
+    // 5. Enable advertising
+    if (system("sudo hcitool -i hci0 cmd 0x08 0x000A 01") != 0) {
+        Logger::error("Failed to enable advertising with HCI command");
+        return false;
+    }
+    
+    // 6. Set non-connectable advertising parameters for better visibility
+    // Parameters: min interval, max interval, type (0=connectable, 3=non-connectable), etc.
+    if (system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 03 00 00 00 00 00 00 00 00 07 00") != 0) {
+        Logger::warn("Failed to set advertising parameters - continuing anyway");
+    }
+    
+    Logger::info("Advertisement activated via direct HCI commands");
+    return true;
+}
+
+bool GattAdvertisement::cleanupExistingAdvertisements() {
+    Logger::info("Cleaning up any existing advertisements");
+    
+    // 1. First try to disable advertising
+    system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
+    system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1");
+    
+    // 2. Try to remove all advertising instances (0-3)
+    for (int i = 0; i < 4; i++) {
+        std::string cmd = "echo -e 'remove-advertising " + 
+                         std::to_string(i) + "\\n' | bluetoothctl > /dev/null 2>&1";
+        system(cmd.c_str());
+    }
+    
+    // 3. More aggressive cleanup via D-Bus API - get all advertisements and remove them
+    try {
+        // Get all managed objects
+        GVariantPtr result = getConnection().callMethod(
+            BlueZConstants::BLUEZ_SERVICE,
+            DBusObjectPath(BlueZConstants::ROOT_PATH),
+            BlueZConstants::OBJECT_MANAGER_INTERFACE,
+            BlueZConstants::GET_MANAGED_OBJECTS,
+            makeNullGVariantPtr(),
+            "a{oa{sa{sv}}}"
+        );
+        
+        if (result) {
+            GVariantIter *iter1;
+            g_variant_get(result.get(), "a{oa{sa{sv}}}", &iter1);
+            
+            const gchar *objPath;
+            GVariant *interfaces;
+            std::vector<std::string> advPaths;
+            
+            // Find all advertisement objects
+            while (g_variant_iter_loop(iter1, "{&o@a{sa{sv}}}", &objPath, &interfaces)) {
+                if (g_variant_lookup_value(interfaces, 
+                                          BlueZConstants::LE_ADVERTISEMENT_INTERFACE.c_str(), 
+                                          NULL)) {
+                    advPaths.push_back(objPath);
+                }
+            }
+            
+            g_variant_iter_free(iter1);
+            
+            // Try to unregister each advertisement found
+            for (const auto& path : advPaths) {
+                Logger::debug("Attempting to unregister advertisement: " + path);
+                
+                try {
+                    // Build parameters
+                    GVariantBuilder builder;
+                    g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
+                    g_variant_builder_add(&builder, "o", path.c_str());
+                    GVariant* params = g_variant_builder_end(&builder);
+                    GVariantPtr params_ptr(g_variant_ref_sink(params), &g_variant_unref);
+                    
+                    // Call UnregisterAdvertisement
+                    getConnection().callMethod(
+                        BlueZConstants::BLUEZ_SERVICE,
+                        DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                        BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
+                        BlueZConstants::UNREGISTER_ADVERTISEMENT,
+                        std::move(params_ptr)
+                    );
+                } catch (...) {
+                    // Ignore failures, just try to clean up as much as possible
+                }
+            }
+        }
+    } catch (...) {
+        // Ignore any errors in the cleanup process
+    }
+    
+    // Wait a moment for cleanup to take effect
+    usleep(500000);  // 500ms
+    
+    return true;
 }
 
 
