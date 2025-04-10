@@ -29,7 +29,7 @@ GattCharacteristicPtr GattService::createCharacteristic(
     
     std::lock_guard<std::mutex> lock(characteristicsMutex);
     
-    // 이미 존재하는 경우 기존 특성 반환
+    // Check if already exists
     auto it = characteristics.find(uuidStr);
     if (it != characteristics.end()) {
         if (!it->second) {
@@ -41,11 +41,12 @@ GattCharacteristicPtr GattService::createCharacteristic(
     }
     
     try {
-        // 일관된 경로 명명 규칙 적용
-        std::string charNum = "char" + std::to_string(characteristics.size() + 1);
-        DBusObjectPath charPath = getPath() + charNum;
+        // Create standardized object path
+        // Format: <service_path>/char<uuid_short>
+        std::string uuidShort = uuid.toBlueZShortFormat().substr(0, 8);
+        DBusObjectPath charPath = getPath() + "/char" + uuidShort;
         
-        // 특성 생성
+        // Create characteristic
         GattCharacteristicPtr characteristic = std::make_shared<GattCharacteristic>(
             getConnection(),
             charPath,
@@ -60,8 +61,14 @@ GattCharacteristicPtr GattService::createCharacteristic(
             return nullptr;
         }
         
-        // 맵에 추가
+        // Add to map
         characteristics[uuidStr] = characteristic;
+        
+        // Ensure CCCD exists for notify/indicate characteristics
+        if ((properties & GattProperty::PROP_NOTIFY) || 
+            (properties & GattProperty::PROP_INDICATE)) {
+            characteristic->ensureCCCDExists();
+        }
         
         Logger::info("Created characteristic: " + uuidStr + " at path: " + charPath.toString());
         return characteristic;

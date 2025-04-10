@@ -235,4 +235,6 @@ struct Utils
 	static uint32_t endianToHci(uint32_t value) {return htole32(value);}
 };
 
+
+
 }; // namespace ggk

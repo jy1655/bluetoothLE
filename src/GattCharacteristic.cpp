@@ -24,30 +24,36 @@ GattCharacteristic::GattCharacteristic(
 
 void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
     try {
-        // 값 설정 및 잠금 관리
+        // Set the value
         {
             std::lock_guard<std::mutex> lock(valueMutex);
             value = newValue;
         }
         
-        // 값 변경 시 D-Bus 속성 변경 알림
+        // Emit value change notification if registered
         if (isRegistered()) {
-            // 스마트 포인터 기반 함수 사용
-            auto valueVariant = Utils::gvariantPtrFromByteArray(value.data(), value.size());
+            // Create a GVariant for the new value
+            GVariantPtr valueVariant = Utils::gvariantPtrFromByteArray(newValue.data(), newValue.size());
             
             if (!valueVariant) {
-                Logger::error("Failed to create GVariant for value");
+                Logger::error("Failed to create GVariant for characteristic value");
                 return;
             }
             
+            // Send PropertyChanged signal for Value
+            emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
+                               "Value", 
+                               std::move(valueVariant));
+            
+            // If notifying, also send notification
             bool isNotifying = false;
             {
                 std::lock_guard<std::mutex> notifyLock(notifyMutex);
                 isNotifying = notifying;
             }
             
-            // Notify 활성화된 경우 시그널 발생
             if (isNotifying) {
+                // Create a D-Bus signal params
                 std::lock_guard<std::mutex> callbackLock(callbackMutex);
                 if (notifyCallback) {
                     try {
@@ -57,14 +63,12 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
                     }
                 }
             }
-            
-            // Value 속성 변경 알림 - 속성이 공개되어 있는 경우에만
-            emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Value", std::move(valueVariant));
         }
     } catch (const std::exception& e) {
         Logger::error("Exception in setValue: " + std::string(e.what()));
     }
 }
+
 
 // 이동 시맨틱스를 사용한 오버로드 추가
 void GattCharacteristic::setValue(std::vector<uint8_t>&& newValue) {
@@ -181,21 +185,24 @@ bool GattCharacteristic::startNotify() {
     std::lock_guard<std::mutex> lock(notifyMutex);
     
     if (notifying) {
-        return true;  // 이미 알림 중
+        return true;  // Already notifying
     }
     
-    if (!(properties & GattProperty::PROP_NOTIFY) &&
+    // Check if characteristic supports notifications
+    if (!(properties & GattProperty::PROP_NOTIFY) && 
         !(properties & GattProperty::PROP_INDICATE)) {
         Logger::error("Characteristic does not support notifications: " + uuid.toString());
         return false;
     }
     
+    // Ensure CCCD exists
+    ensureCCCDExists();
+    
     notifying = true;
     
-    // 알림 상태 변경 이벤트 발생
+    // Emit PropertyChanged signal for Notifying
     if (isRegistered()) {
-        // 스마트 포인터 기반 함수 사용
-        auto valueVariant = Utils::gvariantPtrFromBoolean(true);
+        GVariantPtr valueVariant = Utils::gvariantPtrFromBoolean(true);
         
         if (!valueVariant) {
             Logger::error("Failed to create GVariant for notification state");
@@ -203,23 +210,28 @@ bool GattCharacteristic::startNotify() {
             return false;
         }
         
-        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Notifying", std::move(valueVariant));
+        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
+                           "Notifying", 
+                           std::move(valueVariant));
     }
     
-    // 콜백 호출
-    std::lock_guard<std::mutex> callbackLock(callbackMutex);
-    if (notifyCallback) {
-        try {
-            notifyCallback();
-        } catch (const std::exception& e) {
-            Logger::error("Exception in notify callback: " + std::string(e.what()));
-            // 콜백에서 예외가 발생해도 알림 상태는 계속 유지
+    // Call notify callback
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackMutex);
+        if (notifyCallback) {
+            try {
+                notifyCallback();
+            } catch (const std::exception& e) {
+                Logger::error("Exception in notify callback: " + std::string(e.what()));
+                // Keep notification state enabled even if callback fails
+            }
         }
     }
     
-    Logger::info("Started notifications for: " + uuid.toString());
+    Logger::info("Started notifications for characteristic: " + uuid.toString());
     return true;
 }
+
 
 bool GattCharacteristic::stopNotify() {
     std::lock_guard<std::mutex> lock(notifyMutex);
@@ -250,31 +262,32 @@ bool GattCharacteristic::stopNotify() {
 
 void GattCharacteristic::ensureCCCDExists() {
     if (properties & GattProperty::PROP_NOTIFY || properties & GattProperty::PROP_INDICATE) {
-        // CCCD가 이미 존재하는지 확인
-        bool hasCccd = false;
-        std::lock_guard<std::mutex> lock(descriptorsMutex);
+        const std::string CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb";
         
-        for (const auto& pair : descriptors) {
-            if (pair.second && pair.second->getUuid().toBlueZShortFormat() == "00002902") {
-                hasCccd = true;
-                break;
+        // Check if CCCD already exists
+        bool hasCccd = false;
+        {
+            std::lock_guard<std::mutex> lock(descriptorsMutex);
+            for (const auto& pair : descriptors) {
+                if (pair.second && pair.second->getUuid().toString() == CCCD_UUID) {
+                    hasCccd = true;
+                    break;
+                }
             }
         }
         
-        // CCCD가 없으면 자동으로 생성
+        // If CCCD doesn't exist yet, create it
         if (!hasCccd) {
-            Logger::info("Auto-adding CCCD for characteristic: " + uuid.toString());
+            Logger::info("Auto-creating CCCD for characteristic: " + uuid.toString());
             
-            // 락을 해제한 상태에서 createDescriptor 호출 (재귀적 락 방지)
-            lock.~lock_guard(); // 명시적으로 락 해제
-            
+            // Create the CCCD descriptor
             GattDescriptorPtr cccd = createDescriptor(
-                GattUuid::fromShortUuid(0x2902),
+                GattUuid(CCCD_UUID),
                 GattPermission::PERM_READ | GattPermission::PERM_WRITE
             );
             
             if (cccd) {
-                // 표준 초기값 설정 - 알림 비활성화
+                // Set initial value to disable notifications
                 std::vector<uint8_t> initialValue = {0x00, 0x00};
                 cccd->setValue(initialValue);
                 Logger::debug("CCCD created and initialized");
@@ -284,6 +297,7 @@ void GattCharacteristic::ensureCCCDExists() {
         }
     }
 }
+
 
 bool GattCharacteristic::setupDBusInterfaces() {
     // NOTIFY/INDICATE 속성이 있는 특성의 CCCD 자동 추가

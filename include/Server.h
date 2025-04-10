@@ -220,11 +220,34 @@ private:
                                    GVariantPtr value);
     
     /**
+     * @brief Sets up the HCI interface for BLE operation
+     * 
+     * Resets and configures the HCI interface with proper settings
+     * 
+     * @return true if setup was successful, false otherwise
+     */
+    bool setupHciInterface();
+    
+    /**
+     * @brief Fallback methods for enabling advertising
+     * 
+     * If the standard BlueZ D-Bus API fails, tries alternative
+     * methods like hciconfig, bluetoothctl, and direct HCI commands
+     * 
+     * @return true if any advertising method succeeded, false otherwise
+     */
+    bool enableAdvertisingFallback();
+    
+    /**
      * @brief Static method to register for safe shutdown
      * 
      * @param server Pointer to the server instance to shut down
      */
     static void registerShutdownHandler(Server* server);
+
+
+    bool restartBlueZService();
+    bool resetHciAdapter();
 };
 
 } // namespace ggk

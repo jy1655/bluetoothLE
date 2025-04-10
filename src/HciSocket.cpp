@@ -35,53 +35,69 @@ void HciSocket::stop() {
 //
 // Returns true on success, otherwise false
 bool HciSocket::connect() {
-    disconnect();
+    disconnect();  // Ensure we're disconnected first
 
-    // Jetson에서 블루투스 컨트롤러 상태 확인
-    std::string hciDevStatus = "hciconfig hci0 | grep 'UP RUNNING'";
-    if (system(hciDevStatus.c_str()) != 0) {
-        Logger::warn("HCI device not ready, attempting to initialize...");
-        system("sudo hciconfig hci0 down");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        system("sudo hciconfig hci0 up");
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    Logger::info("Connecting to HCI socket");
+
+    // Check if Bluetooth service is running
+    if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+        Logger::warn("Bluetooth service not running, device may not be available");
     }
 
-    // RAW 소켓으로 생성
+    // Check if HCI device exists
+    if (system("ls /sys/class/bluetooth/hci0 > /dev/null 2>&1") != 0) {
+        Logger::error("HCI device not found. Check if Bluetooth adapter is present");
+        return false;
+    }
+
+    // Try to create the socket
     fdSocket = socket(AF_BLUETOOTH, SOCK_RAW, BTPROTO_HCI);
     if (fdSocket < 0) {
         logErrno("Connect(socket)");
         return false;
     }
 
-    // 권한 확인 및 설정
+    // Try to get device info
     struct hci_dev_info di;
     int dev_id = 0;  // hci0
     
     if (ioctl(fdSocket, HCIGETDEVINFO, (void *)&di) < 0) {
-        // 디바이스 정보를 가져올 수 없는 경우 down/up 시도
+        // Device info retrieval failed, try to reset device
+        Logger::warn("Could not get device info, attempting reset");
         system("sudo hciconfig hci0 down");
         system("sudo hciconfig hci0 up");
-        usleep(100000);  // 100ms 대기
+        usleep(200000);  // 200ms wait
     }
 
+    // Set up the socket address
     struct sockaddr_hci addr;
     memset(&addr, 0, sizeof(addr));
     addr.hci_family = AF_BLUETOOTH;
     addr.hci_dev = dev_id;
-    addr.hci_channel = HCI_CHANNEL_RAW;  // RAW 채널 사용
+    addr.hci_channel = HCI_CHANNEL_RAW;
 
-    // 바인딩 전에 기존 연결 해제 시도
-    system("sudo hcitool cmd 0x03 0x0003");  // HCI Reset 명령
-    usleep(100000);  // 100ms 대기
-
+    // Try to bind to the socket
     if (bind(fdSocket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        logErrno("Connect(bind)");
-        disconnect();
-        return false;
+        // If binding fails, try to reset HCI device and retry
+        Logger::warn("Bind failed, attempting to reset HCI device");
+        
+        logErrno("Connect(bind) - first attempt");
+        
+        // Reset the device and retry
+        system("sudo hciconfig hci0 down");
+        usleep(100000);  // 100ms wait
+        system("sudo hciconfig hci0 up");
+        usleep(300000);  // 300ms wait
+        
+        // Retry the bind
+        if (bind(fdSocket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+            logErrno("Connect(bind) - second attempt");
+            disconnect();
+            return false;
+        }
     }
 
-    // 필터 설정
+    // Set up HCI filter
     struct hci_filter flt;
     hci_filter_clear(&flt);
     hci_filter_set_ptype(HCI_EVENT_PKT, &flt);
@@ -93,7 +109,14 @@ bool HciSocket::connect() {
         return false;
     }
 
-    Logger::debug(SSTR << "Connected to HCI device " << dev_id << " (fd = " << fdSocket << ")");
+    // Enable non-blocking mode
+    int flags = fcntl(fdSocket, F_GETFL, 0);
+    if (flags >= 0) {
+        fcntl(fdSocket, F_SETFL, flags | O_NONBLOCK);
+    }
+
+    Logger::info("Connected to HCI device " + std::to_string(dev_id) + 
+                " (fd = " + std::to_string(fdSocket) + ")");
     return true;
 }
 

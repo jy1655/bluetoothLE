@@ -66,6 +66,7 @@ public:
     bool setAdvertisingEnabled(bool enabled);
     bool setPowered(bool powered);
     bool setLEEnabled(bool enabled);
+    bool resetAdapter();
 
     void handleCommandComplete(const uint8_t* data, uint8_t length);
     void handleCommandStatus(const uint8_t* data, uint8_t length);

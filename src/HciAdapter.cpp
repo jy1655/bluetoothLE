@@ -12,15 +12,34 @@ HciAdapter::~HciAdapter() {
 }
 
 bool HciAdapter::initialize() {
+    Logger::info("Initializing HCI adapter");
+    
+    // Try to connect to HCI socket
     if (!hciSocket.connect()) {
-        Logger::error("Failed to connect HCI socket");
+        Logger::error("Failed to connect to HCI socket");
         return false;
     }
-
+    
+    // Verify adapter is present and accessible
+    int devId = hci_get_route(NULL);
+    if (devId < 0) {
+        Logger::error("No HCI device available");
+        hciSocket.disconnect();
+        return false;
+    }
+    
+    // Reset the adapter
+    if (!resetAdapter()) {
+        Logger::error("Failed to reset HCI adapter");
+        hciSocket.disconnect();
+        return false;
+    }
+    
+    // Start event processing thread
     isRunning = true;
     eventThread = std::thread(&HciAdapter::processEvents, this);
     
-    Logger::info("HCI Adapter initialized");
+    Logger::info("HCI adapter initialized successfully");
     return true;
 }
 
@@ -35,10 +54,27 @@ void HciAdapter::stop() {
 }
 
 bool HciAdapter::sendCommand(HciHeader& request) {
+    // Convert opcode to little-endian
+    request.opcode = htole16(request.opcode);
+    
+    Logger::debug("Sending HCI command: " + request.toString());
+    
     uint8_t* pRequest = reinterpret_cast<uint8_t*>(&request);
-    request.opcode = htole16(request.opcode);  // endian 변환
-
-    return hciSocket.write(pRequest, sizeof(request) + request.plen);
+    size_t requestSize = sizeof(request) + request.plen;
+    
+    // Try to send command up to 3 times
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (hciSocket.write(pRequest, requestSize)) {
+            return true;
+        }
+        
+        Logger::warn("Failed to send HCI command, retrying (" + 
+                    std::to_string(attempt + 1) + "/3)");
+        usleep(100000);  // Wait 100ms before retrying
+    }
+    
+    Logger::error("Failed to send HCI command after multiple attempts");
+    return false;
 }
 
 // src/HciAdapter.cpp 수정
@@ -191,4 +227,58 @@ void HciAdapter::handleCommandStatus(const uint8_t* data, uint8_t length) {
     Logger::debug("Command Status: opcode=" + Utils::hex(opcode) + 
                  " status=" + Utils::hex(status));
 }
+
+bool HciAdapter::resetAdapter() {
+    Logger::info("Resetting HCI adapter");
+    
+    // Send HCI reset command
+    struct {
+        HciHeader header;
+    } __attribute__((packed)) resetCmd;
+    
+    resetCmd.header.type = 0x01;  // HCI Command packet
+    resetCmd.header.opcode = htole16(0x0C03);  // HCI_Reset command (OCF=0x03, OGF=0x03)
+    resetCmd.header.plen = 0;  // No parameters
+    
+    if (!hciSocket.write(reinterpret_cast<uint8_t*>(&resetCmd), sizeof(resetCmd))) {
+        Logger::error("Failed to send HCI reset command");
+        return false;
+    }
+    
+    // Wait for command complete event
+    std::vector<uint8_t> response;
+    bool resetSuccess = false;
+    
+    // Try up to 3 times
+    for (int i = 0; i < 3; i++) {
+        if (!hciSocket.read(response)) {
+            usleep(100000);  // Wait 100ms before retrying
+            continue;
+        }
+        
+        // Check if this is a command complete event for reset
+        if (response.size() >= 7 && 
+            response[0] == 0x04 &&  // Event packet
+            response[1] == 0x0E &&  // Command complete event
+            response[4] == 0x03 &&  // OCF
+            response[5] == 0x0C &&  // OGF
+            response[6] == 0x00) {  // Status OK
+            resetSuccess = true;
+            break;
+        }
+        
+        usleep(100000);  // Wait 100ms before retrying
+    }
+    
+    if (!resetSuccess) {
+        Logger::warn("Did not receive reset complete event, continuing anyway");
+    }
+    
+    // Additional delay to let the adapter stabilize
+    usleep(200000);  // 200ms
+    
+    return true;
+}
+
+
 } // namespace ggk

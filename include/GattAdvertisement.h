@@ -1,3 +1,4 @@
+// GattAdvertisement.h
 #pragma once
 
 #include "DBusObject.h"
@@ -23,7 +24,7 @@ public:
         AdvertisementType type = AdvertisementType::PERIPHERAL
     );
 
-    // DBusName 사용하는 새 생성자 추가
+    // DBusName 사용하는 생성자 추가
     GattAdvertisement(const DBusObjectPath& path);
     
     virtual ~GattAdvertisement() = default;
@@ -54,6 +55,12 @@ public:
     
     // D-Bus 메서드 핸들러
     void handleRelease(const DBusMethodCall& call);
+    
+    // 현재 광고 상태 문자열로 얻기 (디버깅용)
+    std::string getAdvertisementStateString() const;
+    
+    // 광고 데이터 직접 구성 (HCI 직접 제어용)
+    std::vector<uint8_t> buildRawAdvertisingData() const;
 
 private:
     
@@ -68,6 +75,10 @@ private:
     GVariant* getDurationProperty();
     GVariant* getIncludeTxPowerProperty();
     
+    // BlueZ 등록 내부 헬퍼 함수
+    bool registerWithDBusApi();
+    bool cleanupExistingAdvertisements();
+    
     // 속성
     AdvertisementType type;
     std::vector<GattUuid> serviceUUIDs;
@@ -78,6 +89,10 @@ private:
     uint16_t duration;
     bool includeTxPower;
     bool registered;
+    
+    // 최대 재시도 횟수 및 대기 시간
+    static constexpr int MAX_REGISTRATION_RETRIES = 3;
+    static constexpr int BASE_RETRY_WAIT_MS = 1000;
 };
 
 } // namespace ggk

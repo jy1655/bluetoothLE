@@ -143,6 +143,20 @@ bool Server::initialize(const std::string& name) {
 }
 
 bool Server::start(bool secureMode) {
+    // Check if already running
+    if (running) {
+        Logger::warn("Server already running");
+        return true;
+    }
+    
+    // Check if initialized
+    if (!initialized) {
+        Logger::error("Cannot start: Server not initialized");
+        return false;
+    }
+    
+    Logger::info("Starting BLE Server...");
+    
     // Check BlueZ service
     if (system("systemctl is-active --quiet bluetooth.service") != 0) {
         Logger::warn("BlueZ service not active, attempting restart...");
@@ -155,176 +169,34 @@ bool Server::start(bool secureMode) {
         }
     }
     
-    Logger::info("BlueZ version:");
-    system("bluetoothd -v");
-    
-    // More robust HCI adapter reset procedure
-    Logger::info("Performing robust HCI interface reset...");
-    
-    // Check if HCI0 exists first
-    if (system("ls /sys/class/bluetooth/hci0 > /dev/null 2>&1") != 0) {
-        Logger::error("HCI0 interface does not exist. Check if Bluetooth adapter is present.");
+    // Perform HCI setup
+    if (!setupHciInterface()) {
+        Logger::error("Failed to setup HCI interface");
         return false;
     }
     
-    // Try multiple reset approaches with increasing aggressiveness
-    bool resetSuccess = false;
-    
-    // First attempt: Standard approach
-    system("sudo hciconfig hci0 down > /dev/null 2>&1");
-    usleep(1000000);  // 1s wait - increased wait time
-    if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
-        if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") == 0) {
-            resetSuccess = true;
-            Logger::info("HCI interface reset successful using standard method");
-        }
+    // Register GATT application with BlueZ
+    if (!application->registerWithBlueZ()) {
+        Logger::error("Failed to register GATT application with BlueZ");
+        return false;
     }
     
-    // Second attempt: More aggressive reset
-    if (!resetSuccess) {
-        Logger::info("First reset attempt failed, trying hciconfig reset...");
-        system("sudo hciconfig hci0 reset > /dev/null 2>&1");
-        sleep(2);  // Increased wait time
-        if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
-            if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") == 0) {
-                resetSuccess = true;
-                Logger::info("HCI interface reset successful using reset command");
-            }
-        }
-    }
-    
-    // Third attempt: Restart BlueZ service
-    if (!resetSuccess) {
-        Logger::info("Second reset attempt failed, restarting bluetooth service...");
-        system("sudo systemctl stop bluetooth.service");
-        sleep(2);  // Increased wait time
+    // Register advertisement with BlueZ
+    if (!advertisement->registerWithBlueZ()) {
+        Logger::warn("Failed to register advertisement with BlueZ, trying alternative methods");
         
-        // Try to unload/reload Bluetooth modules
-        system("sudo rmmod btusb > /dev/null 2>&1");
-        system("sudo rmmod btintel > /dev/null 2>&1");
-        sleep(1);  // Increased wait time
-        system("sudo modprobe btintel");
-        system("sudo modprobe btusb");
-        sleep(2);  // Increased wait time
-        
-        system("sudo systemctl start bluetooth.service");
-        sleep(3);  // Increased wait time
-        
-        if (system("sudo hciconfig hci0 up > /dev/null 2>&1") == 0) {
-            if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") == 0) {
-                resetSuccess = true;
-                Logger::info("HCI interface reset successful after service restart");
-            }
+        // Try alternative methods to enable advertising
+        if (!enableAdvertisingFallback()) {
+            Logger::error("Failed to enable advertising using all methods");
+            // Continue despite advertising failure - some functions will still work
         }
-    }
-    
-    if (!resetSuccess) {
-        Logger::error("Failed to reset HCI interface after multiple attempts");
-        Logger::info("Please check that your Bluetooth adapter is properly connected");
-        Logger::info("You may need to reboot your system to recover the Bluetooth adapter");
-        return false;
-    }
-    
-    // 어댑터 상태 변경 후 잠시 대기
-    usleep(1000000);  // 1s wait - increased wait time
-    
-    // 장치 이름 설정
-    if (system(("sudo hciconfig hci0 name '" + deviceName + "'").c_str()) != 0) {
-        Logger::warn("Failed to set device name - continuing anyway");
-    } else {
-        Logger::info("Successfully set device name to: " + deviceName);
-    }
-    
-    // BlueZ를 사용하는 방식으로 수정
-    if (!initialized) {
-        Logger::error("Cannot start: Server not initialized");
-        return false;
-    }
-    
-    if (running) {
-        Logger::warn("Server already running");
-        return true;
-    }
-    
-    Logger::info("Starting BLE Server...");
-    
-    // Clean up any existing advertisements from previous runs
-    Logger::info("Cleaning up previous advertising state...");
-    if (advertisement && advertisement->isRegistered()) {
-        advertisement->unregisterFromBlueZ();
-    }
-    
-    // Clean up BlueZ resources - using direct commands to ensure clean state
-    Logger::info("Removing any stale advertisement instances...");
-    system("echo -e 'remove-advertising 0\\nremove-advertising 1\\nremove-advertising 2\\n' | bluetoothctl > /dev/null 2>&1");
-    system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
-    
-    // Wait for BlueZ to stabilize
-    usleep(1000000);  // 1s wait - increased wait time
-    
-    // 3. 애플리케이션 등록
-    if (!application->ensureInterfacesRegistered()) {
-        Logger::error("Failed to register application interfaces with D-Bus");
-        return false;
-    }
-    
-    // 객체 계층 검증 및 로깅
-    if (!application->validateObjectHierarchy()) {
-        Logger::warn("Object hierarchy validation issues detected, see log for details");
-        application->logObjectHierarchy();
-    }
-    
-    // 4. 광고 활성화 시도 (다양한 방법으로)
-    bool advertisingActivated = false;
-    
-    // 방법 1: DBus를 통한 BlueZ API 사용
-    if (advertisement->registerWithBlueZ()) {
-        advertisingActivated = true;
-        Logger::info("Advertisement registered successfully via BlueZ DBus API");
-    } else {
-        Logger::warn("Failed to register advertisement via BlueZ DBus API, trying alternative methods");
-    }
-    
-    // 방법 2: 직접 HCI 명령어 사용 (방법 1이 실패한 경우)
-    if (!advertisingActivated) {
-        Logger::info("Trying alternative method to enable advertising via hciconfig...");
-        if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
-            advertisingActivated = true;
-            Logger::info("Advertisement enabled via hciconfig");
-        }
-    }
-    
-    // 방법 3: bluetoothctl 사용 (다른 방법들이 실패한 경우)
-    if (!advertisingActivated) {
-        Logger::info("Trying to enable advertising via bluetoothctl...");
-        if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
-            advertisingActivated = true;
-            Logger::info("Advertisement enabled via bluetoothctl");
-        }
-    }
-    
-    // 특정 레지스터에 직접 광고 데이터 쓰기 (최후의 수단)
-    if (!advertisingActivated) {
-        Logger::info("Using low-level HCI commands to set advertising parameters...");
-        // 광고 간격: 100ms (0x00A0)
-        system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00 > /dev/null 2>&1");
-        sleep(1);
-        // 광고 활성화
-        if (system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1") == 0) {
-            Logger::info("Advertisement enabled via direct HCI commands");
-            advertisingActivated = true;
-        }
-    }
-    
-    if (!advertisingActivated) {
-        Logger::error("Failed to activate advertising using all methods");
-        Logger::warn("Server will start but may not be discoverable");
     }
     
     running = true;
     Logger::info("BLE Server started successfully");
     return true;
 }
+
 
 void Server::stop() {
     if (!running) {
@@ -634,6 +506,119 @@ bool Server::isDeviceConnected(const std::string& deviceAddress) const {
         return ConnectionManager::getInstance().isDeviceConnected(deviceAddress);
     }
     return false;
+}
+
+bool Server::setupHciInterface() {
+    Logger::info("Setting up HCI interface...");
+    
+    // Check if HCI0 exists
+    if (system("ls /sys/class/bluetooth/hci0 > /dev/null 2>&1") != 0) {
+        Logger::error("HCI0 interface does not exist. Check if Bluetooth adapter is present.");
+        return false;
+    }
+    
+    // Reset HCI interface
+    Logger::info("Resetting HCI interface");
+    system("sudo hciconfig hci0 down > /dev/null 2>&1");
+    usleep(500000);  // 500ms wait
+    system("sudo hciconfig hci0 up > /dev/null 2>&1");
+    usleep(500000);  // 500ms wait
+    
+    // Verify HCI interface is up
+    if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") != 0) {
+        Logger::warn("HCI interface not running, attempting reset");
+        system("sudo hciconfig hci0 reset > /dev/null 2>&1");
+        sleep(1);
+        
+        if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") != 0) {
+            Logger::error("Failed to reset HCI interface");
+            return false;
+        }
+    }
+    
+    // Set device name
+    system(("sudo hciconfig hci0 name '" + deviceName + "'").c_str());
+    
+    return true;
+}
+
+bool Server::enableAdvertisingFallback() {
+    Logger::info("Trying alternative advertising methods...");
+    
+    // Method 1: Using hciconfig
+    if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
+        Logger::info("Advertisement enabled via hciconfig");
+        return true;
+    }
+    
+    // Method 2: Using bluetoothctl
+    if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
+        Logger::info("Advertisement enabled via bluetoothctl");
+        return true;
+    }
+    
+    // Method 3: Using direct HCI commands
+    Logger::info("Trying direct HCI commands for advertising");
+    system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00 > /dev/null 2>&1");
+    usleep(100000);  // 100ms wait
+    if (system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1") == 0) {
+        Logger::info("Advertisement enabled via direct HCI commands");
+        return true;
+    }
+    
+    return false;
+}
+
+bool Server::restartBlueZService() {
+    Logger::info("Restarting BlueZ service");
+    
+    // Stop the service
+    system("sudo systemctl stop bluetooth.service");
+    sleep(1);
+    
+    // Start the service
+    system("sudo systemctl start bluetooth.service");
+    sleep(2);
+    
+    // Check service status
+    if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+        Logger::error("Failed to restart BlueZ service");
+        return false;
+    }
+    
+    Logger::info("BlueZ service restarted successfully");
+    return true;
+}
+
+bool Server::resetHciAdapter() {
+    Logger::info("Resetting HCI adapter");
+    
+    // Down the adapter
+    system("sudo hciconfig hci0 down");
+    usleep(500000);  // 500ms
+    
+    // Up the adapter
+    system("sudo hciconfig hci0 up");
+    usleep(500000);  // 500ms
+    
+    // Check adapter status
+    if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") != 0) {
+        // Try more aggressive reset
+        Logger::warn("Standard reset failed, trying hci reset command");
+        system("sudo hciconfig hci0 reset");
+        sleep(1);
+        
+        if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") != 0) {
+            Logger::error("Failed to reset HCI adapter");
+            return false;
+        }
+    }
+    
+    // Set device name
+    system(("sudo hciconfig hci0 name '" + deviceName + "'").c_str());
+    
+    Logger::info("HCI adapter reset successfully");
+    return true;
 }
 
 } // namespace ggk

@@ -94,53 +94,73 @@ GVariantPtr DBusConnection::callMethod(
     GError* error = nullptr;
     GVariantType* replyType = nullptr;
     
-    // replyType을 위한 RAII 가드 추가
+    // Use RAII for cleaning up GVariantType if needed
     std::unique_ptr<GVariantType, void(*)(GVariantType*)> replyTypeGuard(nullptr, 
         [](GVariantType* p) { if (p) g_variant_type_free(p); });
     
-    if (!replySignature.empty()) {
-        if (!g_variant_type_string_is_valid(replySignature.c_str())) {
-            Logger::error("Invalid reply signature: " + replySignature);
+    try {
+        // Validate reply signature if provided
+        if (!replySignature.empty()) {
+            if (!g_variant_type_string_is_valid(replySignature.c_str())) {
+                Logger::error("Invalid reply signature: " + replySignature);
+                return makeNullGVariantPtr();
+            }replyType = g_variant_type_new(replySignature.c_str());
+            replyTypeGuard.reset(replyType);  // Ensure cleanup
+        }
+        
+        // Log the method call
+        Logger::debug("Calling D-Bus method: " + destination + 
+            " " + path.toString() + " " + 
+            interface + "." + method);
+        
+        // Call the method
+        GVariant* result = g_dbus_connection_call_sync(
+            connection.get(),
+            destination.c_str(),
+            path.c_str(),
+            interface.c_str(),
+            method.c_str(),
+            parameters.get(),
+            replyType,
+            G_DBUS_CALL_FLAGS_NONE,
+            timeoutMs > 0 ? timeoutMs : -1, 
+            nullptr,
+            &error
+        );
+        
+        // Check for error
+        if (error) {
+            std::string errorMessage = error->message ? error->message : "Unknown error";
+            Logger::error("D-Bus method call failed: " + errorMessage);
+            
+            // Categorize common errors for better handling
+            if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN)) {
+                Logger::error("D-Bus service not available: " + destination);
+            } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD)) {
+                Logger::error("Unknown method: " + method + " on interface " + interface);
+            } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT)) {
+                Logger::error("Unknown object: " + path.toString());
+            } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_TIMEOUT)) {
+                Logger::error("D-Bus call timed out after " + std::to_string(timeoutMs) + "ms");
+            }
+            
+            g_error_free(error);
             return makeNullGVariantPtr();
         }
-        replyType = g_variant_type_new(replySignature.c_str());
-        replyTypeGuard.reset(replyType); // 자동 해제를 위해 가드에 등록
-    }
-    
-    // 메서드 호출
-    GVariant* result = g_dbus_connection_call_sync(
-        connection.get(),
-        destination.c_str(),
-        path.c_str(),
-        interface.c_str(),
-        method.c_str(),
-        parameters.get(),
-        replyType,
-        G_DBUS_CALL_FLAGS_NONE,
-        timeoutMs > 0 ? timeoutMs : -1, 
-        nullptr,
-        &error
-    );
-    
-    // 로깅
-    Logger::debug("Calling D-Bus method: " + destination + 
-        " " + path.toString() + " " + 
-        interface + "." + method);
-    
-    if (error) {
-        Logger::error("D-Bus method call failed: " + std::string(error->message));
-        g_error_free(error);
+        
+        // Return the result (if any)
+        if (result) {
+            return GVariantPtr(result, &g_variant_unref);
+        }
+        
+        return makeNullGVariantPtr();
+    } catch (const std::exception& e) {
+        Logger::error("Exception in D-Bus method call: " + std::string(e.what()));
+        if (error) g_error_free(error);
         return makeNullGVariantPtr();
     }
-    
-    if (result) {
-        // g_dbus_connection_call_sync는 이미 sink된 GVariant를 반환하므로
-        // 추가 sink 없이 바로 GVariantPtr로 래핑
-        return GVariantPtr(result, &g_variant_unref);
-    }
-    
-    return makeNullGVariantPtr();
 }
+
 
 bool DBusConnection::emitSignal(
     const DBusObjectPath& path,

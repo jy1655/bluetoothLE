@@ -78,18 +78,29 @@ bool GattApplication::addService(GattServicePtr service) {
     
     std::string uuidStr = service->getUuid().toString();
     
-    std::lock_guard<std::mutex> lock(servicesMutex);
-    
-    // 중복 서비스 확인
-    for (const auto& existingService : services) {
-        if (existingService->getUuid().toString() == uuidStr) {
-            Logger::warn("Service already exists: " + uuidStr);
-            return false;
-        }
+    // Check if application is already registered with BlueZ
+    if (registered) {
+        Logger::error("Cannot add service to already registered application: " + uuidStr);
+        return false;
     }
     
-    // 서비스 추가
-    services.push_back(service);
+    {
+        std::lock_guard<std::mutex> lock(servicesMutex);
+        
+        // Check for duplicate service
+        for (const auto& existingService : services) {
+            if (existingService->getUuid().toString() == uuidStr) {
+                Logger::warn("Service already exists: " + uuidStr);
+                return false;
+            }
+        }
+        
+        // Add service to list
+        services.push_back(service);
+    }
+    
+    // Add service UUID to advertisement automatically if needed
+    // (This should be done in the Server class)
     
     Logger::info("Added service to application: " + uuidStr);
     return true;
@@ -136,9 +147,9 @@ bool GattApplication::ensureInterfacesRegistered() {
         return true;
     }
 
-    Logger::info("Registering all DBus interfaces in proper order");
+    Logger::info("Ensuring all GATT objects are registered with D-Bus");
     
-    // 1. Collect all objects
+    // Step 1: Collect all objects that need registration
     std::vector<GattServicePtr> allServices;
     std::vector<GattCharacteristicPtr> allCharacteristics;
     std::vector<GattDescriptorPtr> allDescriptors;
@@ -146,18 +157,26 @@ bool GattApplication::ensureInterfacesRegistered() {
     {
         std::lock_guard<std::mutex> lock(servicesMutex);
         
-        // Collect services and their children
+        // Collect services
         for (auto& service : services) {
             allServices.push_back(service);
             
-            // Collect characteristics
-            for (const auto& charPair : service->getCharacteristics()) {
+            // Collect characteristics for this service
+            const auto& characteristics = service->getCharacteristics();
+            for (const auto& charPair : characteristics) {
                 auto characteristic = charPair.second;
                 if (characteristic) {
+                    // Ensure CCCD exists for characteristics with notify/indicate
+                    if ((characteristic->getProperties() & GattProperty::PROP_NOTIFY) ||
+                        (characteristic->getProperties() & GattProperty::PROP_INDICATE)) {
+                        characteristic->ensureCCCDExists();
+                    }
+                    
                     allCharacteristics.push_back(characteristic);
                     
-                    // Collect descriptors
-                    for (const auto& descPair : characteristic->getDescriptors()) {
+                    // Collect descriptors for this characteristic
+                    const auto& descriptors = characteristic->getDescriptors();
+                    for (const auto& descPair : descriptors) {
                         auto descriptor = descPair.second;
                         if (descriptor) {
                             allDescriptors.push_back(descriptor);
@@ -168,9 +187,10 @@ bool GattApplication::ensureInterfacesRegistered() {
         }
     }
     
-    // 2. Register in hierarchical order
+    // Step 2: Register in hierarchical order
     
-    // Services first
+    // First register services
+    Logger::debug("Registering " + std::to_string(allServices.size()) + " services");
     for (auto& service : allServices) {
         if (!service->isRegistered()) {
             if (!service->setupDBusInterfaces()) {
@@ -180,50 +200,51 @@ bool GattApplication::ensureInterfacesRegistered() {
         }
     }
     
-    // Then characteristics
+    // Then register characteristics
+    Logger::debug("Registering " + std::to_string(allCharacteristics.size()) + " characteristics");
     for (auto& characteristic : allCharacteristics) {
         if (!characteristic->isRegistered()) {
             if (!characteristic->setupDBusInterfaces()) {
-                Logger::error("Failed to register characteristic: " + 
-                             characteristic->getUuid().toString());
+                Logger::error("Failed to register characteristic: " + characteristic->getUuid().toString());
                 return false;
             }
         }
     }
     
-    // Then descriptors
+    // Finally register descriptors
+    Logger::debug("Registering " + std::to_string(allDescriptors.size()) + " descriptors");
     for (auto& descriptor : allDescriptors) {
         if (!descriptor->isRegistered()) {
             if (!descriptor->setupDBusInterfaces()) {
-                Logger::error("Failed to register descriptor: " + 
-                             descriptor->getUuid().toString());
+                Logger::error("Failed to register descriptor: " + descriptor->getUuid().toString());
                 return false;
             }
         }
     }
     
-    // Finally, register the application object itself
-    if (!addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
-        Logger::error("Failed to add ObjectManager interface");
-        return false;
+    // Register the application object itself
+    if (!isRegistered()) {
+        if (!addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
+            Logger::error("Failed to add ObjectManager interface");
+            return false;
+        }
+        
+        if (!addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
+                     [this](const DBusMethodCall& call) { handleGetManagedObjects(call); })) {
+            Logger::error("Failed to add GetManagedObjects method");
+            return false;
+        }
+        
+        if (!registerObject()) {
+            Logger::error("Failed to register application object");
+            return false;
+        }
     }
     
-    if (!addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
-                 [this](const DBusMethodCall& call) { handleGetManagedObjects(call); })) {
-        Logger::error("Failed to add GetManagedObjects method");
-        return false;
-    }
-    
-    if (!registerObject()) {
-        Logger::error("Failed to register application object");
-        return false;
-    }
-    
-    registered = true;
-    Logger::info("All DBus interfaces registered successfully");
-    
+    Logger::info("All GATT objects registered successfully with D-Bus");
     return true;
 }
+
 
 bool GattApplication::registerStandardServices() {
     // If we've already added standard services, skip
@@ -365,97 +386,80 @@ void GattApplication::logObjectHierarchy() const {
 
 bool GattApplication::registerWithBlueZ() {
     try {
-        // 1. 모든 객체가 등록되었는지 확인하고, 등록되지 않았다면 등록 시도
-        if (!isRegistered() || !ensureInterfacesRegistered()) {
-            Logger::info("Ensuring all objects are registered with D-Bus");
-            if (!ensureInterfacesRegistered()) {
-                Logger::error("Failed to register application objects with D-Bus");
-                return false;
-            }
-        }
-        // 2. 객체 계층 검증 - 경고만 하고 진행
-        if (!validateObjectHierarchy()) {
-            Logger::warn("Some objects may not be registered properly");
-            logObjectHierarchy();
-            // 진행은 계속함 (실패 반환하지 않음)
-        }
+        Logger::info("Registering GATT application with BlueZ");
         
-        // 2. 이미 BlueZ에 등록되었는지 확인
-        if (registered && isRegistered()) {
-            Logger::info("Application already registered with BlueZ");
-            return true;
-        }
-
-        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-            Logger::error("BlueZ service is not active. Run: systemctl start bluetooth.service");
-            return false;
-        }
-        
-        // 3. 모든 객체의 D-Bus 인터페이스 등록
+        // Step 1: Ensure all objects are registered with D-Bus first
         if (!ensureInterfacesRegistered()) {
             Logger::error("Failed to register application objects with D-Bus");
             return false;
         }
         
-        // 4. BlueZ 서비스 확인
-        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-            Logger::error("BlueZ service is not active. Run: systemctl start bluetooth.service");
-            return false;
+        // Step 2: Validate object hierarchy for BlueZ compatibility
+        if (!validateObjectHierarchy()) {
+            Logger::warn("Object hierarchy validation issues detected");
+            // Log details but continue - this is a warning, not a fatal error
+            logObjectHierarchy();
         }
         
-        // 5. BlueZ RegisterApplication 호출
-        Logger::info("Sending RegisterApplication request to BlueZ");
+        // Step 3: Check if already registered
+        if (registered) {
+            Logger::info("Application already registered with BlueZ");
+            return true;
+        }
         
-        // 간소화된 옵션 생성
-        GVariantBuilder builder;
-        g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
-        
-        // Add important options
-        g_variant_builder_add(&builder, "{sv}", "RegisterAll", g_variant_new_boolean(true)); 
-        
-        GVariant* params = g_variant_new("(oa{sv})", 
-                                      getPath().c_str(), 
-                                      g_variant_builder_end(&builder));
-        g_variant_ref_sink(params);
-        
-        // BlueZ 호출
-        try {
-            GDBusConnection* conn = getConnection().getRawConnection();
-            GError* error = nullptr;
+        // Step 4: Check BlueZ service status
+        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+            Logger::error("BlueZ service is not active. Attempting to restart...");
+            system("sudo systemctl restart bluetooth.service");
+            sleep(2);
             
-            GVariant* result = g_dbus_connection_call_sync(
-                conn,
-                BlueZConstants::BLUEZ_SERVICE.c_str(),
-                BlueZConstants::ADAPTER_PATH.c_str(),
-                BlueZConstants::GATT_MANAGER_INTERFACE.c_str(),
-                BlueZConstants::REGISTER_APPLICATION.c_str(),
-                params,
-                nullptr,
-                G_DBUS_CALL_FLAGS_NONE,
-                30000,  // 30-second timeout
-                nullptr,
-                &error
-            );
-            
-            g_variant_unref(params);
-            
-            if (error) {
-                std::string errorMsg = error->message ? error->message : "Unknown error";
-                Logger::error("Failed to register application: " + errorMsg);
-                g_error_free(error);
+            if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+                Logger::error("Failed to restart BlueZ service");
                 return false;
             }
-            
-            if (result) {
-                g_variant_unref(result);
-            }
+            Logger::info("BlueZ service restarted successfully");
+        }
+        
+        // Step 5: Register with BlueZ
+        Logger::info("Sending RegisterApplication request to BlueZ");
+        
+        // Create options dictionary
+        GVariantBuilder builder;
+        g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+        g_variant_builder_add(&builder, "{sv}", "RegisterAll", g_variant_new_boolean(true));
+        
+        // Build parameters tuple
+        GVariant* params = g_variant_new("(oa{sv})", getPath().c_str(), &builder);
+        g_variant_ref_sink(params);  // Take ownership
+        GVariantPtr paramsPtr(params, &g_variant_unref);
+        
+        // Send request to BlueZ with proper error handling
+        try {
+            getConnection().callMethod(
+                BlueZConstants::BLUEZ_SERVICE,
+                DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                BlueZConstants::GATT_MANAGER_INTERFACE,
+                BlueZConstants::REGISTER_APPLICATION,
+                std::move(paramsPtr),
+                "",
+                10000  // 10 second timeout
+            );
             
             registered = true;
             Logger::info("Successfully registered application with BlueZ");
             return true;
         } catch (const std::exception& e) {
-            g_variant_unref(params);
-            Logger::error("Exception in BlueZ registration: " + std::string(e.what()));
+            std::string error = e.what();
+            Logger::error("Failed to register application with BlueZ: " + error);
+            
+            // Check for common errors
+            if (error.find("AlreadyExists") != std::string::npos) {
+                Logger::info("Application already registered, attempting to unregister first");
+                unregisterFromBlueZ();
+                // Retry registration
+                return registerWithBlueZ();
+            }
+            
             return false;
         }
     } catch (const std::exception& e) {
@@ -463,6 +467,7 @@ bool GattApplication::registerWithBlueZ() {
         return false;
     }
 }
+
 
 bool GattApplication::unregisterFromBlueZ() {
     // Skip if not registered
@@ -531,42 +536,37 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
     }
     
     try {
-        Logger::info("GetManagedObjects called by BlueZ");
+        Logger::info("BlueZ requested GetManagedObjects");
         
-        // Register standard services (e.g., GAP) if needed
-        if (!standardServicesAdded) {
-            registerStandardServices();
-        }
-        
-        // Make sure all objects are registered with D-Bus
+        // Ensure all objects are registered
         ensureInterfacesRegistered();
         
-        // Log the object hierarchy for debugging
-        logObjectHierarchy();
-        
-        // Create managed objects dictionary
+        // Create the objects dictionary: a{oa{sa{sv}}}
+        // o = object path
+        // s = interface name
+        // sv = property name and value
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{oa{sa{sv}}}"));
         
-        // Add root application object with ObjectManager interface
+        // Add application object with ObjectManager interface
         {
             GVariantBuilder ifacesBuilder;
             g_variant_builder_init(&ifacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
             
-            // Add empty ObjectManager properties
+            // Empty properties for ObjectManager interface
             GVariantBuilder propsBuilder;
             g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
             
-            g_variant_builder_add(&ifacesBuilder, "{sa{sv}}", 
+            g_variant_builder_add(&ifacesBuilder, "{sa{sv}}",
                                  BlueZConstants::OBJECT_MANAGER_INTERFACE.c_str(),
                                  &propsBuilder);
             
-            g_variant_builder_add(&builder, "{oa{sa{sv}}}", 
-                                 getPath().c_str(), 
+            g_variant_builder_add(&builder, "{oa{sa{sv}}}",
+                                 getPath().c_str(),
                                  &ifacesBuilder);
         }
         
-        // Add services to the dictionary
+        // Add all services
         std::vector<GattServicePtr> servicesList;
         {
             std::lock_guard<std::mutex> lock(servicesMutex);
@@ -577,179 +577,167 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
             if (!service) continue;
             
             // Add service object
-            {
-                GVariantBuilder ifacesBuilder;
-                g_variant_builder_init(&ifacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
-                
-                GVariantBuilder propsBuilder;
-                g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
-                
-                // Add UUID property
-                g_variant_builder_add(&propsBuilder, "{sv}", "UUID", 
-                                     g_variant_new_string(service->getUuid().toBlueZFormat().c_str()));
-                
-                // Add Primary property
-                g_variant_builder_add(&propsBuilder, "{sv}", "Primary", 
-                                     g_variant_new_boolean(service->isPrimary()));
-                
-                // Get characteristics paths
-                GVariantBuilder charPathsBuilder;
-                g_variant_builder_init(&charPathsBuilder, G_VARIANT_TYPE("ao"));
-                
-                auto characteristics = service->getCharacteristics();
-                for (const auto& pair : characteristics) {
-                    if (pair.second) {
-                        g_variant_builder_add(&charPathsBuilder, "o", 
-                                             pair.second->getPath().c_str());
-                    }
+            GVariantBuilder ifacesBuilder;
+            g_variant_builder_init(&ifacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
+            
+            // Add GATT service interface
+            GVariantBuilder propsBuilder;
+            g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
+            
+            // Add UUID property
+            g_variant_builder_add(&propsBuilder, "{sv}", "UUID",
+                                 g_variant_new_string(service->getUuid().toBlueZFormat().c_str()));
+            
+            // Add Primary property
+            g_variant_builder_add(&propsBuilder, "{sv}", "Primary",
+                                 g_variant_new_boolean(service->isPrimary()));
+            
+            // Get characteristic paths
+            GVariantBuilder charPathsBuilder;
+            g_variant_builder_init(&charPathsBuilder, G_VARIANT_TYPE("ao"));
+            
+            auto characteristics = service->getCharacteristics();
+            for (const auto& pair : characteristics) {
+                if (pair.second) {
+                    g_variant_builder_add(&charPathsBuilder, "o",
+                                         pair.second->getPath().c_str());
                 }
-                
-                // Add characteristics array
-                g_variant_builder_add(&propsBuilder, "{sv}", "Characteristics", 
-                                     g_variant_builder_end(&charPathsBuilder));
-                
-                g_variant_builder_add(&ifacesBuilder, "{sa{sv}}", 
-                                     BlueZConstants::GATT_SERVICE_INTERFACE.c_str(),
-                                     &propsBuilder);
-                
-                g_variant_builder_add(&builder, "{oa{sa{sv}}}", 
-                                     service->getPath().c_str(),
-                                     &ifacesBuilder);
             }
             
-            // Process characteristics for this service
-            auto characteristics = service->getCharacteristics();
+            // Add characteristics array
+            g_variant_builder_add(&propsBuilder, "{sv}", "Characteristics",
+                                 g_variant_builder_end(&charPathsBuilder));
+            
+            g_variant_builder_add(&ifacesBuilder, "{sa{sv}}",
+                                 BlueZConstants::GATT_SERVICE_INTERFACE.c_str(),
+                                 &propsBuilder);
+            
+            g_variant_builder_add(&builder, "{oa{sa{sv}}}",
+                                 service->getPath().c_str(),
+                                 &ifacesBuilder);
+            
+            // Add all characteristics for this service
             for (const auto& pair : characteristics) {
                 const auto& characteristic = pair.second;
                 if (!characteristic) continue;
                 
-                // Add characteristic object
-                {
-                    GVariantBuilder ifacesBuilder;
-                    g_variant_builder_init(&ifacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
-                    
-                    GVariantBuilder propsBuilder;
-                    g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
-                    
-                    // Add UUID property
-                    g_variant_builder_add(&propsBuilder, "{sv}", "UUID", 
-                                         g_variant_new_string(characteristic->getUuid().toBlueZFormat().c_str()));
-                    
-                    // Add Service property (path to parent service)
-                    g_variant_builder_add(&propsBuilder, "{sv}", "Service", 
-                                         g_variant_new_object_path(service->getPath().c_str()));
-                    
-                    // Add Flags property
-                    GVariantBuilder flagsBuilder;
-                    g_variant_builder_init(&flagsBuilder, G_VARIANT_TYPE("as"));
-                    
-                    uint8_t props = characteristic->getProperties();
-                    if (props & GattProperty::PROP_BROADCAST)
-                        g_variant_builder_add(&flagsBuilder, "s", "broadcast");
-                    if (props & GattProperty::PROP_READ)
-                        g_variant_builder_add(&flagsBuilder, "s", "read");
-                    if (props & GattProperty::PROP_WRITE_WITHOUT_RESPONSE)
-                        g_variant_builder_add(&flagsBuilder, "s", "write-without-response");
-                    if (props & GattProperty::PROP_WRITE)
-                        g_variant_builder_add(&flagsBuilder, "s", "write");
-                    if (props & GattProperty::PROP_NOTIFY)
-                        g_variant_builder_add(&flagsBuilder, "s", "notify");
-                    if (props & GattProperty::PROP_INDICATE)
-                        g_variant_builder_add(&flagsBuilder, "s", "indicate");
-                    
-                    g_variant_builder_add(&propsBuilder, "{sv}", "Flags", 
-                                         g_variant_builder_end(&flagsBuilder));
-                    
-                    // Get descriptor paths
-                    GVariantBuilder descPathsBuilder;
-                    g_variant_builder_init(&descPathsBuilder, G_VARIANT_TYPE("ao"));
-                    
-                    auto descriptors = characteristic->getDescriptors();
-                    for (const auto& descPair : descriptors) {
-                        if (descPair.second) {
-                            g_variant_builder_add(&descPathsBuilder, "o", 
-                                                 descPair.second->getPath().c_str());
-                        }
+                GVariantBuilder charIfacesBuilder;
+                g_variant_builder_init(&charIfacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
+                
+                GVariantBuilder charPropsBuilder;
+                g_variant_builder_init(&charPropsBuilder, G_VARIANT_TYPE("a{sv}"));
+                
+                // Add UUID property
+                g_variant_builder_add(&charPropsBuilder, "{sv}", "UUID",
+                                     g_variant_new_string(characteristic->getUuid().toBlueZFormat().c_str()));
+                
+                // Add Service property
+                g_variant_builder_add(&charPropsBuilder, "{sv}", "Service",
+                                     g_variant_new_object_path(service->getPath().c_str()));
+                
+                // Add Flags property
+                GVariantBuilder flagsBuilder;
+                g_variant_builder_init(&flagsBuilder, G_VARIANT_TYPE("as"));
+                
+                uint8_t props = characteristic->getProperties();
+                if (props & GattProperty::PROP_BROADCAST)
+                    g_variant_builder_add(&flagsBuilder, "s", "broadcast");
+                if (props & GattProperty::PROP_READ)
+                    g_variant_builder_add(&flagsBuilder, "s", "read");
+                if (props & GattProperty::PROP_WRITE_WITHOUT_RESPONSE)
+                    g_variant_builder_add(&flagsBuilder, "s", "write-without-response");
+                if (props & GattProperty::PROP_WRITE)
+                    g_variant_builder_add(&flagsBuilder, "s", "write");
+                if (props & GattProperty::PROP_NOTIFY)
+                    g_variant_builder_add(&flagsBuilder, "s", "notify");
+                if (props & GattProperty::PROP_INDICATE)
+                    g_variant_builder_add(&flagsBuilder, "s", "indicate");
+                if (props & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES)
+                    g_variant_builder_add(&flagsBuilder, "s", "authenticated-signed-writes");
+                
+                g_variant_builder_add(&charPropsBuilder, "{sv}", "Flags",
+                                     g_variant_builder_end(&flagsBuilder));
+                
+                // Add descriptor paths
+                GVariantBuilder descPathsBuilder;
+                g_variant_builder_init(&descPathsBuilder, G_VARIANT_TYPE("ao"));
+                
+                auto descriptors = characteristic->getDescriptors();
+                for (const auto& descPair : descriptors) {
+                    if (descPair.second) {
+                        g_variant_builder_add(&descPathsBuilder, "o",
+                                             descPair.second->getPath().c_str());
                     }
-                    
-                    // Add descriptors array
-                    g_variant_builder_add(&propsBuilder, "{sv}", "Descriptors", 
-                                         g_variant_builder_end(&descPathsBuilder));
-                    
-                    // Add Notifying property
-                    g_variant_builder_add(&propsBuilder, "{sv}", "Notifying", 
-                                         g_variant_new_boolean(characteristic->isNotifying()));
-                    
-                    g_variant_builder_add(&ifacesBuilder, "{sa{sv}}", 
-                                         BlueZConstants::GATT_CHARACTERISTIC_INTERFACE.c_str(),
-                                         &propsBuilder);
-                    
-                    g_variant_builder_add(&builder, "{oa{sa{sv}}}", 
-                                         characteristic->getPath().c_str(),
-                                         &ifacesBuilder);
                 }
                 
-                // Process descriptors for this characteristic
-                auto descriptors = characteristic->getDescriptors();
+                g_variant_builder_add(&charPropsBuilder, "{sv}", "Descriptors",
+                                     g_variant_builder_end(&descPathsBuilder));
+                
+                // Add Notifying property
+                g_variant_builder_add(&charPropsBuilder, "{sv}", "Notifying",
+                                     g_variant_new_boolean(characteristic->isNotifying()));
+                
+                g_variant_builder_add(&charIfacesBuilder, "{sa{sv}}",
+                                     BlueZConstants::GATT_CHARACTERISTIC_INTERFACE.c_str(),
+                                     &charPropsBuilder);
+                
+                g_variant_builder_add(&builder, "{oa{sa{sv}}}",
+                                     characteristic->getPath().c_str(),
+                                     &charIfacesBuilder);
+                
+                // Add all descriptors for this characteristic
                 for (const auto& descPair : descriptors) {
                     const auto& descriptor = descPair.second;
                     if (!descriptor) continue;
                     
-                    // Add descriptor object
-                    {
-                        GVariantBuilder ifacesBuilder;
-                        g_variant_builder_init(&ifacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
-                        
-                        GVariantBuilder propsBuilder;
-                        g_variant_builder_init(&propsBuilder, G_VARIANT_TYPE("a{sv}"));
-                        
-                        // Add UUID property
-                        g_variant_builder_add(&propsBuilder, "{sv}", "UUID", 
-                                             g_variant_new_string(descriptor->getUuid().toBlueZFormat().c_str()));
-                        
-                        // Add Characteristic property (path to parent characteristic)
-                        g_variant_builder_add(&propsBuilder, "{sv}", "Characteristic", 
-                                             g_variant_new_object_path(characteristic->getPath().c_str()));
-                        
-                        // Add Flags property
-                        GVariantBuilder flagsBuilder;
-                        g_variant_builder_init(&flagsBuilder, G_VARIANT_TYPE("as"));
-                        
-                        uint8_t perms = descriptor->getPermissions();
-                        if (perms & GattPermission::PERM_READ)
-                            g_variant_builder_add(&flagsBuilder, "s", "read");
-                        if (perms & GattPermission::PERM_WRITE)
-                            g_variant_builder_add(&flagsBuilder, "s", "write");
-                        
-                        g_variant_builder_add(&propsBuilder, "{sv}", "Flags", 
-                                             g_variant_builder_end(&flagsBuilder));
-                        
-                        g_variant_builder_add(&ifacesBuilder, "{sa{sv}}", 
-                                             BlueZConstants::GATT_DESCRIPTOR_INTERFACE.c_str(),
-                                             &propsBuilder);
-                        
-                        g_variant_builder_add(&builder, "{oa{sa{sv}}}", 
-                                             descriptor->getPath().c_str(),
-                                             &ifacesBuilder);
-                    }
+                    GVariantBuilder descIfacesBuilder;
+                    g_variant_builder_init(&descIfacesBuilder, G_VARIANT_TYPE("a{sa{sv}}"));
+                    
+                    GVariantBuilder descPropsBuilder;
+                    g_variant_builder_init(&descPropsBuilder, G_VARIANT_TYPE("a{sv}"));
+                    
+                    // Add UUID property
+                    g_variant_builder_add(&descPropsBuilder, "{sv}", "UUID",
+                                         g_variant_new_string(descriptor->getUuid().toBlueZFormat().c_str()));
+                    
+                    // Add Characteristic property
+                    g_variant_builder_add(&descPropsBuilder, "{sv}", "Characteristic",
+                                         g_variant_new_object_path(characteristic->getPath().c_str()));
+                    
+                    // Add Flags property
+                    GVariantBuilder descFlagsBuilder;
+                    g_variant_builder_init(&descFlagsBuilder, G_VARIANT_TYPE("as"));
+                    
+                    uint8_t descPerms = descriptor->getPermissions();
+                    if (descPerms & GattPermission::PERM_READ)
+                        g_variant_builder_add(&descFlagsBuilder, "s", "read");
+                    if (descPerms & GattPermission::PERM_WRITE)
+                        g_variant_builder_add(&descFlagsBuilder, "s", "write");
+                    if (descPerms & GattPermission::PERM_READ_ENCRYPTED)
+                        g_variant_builder_add(&descFlagsBuilder, "s", "encrypt-read");
+                    if (descPerms & GattPermission::PERM_WRITE_ENCRYPTED)
+                        g_variant_builder_add(&descFlagsBuilder, "s", "encrypt-write");
+                    
+                    g_variant_builder_add(&descPropsBuilder, "{sv}", "Flags",
+                                         g_variant_builder_end(&descFlagsBuilder));
+                    
+                    g_variant_builder_add(&descIfacesBuilder, "{sa{sv}}",
+                                         BlueZConstants::GATT_DESCRIPTOR_INTERFACE.c_str(),
+                                         &descPropsBuilder);
+                    
+                    g_variant_builder_add(&builder, "{oa{sa{sv}}}",
+                                         descriptor->getPath().c_str(),
+                                         &descIfacesBuilder);
                 }
             }
         }
         
-        // Build the final variant
+        // Create the result variant
         GVariant* result = g_variant_builder_end(&builder);
         
-        // Log the result for debugging
+        // Log the result size
         gsize n_children = g_variant_n_children(result);
         Logger::debug("Returning " + std::to_string(n_children) + " managed objects");
-        
-        // Print the first few objects as debug
-        char* debug_str = g_variant_print(result, TRUE);
-        if (debug_str) {
-            std::string str = debug_str;
-            Logger::debug("First 200 chars of result: " + str.substr(0, 200));
-            g_free(debug_str);
-        }
         
         // Return the result
         g_dbus_method_invocation_return_value(call.invocation.get(), result);
