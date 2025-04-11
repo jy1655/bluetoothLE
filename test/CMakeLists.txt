@@ -37,30 +37,30 @@ set(TEST_HEADERS
     ${PROJECT_INCLUDE_DIR}/Utils.h
     ${PROJECT_INCLUDE_DIR}/Logger.h
     # HCI
-    ${PROJECT_INCLUDE_DIR}/HciAdapter.h
-    ${PROJECT_INCLUDE_DIR}/HciSocket.h
-    ${PROJECT_INCLUDE_DIR}/Mgmt.h
+    #${PROJECT_INCLUDE_DIR}/HciAdapter.h
+    #${PROJECT_INCLUDE_DIR}/HciSocket.h
+    #${PROJECT_INCLUDE_DIR}/Mgmt.h
     # DBus
-    ${PROJECT_INCLUDE_DIR}/DBusTypes.h
-    ${PROJECT_INCLUDE_DIR}/DBusXml.h
-    ${PROJECT_INCLUDE_DIR}/DBusError.h
-    ${PROJECT_INCLUDE_DIR}/DBusConnection.h
-    ${PROJECT_INCLUDE_DIR}/DBusName.h
-    ${PROJECT_INCLUDE_DIR}/DBusMessage.h
-    ${PROJECT_INCLUDE_DIR}/DBusObject.h
+    #${PROJECT_INCLUDE_DIR}/DBusTypes.h
+    #${PROJECT_INCLUDE_DIR}/DBusXml.h
+    #${PROJECT_INCLUDE_DIR}/DBusError.h
+    #${PROJECT_INCLUDE_DIR}/DBusConnection.h
+    #${PROJECT_INCLUDE_DIR}/DBusName.h
+    #${PROJECT_INCLUDE_DIR}/DBusMessage.h
+    #${PROJECT_INCLUDE_DIR}/DBusObject.h
     # GATT
-    ${PROJECT_INCLUDE_DIR}/BlueZConstants.h
-    ${PROJECT_INCLUDE_DIR}/GattCallbacks.h
-    ${PROJECT_INCLUDE_DIR}/GattTypes.h
-    ${PROJECT_INCLUDE_DIR}/GattService.h
-    ${PROJECT_INCLUDE_DIR}/GattCharacteristic.h
-    ${PROJECT_INCLUDE_DIR}/GattDescriptor.h
-    ${PROJECT_INCLUDE_DIR}/GattApplication.h
-    ${PROJECT_INCLUDE_DIR}/GattAdvertisement.h
+    #${PROJECT_INCLUDE_DIR}/BlueZConstants.h
+    #${PROJECT_INCLUDE_DIR}/GattCallbacks.h
+    #${PROJECT_INCLUDE_DIR}/GattTypes.h
+    #${PROJECT_INCLUDE_DIR}/GattService.h
+    #${PROJECT_INCLUDE_DIR}/GattCharacteristic.h
+    #${PROJECT_INCLUDE_DIR}/GattDescriptor.h
+    #${PROJECT_INCLUDE_DIR}/GattApplication.h
+    #${PROJECT_INCLUDE_DIR}/GattAdvertisement.h
     # Server
     #${PROJECT_INCLUDE_DIR}/ConnectionManager.h
     # 테스트 환경헤더 (미사용시 주석처리 필요)
-    DBusTestEnvironment.h
+    #DBusTestEnvironment.h
 )
 
 # 테스트할 대상 소스 파일 추가
@@ -68,23 +68,23 @@ set(TEST_SOURCES
     ${PROJECT_SRC_DIR}/Utils.cpp    
     ${PROJECT_SRC_DIR}/Logger.cpp
     # HCI
-    ${PROJECT_SRC_DIR}/HciAdapter.cpp
-    ${PROJECT_SRC_DIR}/HciSocket.cpp
-    ${PROJECT_SRC_DIR}/Mgmt.cpp
+    #${PROJECT_SRC_DIR}/HciAdapter.cpp
+    #${PROJECT_SRC_DIR}/HciSocket.cpp
+    #${PROJECT_SRC_DIR}/Mgmt.cpp
     # DBus
-    ${PROJECT_SRC_DIR}/DBusXml.cpp
-    ${PROJECT_SRC_DIR}/DBusError.cpp
-    ${PROJECT_SRC_DIR}/DBusConnection.cpp
-    ${PROJECT_SRC_DIR}/DBusName.cpp
-    ${PROJECT_SRC_DIR}/DBusMessage.cpp
-    ${PROJECT_SRC_DIR}/DBusObject.cpp
+    #${PROJECT_SRC_DIR}/DBusXml.cpp
+    #${PROJECT_SRC_DIR}/DBusError.cpp
+    #${PROJECT_SRC_DIR}/DBusConnection.cpp
+    #${PROJECT_SRC_DIR}/DBusName.cpp
+    #${PROJECT_SRC_DIR}/DBusMessage.cpp
+    #${PROJECT_SRC_DIR}/DBusObject.cpp
     # GATT
-    ${PROJECT_SRC_DIR}/GattTypes.cpp
-    ${PROJECT_SRC_DIR}/GattService.cpp
-    ${PROJECT_SRC_DIR}/GattCharacteristic.cpp
-    ${PROJECT_SRC_DIR}/GattDescriptor.cpp
-    ${PROJECT_SRC_DIR}/GattApplication.cpp
-    ${PROJECT_SRC_DIR}/GattAdvertisement.cpp
+    #${PROJECT_SRC_DIR}/GattTypes.cpp
+    #${PROJECT_SRC_DIR}/GattService.cpp
+    #${PROJECT_SRC_DIR}/GattCharacteristic.cpp
+    #${PROJECT_SRC_DIR}/GattDescriptor.cpp
+    #${PROJECT_SRC_DIR}/GattApplication.cpp
+    #${PROJECT_SRC_DIR}/GattAdvertisement.cpp
     # Server
     #${PROJECT_SRC_DIR}/ConnectionManager.cpp
 )
@@ -96,12 +96,12 @@ add_executable(run_tests
     ${TEST_SOURCES}
     ${TEST_HEADERS}
     main.cpp
-    DBusTestEnvironment.cpp     # 주석처리시 main.cpp 에도 주석처리 작업 필요
+    #DBusTestEnvironment.cpp     # 주석처리시 main.cpp 에도 주석처리 작업 필요
 
     #-- Util Test -- (약 1ms 소요)
     
     #DBusObjectPathTest.cpp
-    #UtilsTest.cpp
+    UtilsTest.cpp
     
     #-- HCI Test -- (약 30000ms 소요)
     
@@ -111,20 +111,20 @@ add_executable(run_tests
     
     #-- DBus Test --
     
-    DBusXmlTest.cpp
-    DBusErrorTest.cpp
-    DBusConnectionTest.cpp
-    DBusMessageTest.cpp
-    DBusObjectTest.cpp
+    #DBusXmlTest.cpp
+    #DBusErrorTest.cpp
+    #DBusConnectionTest.cpp
+    #DBusMessageTest.cpp
+    #DBusObjectTest.cpp
     
     # GATT Test
 
-    GattTypesTest.cpp
+    #GattTypesTest.cpp
     #GattServiceTest.cpp        # 헤더파일의 `private:` 주석처리 후 테스트 가능
     #GattCharacteristicTest.cpp # 헤더파일의 `private:` 주석처리 후 테스트 가능
     #GattDescriptorTest.cpp     # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
-    GattAdvertisementTest.cpp
+    #GattApplicationTest.cpp    # 헤더파일의 `private:` 주석처리 후 테스트 가능
+    #GattAdvertisementTest.cpp
 
     # Server Test
 

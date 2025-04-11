@@ -2,6 +2,8 @@
 
 #include <sstream>
 #include <functional>
+#include <string>
+#include <string_view>
 
 namespace ggk {
 
@@ -10,6 +12,18 @@ namespace ggk {
 
 class Logger {
 public:
+    // Define log levels
+    enum class Level {
+        TRACE,
+        DEBUG,
+        INFO,
+        STATUS,
+        WARN,
+        ERROR,
+        FATAL,
+        ALWAYS
+    };
+
     // Define our own log receiver type using std::function
     using LogReceiver = std::function<void(const char*)>;
 
@@ -22,6 +36,10 @@ public:
     static void registerFatalReceiver(LogReceiver receiver);
     static void registerAlwaysReceiver(LogReceiver receiver);
     static void registerTraceReceiver(LogReceiver receiver);
+
+    // Set global log level
+    static void setLogLevel(Level level);
+    static Level getLogLevel();
 
     // Logging actions
     static void debug(const char* pText);
@@ -56,6 +74,9 @@ public:
     static void trace(const std::string& text);
     static void trace(const std::ostream& text);
 
+    // Universal log method with level parameter
+    static void log(Level level, const std::string& message);
+
 private:
     static LogReceiver logReceiverDebug;
     static LogReceiver logReceiverInfo;
@@ -65,6 +86,13 @@ private:
     static LogReceiver logReceiverFatal;
     static LogReceiver logReceiverAlways;
     static LogReceiver logReceiverTrace;
+    static Level currentLogLevel;
+
+    // Helper method to check if a message should be logged at current level
+    static bool shouldLog(Level messageLevel);
+    
+    // Convert level to string
+    static const char* levelToString(Level level);
 };
 
 } // namespace ggk

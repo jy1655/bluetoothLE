@@ -35,6 +35,7 @@
 # build
 /build
 /test_build
+*/test_build
 
 # VScode
 .vscode

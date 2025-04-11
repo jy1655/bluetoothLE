@@ -10,368 +10,364 @@
 
 namespace ggk {
 
-//
-// 1. GLib 객체 삭제자 함수 정의
-//
-
 /**
- * @brief GVariant 타입의 객체를 삭제(참조 카운트 감소)하는 함수
- */
-inline void gvariant_deleter(GVariant* p) {
-    if (p) g_variant_unref(p);
-}
-
-/**
- * @brief GObject 타입의 객체를 삭제(참조 카운트 감소)하는 함수
- */
-inline void gobject_deleter(void* p) {
-    if (p) g_object_unref(G_OBJECT(p));
-}
-
-/**
- * @brief GError 타입의 객체를 삭제하는 함수
- */
-inline void gerror_deleter(GError* p) {
-    if (p) g_error_free(p);
-}
-
-/**
- * @brief GDBusNodeInfo 타입의 객체를 삭제(참조 카운트 감소)하는 함수
- */
-inline void gdbusnodeinfo_deleter(GDBusNodeInfo* p) {
-    if (p) g_dbus_node_info_unref(p);
-}
-
-/**
- * @brief GVariantBuilder 타입의 객체를 삭제(참조 카운트 감소)하는 함수
- */
-inline void gvariantbuilder_deleter(GVariantBuilder* p) {
-    if (p) g_variant_builder_unref(p);
-}
-
-/**
- * @brief GDBusInterfaceInfo 타입의 객체를 삭제(참조 카운트 감소)하는 함수
- */
-inline void gdbusinterfaceinfo_deleter(GDBusInterfaceInfo* p) {
-    if (p) g_dbus_interface_info_unref(p);
-}
-
-/**
- * @brief GMainLoop 타입의 객체를 삭제(참조 카운트 감소)하는 함수
- */
-inline void gmainloop_deleter(GMainLoop* p) {
-    if (p) g_main_loop_unref(p);
-}
-
-/**
- * @brief GSource 타입의 객체를 삭제(참조 카운트 감소)하는 함수
- */
-inline void gsource_deleter(GSource* p) {
-    if (p) g_source_unref(p);
-}
-
-//
-// 2. 스마트 포인터 타입 정의
-//
-
-/**
- * @brief GVariant 객체에 대한 스마트 포인터 타입
- */
-using GVariantPtr = std::unique_ptr<GVariant, decltype(&gvariant_deleter)>;
-
-/**
- * @brief GDBusConnection 객체에 대한 스마트 포인터 타입
- */
-using GDBusConnectionPtr = std::unique_ptr<GDBusConnection, decltype(&gobject_deleter)>;
-
-/**
- * @brief GDBusMethodInvocation 객체에 대한 스마트 포인터 타입
- */
-using GDBusMethodInvocationPtr = std::unique_ptr<GDBusMethodInvocation, decltype(&gobject_deleter)>;
-
-/**
- * @brief GError 객체에 대한 스마트 포인터 타입
- */
-using GErrorPtr = std::unique_ptr<GError, decltype(&gerror_deleter)>;
-
-/**
- * @brief GDBusNodeInfo 객체에 대한 스마트 포인터 타입
- */
-using GDBusNodeInfoPtr = std::unique_ptr<GDBusNodeInfo, decltype(&gdbusnodeinfo_deleter)>;
-
-/**
- * @brief GVariantBuilder 객체에 대한 스마트 포인터 타입
- */
-using GVariantBuilderPtr = std::unique_ptr<GVariantBuilder, decltype(&gvariantbuilder_deleter)>;
-
-/**
- * @brief GDBusProxy 객체에 대한 스마트 포인터 타입
- */
-using GDBusProxyPtr = std::unique_ptr<GDBusProxy, decltype(&gobject_deleter)>;
-
-/**
- * @brief GCancellable 객체에 대한 스마트 포인터 타입
- */
-using GCancellablePtr = std::unique_ptr<GCancellable, decltype(&gobject_deleter)>;
-
-/**
- * @brief GDBusMessage 객체에 대한 스마트 포인터 타입
- */
-using GDBusMessagePtr = std::unique_ptr<GDBusMessage, decltype(&gobject_deleter)>;
-
-/**
- * @brief GDBusInterfaceInfo 객체에 대한 스마트 포인터 타입
- */
-using GDBusInterfaceInfoPtr = std::unique_ptr<GDBusInterfaceInfo, decltype(&gdbusinterfaceinfo_deleter)>;
-
-/**
- * @brief GMainLoop 객체에 대한 스마트 포인터 타입
- */
-using GMainLoopPtr = std::unique_ptr<GMainLoop, decltype(&gmainloop_deleter)>;
-
-/**
- * @brief GSource 객체에 대한 스마트 포인터 타입
- */
-using GSourcePtr = std::unique_ptr<GSource, decltype(&gsource_deleter)>;
-
-//
-// 3. 일반적인 GLib 객체 래핑 팩토리 함수
-//
-
-/**
- * @brief GLib 객체에 대한 스마트 포인터를 생성하는 일반적인 함수 템플릿
+ * @brief D-Bus type definitions and smart pointers for GLib/GObject resources
  * 
- * @tparam T GLib 객체 타입
- * @tparam Deleter 객체 삭제자 함수 타입
- * @param p 원시(raw) 포인터
- * @param deleter 삭제자 함수
- * @return std::unique_ptr<T, Deleter> 스마트 포인터
+ * This file provides RAII wrappers around GLib/GObject resources to ensure
+ * proper memory management and prevent leaks. It defines custom deleters and
+ * smart pointer types for various D-Bus related GLib objects.
  */
-template<typename T, typename Deleter>
-std::unique_ptr<T, Deleter> make_managed_ptr(T* p, Deleter deleter) {
-    return std::unique_ptr<T, Deleter>(p, deleter);
-}
 
 //
-// 4. 널 스마트 포인터 생성 함수
+// 1. Resource deleters for use with smart pointers
 //
 
 /**
- * @brief 널(NULL) GVariant 포인터를 생성하는 함수
- * @return GVariantPtr 널 포인터를 가리키는 스마트 포인터
+ * @brief Custom deleter for GVariant
+ */
+struct GVariantDeleter {
+    void operator()(GVariant* ptr) const {
+        if (ptr) g_variant_unref(ptr);
+    }
+};
+
+/**
+ * @brief Custom deleter for GObject-derived types
+ */
+struct GObjectDeleter {
+    void operator()(void* ptr) const {
+        if (ptr) g_object_unref(G_OBJECT(ptr));
+    }
+};
+
+/**
+ * @brief Custom deleter for GError
+ */
+struct GErrorDeleter {
+    void operator()(GError* ptr) const {
+        if (ptr) g_error_free(ptr);
+    }
+};
+
+/**
+ * @brief Custom deleter for GDBusNodeInfo
+ */
+struct GDBusNodeInfoDeleter {
+    void operator()(GDBusNodeInfo* ptr) const {
+        if (ptr) g_dbus_node_info_unref(ptr);
+    }
+};
+
+/**
+ * @brief Custom deleter for GVariantBuilder
+ */
+struct GVariantBuilderDeleter {
+    void operator()(GVariantBuilder* ptr) const {
+        if (ptr) g_variant_builder_unref(ptr);
+    }
+};
+
+/**
+ * @brief Custom deleter for GDBusInterfaceInfo
+ */
+struct GDBusInterfaceInfoDeleter {
+    void operator()(GDBusInterfaceInfo* ptr) const {
+        if (ptr) g_dbus_interface_info_unref(ptr);
+    }
+};
+
+/**
+ * @brief Custom deleter for GMainLoop
+ */
+struct GMainLoopDeleter {
+    void operator()(GMainLoop* ptr) const {
+        if (ptr) g_main_loop_unref(ptr);
+    }
+};
+
+/**
+ * @brief Custom deleter for GSource
+ */
+struct GSourceDeleter {
+    void operator()(GSource* ptr) const {
+        if (ptr) g_source_unref(ptr);
+    }
+};
+
+//
+// 2. Smart pointer type definitions
+//
+
+/**
+ * @brief Smart pointer for GVariant
+ */
+using GVariantPtr = std::unique_ptr<GVariant, GVariantDeleter>;
+
+/**
+ * @brief Smart pointer for GDBusConnection
+ */
+using GDBusConnectionPtr = std::unique_ptr<GDBusConnection, GObjectDeleter>;
+
+/**
+ * @brief Smart pointer for GDBusMethodInvocation
+ */
+using GDBusMethodInvocationPtr = std::unique_ptr<GDBusMethodInvocation, GObjectDeleter>;
+
+/**
+ * @brief Smart pointer for GError
+ */
+using GErrorPtr = std::unique_ptr<GError, GErrorDeleter>;
+
+/**
+ * @brief Smart pointer for GDBusNodeInfo
+ */
+using GDBusNodeInfoPtr = std::unique_ptr<GDBusNodeInfo, GDBusNodeInfoDeleter>;
+
+/**
+ * @brief Smart pointer for GVariantBuilder
+ */
+using GVariantBuilderPtr = std::unique_ptr<GVariantBuilder, GVariantBuilderDeleter>;
+
+/**
+ * @brief Smart pointer for GDBusProxy
+ */
+using GDBusProxyPtr = std::unique_ptr<GDBusProxy, GObjectDeleter>;
+
+/**
+ * @brief Smart pointer for GCancellable
+ */
+using GCancellablePtr = std::unique_ptr<GCancellable, GObjectDeleter>;
+
+/**
+ * @brief Smart pointer for GDBusMessage
+ */
+using GDBusMessagePtr = std::unique_ptr<GDBusMessage, GObjectDeleter>;
+
+/**
+ * @brief Smart pointer for GDBusInterfaceInfo
+ */
+using GDBusInterfaceInfoPtr = std::unique_ptr<GDBusInterfaceInfo, GDBusInterfaceInfoDeleter>;
+
+/**
+ * @brief Smart pointer for GMainLoop
+ */
+using GMainLoopPtr = std::unique_ptr<GMainLoop, GMainLoopDeleter>;
+
+/**
+ * @brief Smart pointer for GSource
+ */
+using GSourcePtr = std::unique_ptr<GSource, GSourceDeleter>;
+
+//
+// 3. Factory functions for creating smart pointers
+//
+
+/**
+ * @brief Create a null GVariantPtr
+ * @return Empty GVariantPtr
  */
 inline GVariantPtr makeNullGVariantPtr() {
-    return GVariantPtr(nullptr, &gvariant_deleter);
+    return GVariantPtr(nullptr);
 }
 
 /**
- * @brief 널(NULL) GDBusMethodInvocation 포인터를 생성하는 함수
- * @return GDBusMethodInvocationPtr 널 포인터를 가리키는 스마트 포인터
+ * @brief Create a null GDBusMethodInvocationPtr
+ * @return Empty GDBusMethodInvocationPtr
  */
 inline GDBusMethodInvocationPtr makeNullGDBusMethodInvocationPtr() {
-    return GDBusMethodInvocationPtr(nullptr, &gobject_deleter);
+    return GDBusMethodInvocationPtr(nullptr);
 }
 
 /**
- * @brief 널(NULL) GDBusProxy 포인터를 생성하는 함수
- * @return GDBusProxyPtr 널 포인터를 가리키는 스마트 포인터
+ * @brief Create a null GDBusProxyPtr
+ * @return Empty GDBusProxyPtr
  */
 inline GDBusProxyPtr makeNullGDBusProxyPtr() {
-    return GDBusProxyPtr(nullptr, &gobject_deleter);
+    return GDBusProxyPtr(nullptr);
 }
 
 /**
- * @brief 널(NULL) GDBusMessage 포인터를 생성하는 함수
- * @return GDBusMessagePtr 널 포인터를 가리키는 스마트 포인터
+ * @brief Create a null GDBusMessagePtr
+ * @return Empty GDBusMessagePtr
  */
 inline GDBusMessagePtr makeNullGDBusMessagePtr() {
-    return GDBusMessagePtr(nullptr, &gobject_deleter);
+    return GDBusMessagePtr(nullptr);
 }
 
 /**
- * @brief 널(NULL) GError 포인터를 생성하는 함수
- * @return GErrorPtr 널 포인터를 가리키는 스마트 포인터
+ * @brief Create a null GErrorPtr
+ * @return Empty GErrorPtr
  */
 inline GErrorPtr makeNullGErrorPtr() {
-    return GErrorPtr(nullptr, &gerror_deleter);
+    return GErrorPtr(nullptr);
 }
 
-//
-// 5. GLib 객체 타입별 특화된 스마트 포인터 생성 함수
-//
-
 /**
- * @brief GVariant 객체를 래핑하는 스마트 포인터를 생성하는 함수
- * 참조 카운트 관리를 자동으로 처리함 (floating reference를 sink함)
+ * @brief Create a GVariantPtr from a GVariant
  * 
- * @param variant 원시 GVariant 포인터
- * @param take_ownership true인 경우 소유권을 넘겨받음 (기본값),
- *                       false인 경우 참조만 함 (참조 카운트 증가)
- * @return GVariantPtr 스마트 포인터
+ * Properly handles floating references by sinking them.
+ * 
+ * @param variant Raw GVariant pointer
+ * @param take_ownership Whether to take ownership of the reference (default: true)
+ * @return Smart pointer managing the GVariant
  */
- inline GVariantPtr makeGVariantPtr(GVariant* variant, bool take_ownership = true) {
+inline GVariantPtr makeGVariantPtr(GVariant* variant, bool take_ownership = true) {
     if (!variant) {
         return makeNullGVariantPtr();
     }
     
     if (take_ownership) {
-        // 소유권을 가져갈 때는 floating reference를 sink
-        return GVariantPtr(g_variant_ref_sink(variant), &g_variant_unref);
+        // If variant has a floating reference, sink it to ensure it's owned
+        return GVariantPtr(g_variant_ref_sink(variant));
     } else {
-        // 참조만 할 때는 ref만 증가
-        return GVariantPtr(g_variant_ref(variant), &g_variant_unref);
+        // Just add a reference without sinking
+        return GVariantPtr(g_variant_ref(variant));
     }
 }
 
 /**
- * @brief GDBusProxy 객체를 래핑하는 스마트 포인터를 생성하는 함수
- * 참조 카운트를 자동으로 증가시킴
+ * @brief Create a GDBusConnectionPtr from a GDBusConnection
  * 
- * @param proxy 원시 GDBusProxy 포인터
- * @return GDBusProxyPtr 스마트 포인터
+ * @param connection Raw GDBusConnection pointer
+ * @return Smart pointer managing the GDBusConnection
  */
-inline GDBusProxyPtr makeGDBusProxyPtr(GDBusProxy* proxy) {
-    if (!proxy) {
-        return makeNullGDBusProxyPtr();
+inline GDBusConnectionPtr makeGDBusConnectionPtr(GDBusConnection* connection) {
+    if (!connection) {
+        return GDBusConnectionPtr(nullptr);
     }
-    return GDBusProxyPtr(g_object_ref(proxy), &gobject_deleter);
+    // Take a new reference
+    return GDBusConnectionPtr(static_cast<GDBusConnection*>(g_object_ref(connection)));
 }
 
 /**
- * @brief GDBusMethodInvocation 객체를 래핑하는 스마트 포인터를 생성하는 함수
- * 참조 카운트를 자동으로 증가시킴
+ * @brief Create a GDBusMethodInvocationPtr from a GDBusMethodInvocation
  * 
- * @param invocation 원시 GDBusMethodInvocation 포인터
- * @return GDBusMethodInvocationPtr 스마트 포인터
+ * @param invocation Raw GDBusMethodInvocation pointer
+ * @return Smart pointer managing the GDBusMethodInvocation
  */
 inline GDBusMethodInvocationPtr makeGDBusMethodInvocationPtr(GDBusMethodInvocation* invocation) {
     if (!invocation) {
         return makeNullGDBusMethodInvocationPtr();
     }
-    return GDBusMethodInvocationPtr(g_object_ref(invocation), &gobject_deleter);
+    // Take a new reference
+    return GDBusMethodInvocationPtr(static_cast<GDBusMethodInvocation*>(g_object_ref(invocation)));
 }
 
 /**
- * @brief GDBusMessage 객체를 래핑하는 스마트 포인터를 생성하는 함수
- * 참조 카운트를 자동으로 증가시킴
+ * @brief Create a GDBusMessagePtr from a GDBusMessage
  * 
- * @param message 원시 GDBusMessage 포인터
- * @return GDBusMessagePtr 스마트 포인터
+ * @param message Raw GDBusMessage pointer
+ * @return Smart pointer managing the GDBusMessage
  */
 inline GDBusMessagePtr makeGDBusMessagePtr(GDBusMessage* message) {
     if (!message) {
         return makeNullGDBusMessagePtr();
     }
-    return GDBusMessagePtr(g_object_ref(message), &gobject_deleter);
+    // Take a new reference
+    return GDBusMessagePtr(static_cast<GDBusMessage*>(g_object_ref(message)));
 }
 
 /**
- * @brief GError 객체를 래핑하는 스마트 포인터를 생성하는 함수
+ * @brief Create a GErrorPtr from a GError
  * 
- * @param error 원시 GError 포인터
- * @return GErrorPtr 스마트 포인터
+ * @param error Raw GError pointer
+ * @return Smart pointer managing the GError
  */
 inline GErrorPtr makeGErrorPtr(GError* error) {
-    return GErrorPtr(error, &gerror_deleter);
+    return GErrorPtr(error);
 }
 
 /**
- * @brief GDBusNodeInfo 객체를 래핑하는 스마트 포인터를 생성하는 함수
+ * @brief Create a GDBusNodeInfoPtr from a GDBusNodeInfo
  * 
- * @param info 원시 GDBusNodeInfo 포인터
- * @return GDBusNodeInfoPtr 스마트 포인터
+ * @param info Raw GDBusNodeInfo pointer
+ * @return Smart pointer managing the GDBusNodeInfo
  */
 inline GDBusNodeInfoPtr makeGDBusNodeInfoPtr(GDBusNodeInfo* info) {
     if (!info) {
-        return GDBusNodeInfoPtr(nullptr, &gdbusnodeinfo_deleter);
+        return GDBusNodeInfoPtr(nullptr);
     }
-    return GDBusNodeInfoPtr(info, &gdbusnodeinfo_deleter);
+    return GDBusNodeInfoPtr(info);
 }
 
 /**
- * @brief GVariantBuilder 객체를 래핑하는 스마트 포인터를 생성하는 함수
+ * @brief Create a GVariantBuilderPtr from a GVariantBuilder
  * 
- * @param builder 원시 GVariantBuilder 포인터
- * @return GVariantBuilderPtr 스마트 포인터
+ * @param builder Raw GVariantBuilder pointer
+ * @return Smart pointer managing the GVariantBuilder
  */
 inline GVariantBuilderPtr makeGVariantBuilderPtr(GVariantBuilder* builder) {
     if (!builder) {
-        return GVariantBuilderPtr(nullptr, &gvariantbuilder_deleter);
+        return GVariantBuilderPtr(nullptr);
     }
-    return GVariantBuilderPtr(builder, &gvariantbuilder_deleter);
+    return GVariantBuilderPtr(builder);
 }
 
 /**
- * @brief GDBusConnection 객체를 래핑하는 스마트 포인터를 생성하는 함수
- * 참조 카운트를 자동으로 증가시킴
+ * @brief Create a GCancellablePtr from a GCancellable
  * 
- * @param connection 원시 GDBusConnection 포인터
- * @return GDBusConnectionPtr 스마트 포인터
- */
-inline GDBusConnectionPtr makeGDBusConnectionPtr(GDBusConnection* connection) {
-    if (!connection) {
-        return GDBusConnectionPtr(nullptr, &gobject_deleter);
-    }
-    return GDBusConnectionPtr(g_object_ref(connection), &gobject_deleter);
-}
-
-/**
- * @brief GCancellable 객체를 래핑하는 스마트 포인터를 생성하는 함수
- * 참조 카운트를 자동으로 증가시킴
- * 
- * @param cancellable 원시 GCancellable 포인터
- * @return GCancellablePtr 스마트 포인터
+ * @param cancellable Raw GCancellable pointer
+ * @return Smart pointer managing the GCancellable
  */
 inline GCancellablePtr makeGCancellablePtr(GCancellable* cancellable) {
     if (!cancellable) {
-        return GCancellablePtr(nullptr, &gobject_deleter);
+        return GCancellablePtr(nullptr);
     }
-    return GCancellablePtr(g_object_ref(cancellable), &gobject_deleter);
+    // Take a new reference
+    return GCancellablePtr(static_cast<GCancellable*>(g_object_ref(cancellable)));
 }
 
 /**
- * @brief GMainLoop 객체를 래핑하는 스마트 포인터를 생성하는 함수
+ * @brief Create a GMainLoopPtr from a GMainLoop
  * 
- * @param loop 원시 GMainLoop 포인터
- * @return GMainLoopPtr 스마트 포인터
+ * @param loop Raw GMainLoop pointer
+ * @return Smart pointer managing the GMainLoop
  */
 inline GMainLoopPtr makeGMainLoopPtr(GMainLoop* loop) {
     if (!loop) {
-        return GMainLoopPtr(nullptr, &gmainloop_deleter);
+        return GMainLoopPtr(nullptr);
     }
-    return GMainLoopPtr(loop, &gmainloop_deleter);
+    return GMainLoopPtr(loop);
 }
 
 /**
- * @brief GSource 객체를 래핑하는 스마트 포인터를 생성하는 함수
+ * @brief Create a GSourcePtr from a GSource
  * 
- * @param source 원시 GSource 포인터
- * @return GSourcePtr 스마트 포인터
+ * @param source Raw GSource pointer
+ * @return Smart pointer managing the GSource
  */
 inline GSourcePtr makeGSourcePtr(GSource* source) {
     if (!source) {
-        return GSourcePtr(nullptr, &gsource_deleter);
+        return GSourcePtr(nullptr);
     }
-    return GSourcePtr(source, &gsource_deleter);
+    return GSourcePtr(source);
 }
 
 //
-// 6. D-Bus 관련 타입 정의
+// 4. D-Bus type definitions
 //
 
 /**
- * @brief D-Bus 인자 정의 구조체
+ * @brief D-Bus message type enumeration
+ */
+enum class DBusMessageType {
+    METHOD_CALL,    ///< Method call message
+    METHOD_RETURN,  ///< Method return message
+    ERROR,          ///< Error message
+    SIGNAL          ///< Signal message
+};
+
+/**
+ * @brief D-Bus argument definition structure
  */
 struct DBusArgument {
-    std::string signature;   // D-Bus 타입 시그니처
-    std::string name;        // 인자 이름
-    std::string direction;   // "in" 또는 "out"
-    std::string description; // 인자 설명
+    std::string signature;   ///< D-Bus type signature
+    std::string name;        ///< Argument name
+    std::string direction;   ///< Direction ("in" or "out")
+    std::string description; ///< Argument description
     
-    // 기본 생성자
     DBusArgument() = default;
     
-    // 생성자 - 모든 필드 초기화
     DBusArgument(
         std::string sig,
         std::string n,
@@ -384,40 +380,19 @@ struct DBusArgument {
 };
 
 /**
- * @brief D-Bus 메시지 타입 열거형
- */
-enum class DBusMessageType {
-    METHOD_CALL,
-    METHOD_RETURN,
-    ERROR,
-    SIGNAL
-};
-
-/**
- * @brief D-Bus 기본 인터페이스 상수 구조체
- */
-struct DBusInterface {
-    static constexpr const char* PROPERTIES = "org.freedesktop.DBus.Properties";
-    static constexpr const char* INTROSPECTABLE = "org.freedesktop.DBus.Introspectable";
-    static constexpr const char* OBJECTMANAGER = "org.freedesktop.DBus.ObjectManager";
-};
-
-/**
- * @brief D-Bus 속성 구조체
+ * @brief D-Bus property definition structure
  */
 struct DBusProperty {
-    std::string name;                     // 속성 이름
-    std::string signature;                // 타입 시그니처
-    bool readable;                        // 읽기 가능 여부
-    bool writable;                        // 쓰기 가능 여부
-    bool emitsChangedSignal;              // 값 변경 시 시그널 발생 여부
-    std::function<GVariant*()> getter;    // getter 콜백
-    std::function<bool(GVariant*)> setter;// setter 콜백
+    std::string name;                     ///< Property name
+    std::string signature;                ///< Type signature
+    bool readable;                        ///< Whether property is readable
+    bool writable;                        ///< Whether property is writable
+    bool emitsChangedSignal;              ///< Whether property emits changed signal
+    std::function<GVariant*()> getter;    ///< Property getter callback
+    std::function<bool(GVariant*)> setter;///< Property setter callback
     
-    // 기본 생성자
     DBusProperty() = default;
     
-    // 생성자 - 모든 필드 초기화
     DBusProperty(
         std::string n,
         std::string sig,
@@ -436,29 +411,27 @@ struct DBusProperty {
 };
 
 /**
- * @brief D-Bus 메서드 호출 구조체
+ * @brief D-Bus method call information structure
  */
 struct DBusMethodCall {
-    std::string sender;                     // 발신자
-    std::string interface;                  // 인터페이스 이름
-    std::string method;                     // 메서드 이름
-    GVariantPtr parameters;                 // 매개변수
-    GDBusMethodInvocationPtr invocation;    // 메서드 호출 객체
+    std::string sender;                     ///< Method call sender
+    std::string interface;                  ///< Interface name
+    std::string method;                     ///< Method name
+    GVariantPtr parameters;                 ///< Method parameters
+    GDBusMethodInvocationPtr invocation;    ///< Method invocation object
     
-    // 기본 생성자
     DBusMethodCall() : 
         parameters(makeNullGVariantPtr()),
         invocation(makeNullGDBusMethodInvocationPtr()) {}
     
-    // 복사 생성자/할당 연산자 삭제 (복사 불가능)
+    // Disable copy operations
     DBusMethodCall(const DBusMethodCall&) = delete;
     DBusMethodCall& operator=(const DBusMethodCall&) = delete;
     
-    // 이동 생성자/할당 연산자
+    // Enable move operations
     DBusMethodCall(DBusMethodCall&&) noexcept = default;
     DBusMethodCall& operator=(DBusMethodCall&&) noexcept = default;
     
-    // 전체 필드 초기화 생성자
     DBusMethodCall(
         std::string s,
         std::string i,
@@ -473,31 +446,36 @@ struct DBusMethodCall {
 };
 
 /**
- * @brief D-Bus 시그널 구조체
+ * @brief D-Bus signal definition structure
  */
 struct DBusSignal {
-    std::string name;                        // 시그널 이름
-    std::vector<DBusArgument> arguments;     // 인자 목록
+    std::string name;                        ///< Signal name
+    std::vector<DBusArgument> arguments;     ///< Signal arguments
     
-    // 기본 생성자
     DBusSignal() = default;
     
-    // 생성자 - 모든 필드 초기화
     DBusSignal(std::string n, std::vector<DBusArgument> args = {})
         : name(std::move(n)), arguments(std::move(args)) {}
 };
 
 /**
- * @brief D-Bus 인트로스펙션 구조체
+ * @brief D-Bus interface constants
+ */
+struct DBusInterface {
+    static constexpr const char* PROPERTIES = "org.freedesktop.DBus.Properties";
+    static constexpr const char* INTROSPECTABLE = "org.freedesktop.DBus.Introspectable";
+    static constexpr const char* OBJECTMANAGER = "org.freedesktop.DBus.ObjectManager";
+};
+
+/**
+ * @brief D-Bus introspection options structure
  */
 struct DBusIntrospection {
-    bool includeStandardInterfaces = true;      // 표준 인터페이스 포함 여부
-    std::map<std::string, std::string> annotations; // 주석
+    bool includeStandardInterfaces = true;      ///< Whether to include standard interfaces
+    std::map<std::string, std::string> annotations; ///< Additional annotations
     
-    // 기본 생성자
     DBusIntrospection() = default;
     
-    // 생성자 - 필드 초기화
     explicit DBusIntrospection(bool includeStd, 
                                std::map<std::string, std::string> annots = {})
         : includeStandardInterfaces(includeStd), 

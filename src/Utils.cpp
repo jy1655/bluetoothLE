@@ -1,61 +1,57 @@
 #include <algorithm>
 #include <string.h>
-
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fstream>
+#include <filesystem>
 #include "Utils.h"
+#include "Logger.h"
 
 namespace ggk {
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// Handy string functions
+// String utility functions
 // ---------------------------------------------------------------------------------------------------------------------------------
 
 // Trim from start (in place)
-void Utils::trimBeginInPlace(std::string &str)
-{
+void Utils::trimBeginInPlace(std::string &str) {
     str.erase(str.begin(), std::find_if(str.begin(), str.end(),
-    [](int ch)
-    {
+    [](unsigned char ch) {
         return !std::isspace(ch);
     }));
 }
 
 // Trim from end (in place)
-void Utils::trimEndInPlace(std::string &str)
-{
+void Utils::trimEndInPlace(std::string &str) {
     str.erase(std::find_if(str.rbegin(), str.rend(),
-    [](int ch)
-    {
+    [](unsigned char ch) {
         return !std::isspace(ch);
     }).base(), str.end());
 }
 
 // Trim from both ends (in place)
-void Utils::trimInPlace(std::string &str)
-{
+void Utils::trimInPlace(std::string &str) {
     trimBeginInPlace(str);
     trimEndInPlace(str);
 }
 
 // Trim from start (copying)
-std::string Utils::trimBegin(const std::string &str)
-{
-	std::string out = str;
+std::string Utils::trimBegin(const std::string &str) {
+    std::string out = str;
     trimBeginInPlace(out);
     return out;
 }
 
 // Trim from end (copying)
-std::string Utils::trimEnd(const std::string &str)
-{
-	std::string out = str;
+std::string Utils::trimEnd(const std::string &str) {
+    std::string out = str;
     trimEndInPlace(out);
     return out;
 }
 
 // Trim from both ends (copying)
-std::string Utils::trim(const std::string &str)
-{
-	std::string out = str;
+std::string Utils::trim(const std::string &str) {
+    std::string out = str;
     trimInPlace(out);
     return out;
 }
@@ -65,378 +61,140 @@ std::string Utils::trim(const std::string &str)
 // ---------------------------------------------------------------------------------------------------------------------------------
 
 // Returns a zero-padded 8-bit hex value in the format: 0xA
-std::string Utils::hex(uint8_t value)
-{
-	char hex[16];
-	sprintf(hex, "0x%02X", value);
-	return hex;
+std::string Utils::hex(uint8_t value) {
+    char hex[16];
+    sprintf(hex, "0x%02X", value);
+    return hex;
 }
 
 // Returns a zero-padded 8-bit hex value in the format: 0xAB
-std::string Utils::hex(uint16_t value)
-{
-	char hex[16];
-	sprintf(hex, "0x%04X", value);
-	return hex;
+std::string Utils::hex(uint16_t value) {
+    char hex[16];
+    sprintf(hex, "0x%04X", value);
+    return hex;
 }
 
 // Returns a zero-padded 8-bit hex value in the format: 0xABCD
-std::string Utils::hex(uint32_t value)
-{
-	char hex[16];
-	sprintf(hex, "0x%08X", value);
-	return hex;
+std::string Utils::hex(uint32_t value) {
+    char hex[16];
+    sprintf(hex, "0x%08X", value);
+    return hex;
 }
 
 // A full hex-dump of binary data (with accompanying ASCII output)
-std::string Utils::hex(const uint8_t *pData, int count)
-{
-	char hex[16];
+std::string Utils::hex(const uint8_t *pData, int count) {
+    if (!pData || count <= 0) {
+        return "[empty data]";
+    }
 
-	// Hex data output
-	std::string line;
-	std::vector<std::string> hexData;
-	for (int i = 0; i < count; ++i)
-	{
-		sprintf(hex, "%02X ", pData[i]);
-		line += hex;
+    char hex[16];
+    std::string line;
+    std::vector<std::string> hexData;
+    std::vector<std::string> asciiData;
 
-		if (line.length() >= 16 * 3)
-		{
-			hexData.push_back(line);
-			line = "";
-		}
-	}
+    // Hex data output
+    for (int i = 0; i < count; ++i) {
+        sprintf(hex, "%02X ", pData[i]);
+        line += hex;
 
-	if (!line.empty())
-	{
-		hexData.push_back(line);
-		line = "";
-	}
-
-	// ASCII data output
-	std::vector<std::string> asciiData;
-	for (int i = 0; i < count; ++i)
-	{
-		// Unprintable?
-		if (pData[i] < 0x20 || pData[i] > 0x7e)
-		{
-			line += ".";
-		}
-		else
-		{
-			line += pData[i];
-		}
-
-		if (line.length() >= 16)
-		{
-			asciiData.push_back(line);
-			line = "";
-		}
-	}
-
-	if (!line.empty())
-	{
-		asciiData.push_back(line);
-	}
-
-	std::string result = "";
-	size_t dataSize = hexData.size();
-	for (size_t i = 0; i < dataSize; ++i)
-	{
-		std::string hexPart = hexData[i];
-		hexPart.insert(hexPart.length(), 48-hexPart.length(), ' ');
-
-		std::string asciiPart = asciiData[i];
-		asciiPart.insert(asciiPart.length(), 16-asciiPart.length(), ' ');
-
-		result += std::string("    > ") + hexPart + "   [" + asciiPart + "]";
-
-		if (i < dataSize - 1) { result += "\n"; }
-	}
-
-	return result;
-}
-
-// Returns a peoperly formatted Bluetooth address from a set of six octets stored at `pAddress`
-//
-// USE WITH CAUTION: It is expected that pAddress point to an array of 6 bytes. The length of the array cannot be validated and
-// incorrect lengths will produce undefined, likely unwanted and potentially fatal results. Or it will return the address of the
-// train at platform 9 3/4. You decide.
-//
-// This method returns a set of six zero-padded 8-bit hex values 8-bit in the format: 12:34:56:78:9A:BC
-std::string Utils::bluetoothAddressString(uint8_t *pAddress)
-{
-	char hex[32];
-	snprintf(hex, sizeof(hex), "%02X:%02X:%02X:%02X:%02X:%02X", 
-		pAddress[0], pAddress[1], pAddress[2], pAddress[3], pAddress[4], pAddress[5]);
-	return hex;
-}
-
-// ---------------------------------------------------------------------------------------------------------------------------------
-// GVariant helper functions - 원래 버전 (raw 포인터 반환)
-// ---------------------------------------------------------------------------------------------------------------------------------
-
-// Returns a GVariant containing a floating reference to a utf8 string
-GVariant *Utils::gvariantFromString(const char *pStr)
-{
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariant* variant = g_variant_new_string(pStr);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(variant);
-}
-
-// Returns a GVariant containing a floating reference to a utf8 string
-GVariant *Utils::gvariantFromString(const std::string &str)
-{
-    return gvariantFromString(str.c_str());
-}
-
-// Returns an array of strings ("as") with one string per variable argument.
-//
-// The array must be terminated with a nullptr.
-//
-// This is an extension method to the vararg version, which accepts pass-through variable arguments from other mthods.
-GVariant *Utils::gvariantFromStringArray(const char *pStr, va_list args)
-{
-    // 항상 유효한 빌더 사용
-    g_auto(GVariantBuilder) builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
-
-    // pStr이 NULL이 아니면 문자열들 추가
-    if (pStr != nullptr)
-    {
-        const char *currentStr = pStr;
-        while (currentStr != nullptr)
-        {
-            g_variant_builder_add(&builder, "s", currentStr);
-            currentStr = va_arg(args, const char *);
+        if (line.length() >= 16 * 3) {
+            hexData.push_back(line);
+            line = "";
         }
     }
 
-    // g_variant_builder_end는 floating reference를 반환하므로 sink 필요 없음
-    return g_variant_builder_end(&builder);
-}
-
-// Returns an array of strings ("as") with one string per variable argument.
-//
-// The array must be terminated with a nullptr.
-GVariant *Utils::gvariantFromStringArray(const char *pStr, ...)
-{
-    // 항상 유효한 빌더 사용
-    g_auto(GVariantBuilder) builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
-
-    // pStr이 NULL이 아니면 문자열들 추가
-    if (pStr != nullptr)
-    {
-        va_list args;
-        va_start(args, pStr);
-
-        const char *currentStr = pStr;
-        while (currentStr != nullptr)
-        {
-            g_variant_builder_add(&builder, "s", currentStr);
-            currentStr = va_arg(args, const char *);
-        }
-
-        va_end(args);
+    if (!line.empty()) {
+        hexData.push_back(line);
+        line = "";
     }
 
-    return g_variant_builder_end(&builder);
-}
+    // ASCII data output
+    for (int i = 0; i < count; ++i) {
+        // Unprintable?
+        if (pData[i] < 0x20 || pData[i] > 0x7e) {
+            line += ".";
+        } else {
+            line += pData[i];
+        }
 
-// Returns an array of strings ("as") from an array of strings
-GVariant* Utils::gvariantFromStringArray(const std::vector<std::string>& arr) {
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromStringArray(arr);
-    // 중요: ref_sink 대신 g_variant_ref만 사용
-    return g_variant_ref(ptr.get());
-}
-
-// Returns an array of strings ("as") from an array of C strings
-GVariant *Utils::gvariantFromStringArray(const std::vector<const char *> &arr)
-{
-    g_auto(GVariantBuilder) builder;
-    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
-
-    for (const char *pStr : arr)
-    {
-        if (pStr != nullptr) // NULL 체크
-        {
-            g_variant_builder_add(&builder, "s", pStr);
+        if (line.length() >= 16) {
+            asciiData.push_back(line);
+            line = "";
         }
     }
 
-    return g_variant_builder_end(&builder);
+    if (!line.empty()) {
+        asciiData.push_back(line);
+    }
+
+    std::string result = "";
+    size_t dataSize = hexData.size();
+    for (size_t i = 0; i < dataSize; ++i) {
+        std::string hexPart = hexData[i];
+        hexPart.insert(hexPart.length(), 48-hexPart.length(), ' ');
+
+        std::string asciiPart = (i < asciiData.size()) ? asciiData[i] : "";
+        asciiPart.insert(asciiPart.length(), 16-asciiPart.length(), ' ');
+
+        result += std::string("    > ") + hexPart + "   [" + asciiPart + "]";
+
+        if (i < dataSize - 1) { result += "\n"; }
+    }
+
+    return result;
 }
 
-// Returns an GVariant* containing an object path ("o") from an DBusObjectPath
-GVariant* Utils::gvariantFromObject(const DBusObjectPath& path)
-{
-    // 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromObject(path);
-    if (!ptr) {
-        return nullptr;
+// Returns a properly formatted Bluetooth address from a set of six octets
+std::string Utils::bluetoothAddressString(uint8_t *pAddress) {
+    if (!pAddress) {
+        return "[invalid address]";
     }
     
-    // 호출자에게 참조 반환 (호출자가 해제 책임)
-    return g_variant_ref(ptr.get());
-}
-
-// Returns an GVariant* containing a boolean
-GVariant* Utils::gvariantFromBoolean(bool b) {
-    // 스마트 포인터 버전 사용하고 참조만 전달
-    GVariantPtr ptr = gvariantPtrFromBoolean(b);
-    return g_variant_ref(ptr.get()); // 호출자에게 소유권 이전
-}
-
-// Returns an GVariant* containing a 16-bit integer
-GVariant *Utils::gvariantFromInt(gint16 value)
-{
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromInt(value);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
-}
-
-// Returns an GVariant* containing a 32-bit integer
-GVariant *Utils::gvariantFromInt(gint32 value)
-{
-    return g_variant_new_int32(value);
-}
-
-// Returns an array of bytes ("ay") with the contents of the input C string
-GVariant *Utils::gvariantFromByteArray(const char *pStr)
-{
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromByteArray(pStr);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
-}
-
-// Returns an array of bytes ("ay") with the contents of the input string
-GVariant *Utils::gvariantFromByteArray(const std::string &str)
-{
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromByteArray(str);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
-}
-
-// Returns an array of bytes ("ay") with the contents of the input array of unsigned 8-bit values
-GVariant *Utils::gvariantFromByteArray(const guint8 *pBytes, int count)
-{
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromByteArray(pBytes, count);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
-}
-
-// Returns an array of bytes ("ay") with the contents of the input array of unsigned 8-bit values
-GVariant *Utils::gvariantFromByteArray(const std::vector<guint8> bytes)
-{
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = gvariantPtrFromByteArray(bytes);
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
-}
-
-// Returns an array of bytes ("ay") containing a single unsigned 8-bit value
-GVariant *Utils::gvariantFromByteArray(const guint8 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
-}
-
-// Returns an array of bytes ("ay") containing a single signed 8-bit value
-GVariant *Utils::gvariantFromByteArray(const gint8 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
-}
-
-// Returns an array of bytes ("ay") containing a single unsigned 16-bit value
-GVariant *Utils::gvariantFromByteArray(const guint16 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
-}
-
-// Returns an array of bytes ("ay") containing a single signed 16-bit value
-GVariant *Utils::gvariantFromByteArray(const gint16 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
-}
-
-// Returns an array of bytes ("ay") containing a single unsigned 32-bit value
-GVariant *Utils::gvariantFromByteArray(const guint32 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
-}
-
-// Returns an array of bytes ("ay") containing a single signed 32-bit value
-GVariant *Utils::gvariantFromByteArray(const gint32 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
-}
-
-// Returns an array of bytes ("ay") containing a single unsigned 64-bit value
-GVariant *Utils::gvariantFromByteArray(const guint64 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
-}
-
-// Returns an array of bytes ("ay") containing a single signed 64-bit value
-GVariant *Utils::gvariantFromByteArray(const gint64 data)
-{
-	return gvariantFromByteArray((const guint8 *) &data, sizeof(data));
+    char hex[32];
+    snprintf(hex, sizeof(hex), "%02X:%02X:%02X:%02X:%02X:%02X", 
+        pAddress[0], pAddress[1], pAddress[2], pAddress[3], pAddress[4], pAddress[5]);
+    return hex;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-// 새로운 스마트 포인터 기반 GVariant 생성 함수들
+// Modern GVariant smart pointer helpers
 // ---------------------------------------------------------------------------------------------------------------------------------
 
 // Returns a GVariantPtr containing a string
-GVariantPtr Utils::gvariantPtrFromString(const char* pStr)
-{
+GVariantPtr Utils::gvariantPtrFromString(const char* pStr) {
     if (!pStr) {
         return makeNullGVariantPtr();
     }
-    return makeGVariantPtr(g_variant_new_string(pStr));
+    
+    GVariant* variant = g_variant_new_string(pStr);
+    return makeGVariantPtr(variant);
 }
 
-// Returns a GVariantPtr containing a string
-GVariantPtr Utils::gvariantPtrFromString(const std::string& str)
-{
+GVariantPtr Utils::gvariantPtrFromString(const std::string &str) {
     return gvariantPtrFromString(str.c_str());
 }
 
 // Returns a GVariantPtr containing an array of strings ("as") from a vector of strings
-GVariantPtr Utils::gvariantPtrFromStringArray(const std::vector<std::string>& arr)
-{
-    // 명시적으로 힙에 빌더 생성
-    GVariantBuilder* builder = g_variant_builder_new(G_VARIANT_TYPE("as"));
-    
-    for (const auto& str : arr) {
-        g_variant_builder_add(builder, "s", str.c_str());
-    }
-    
-    // 빌더로부터 GVariant 생성
-    GVariant* result = g_variant_builder_end(builder);
-    
-    // 빌더 메모리 해제
-    g_variant_builder_unref(builder);
-    
-    return makeGVariantPtr(result);
-}
-
-// Returns a GVariantPtr containing an array of strings ("as") from a vector of C strings
-GVariantPtr Utils::gvariantPtrFromStringArray(const std::vector<const char*>& arr)
-{
+GVariantPtr Utils::gvariantPtrFromStringArray(const std::vector<std::string> &arr) {
     GVariantBuilder builder;
     g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
 
     for (const auto& str : arr) {
-        if (str) {  // NULL 체크
-            g_variant_builder_add(&builder, "s", str);
+        g_variant_builder_add(&builder, "s", str.c_str());
+    }
+
+    GVariant* result = g_variant_builder_end(&builder);
+    return makeGVariantPtr(result);
+}
+
+// Returns a GVariantPtr containing an array of strings ("as") from a vector of C strings
+GVariantPtr Utils::gvariantPtrFromStringArray(const std::vector<const char *> &arr) {
+    GVariantBuilder builder;
+    g_variant_builder_init(&builder, G_VARIANT_TYPE("as"));
+
+    for (const char* pStr : arr) {
+        if (pStr) {  // NULL check
+            g_variant_builder_add(&builder, "s", pStr);
         }
     }
 
@@ -445,45 +203,53 @@ GVariantPtr Utils::gvariantPtrFromStringArray(const std::vector<const char*>& ar
 }
 
 // Returns a GVariantPtr containing an object path ("o") from a DBusObjectPath
-GVariantPtr Utils::gvariantPtrFromObject(const DBusObjectPath& path)
-{
+GVariantPtr Utils::gvariantPtrFromObject(const DBusObjectPath& path) {
     if (path.toString().empty()) {
         return makeNullGVariantPtr();
     }
     
-    // g_variant_new_object_path는 floating reference를 반환
     GVariant* variant = g_variant_new_object_path(path.c_str());
     if (!variant) {
         return makeNullGVariantPtr();
     }
     
-    // floating reference를 sink하여 참조 카운트 관리
-    return GVariantPtr(g_variant_ref_sink(variant), &g_variant_unref);
+    return makeGVariantPtr(variant);
 }
 
 // Returns a GVariantPtr containing a boolean
-GVariantPtr Utils::gvariantPtrFromBoolean(bool b)
-{
+GVariantPtr Utils::gvariantPtrFromBoolean(bool b) {
     return makeGVariantPtr(g_variant_new_boolean(b));
 }
 
-// Returns a GVariantPtr containing a 16-bit integer
-GVariantPtr Utils::gvariantPtrFromInt(gint16 value)
-{
+// Returns a GVariantPtr containing integers
+GVariantPtr Utils::gvariantPtrFromInt(gint16 value) {
     return makeGVariantPtr(g_variant_new_int16(value));
 }
 
-// Returns a GVariantPtr containing a 32-bit integer
-GVariantPtr Utils::gvariantPtrFromInt(gint32 value)
-{
+GVariantPtr Utils::gvariantPtrFromInt(gint32 value) {
     return makeGVariantPtr(g_variant_new_int32(value));
 }
 
+GVariantPtr Utils::gvariantPtrFromInt(gint64 value) {
+    return makeGVariantPtr(g_variant_new_int64(value));
+}
+
+GVariantPtr Utils::gvariantPtrFromUInt(guint16 value) {
+    return makeGVariantPtr(g_variant_new_uint16(value));
+}
+
+GVariantPtr Utils::gvariantPtrFromUInt(guint32 value) {
+    return makeGVariantPtr(g_variant_new_uint32(value));
+}
+
+GVariantPtr Utils::gvariantPtrFromUInt(guint64 value) {
+    return makeGVariantPtr(g_variant_new_uint64(value));
+}
+
 // Returns a GVariantPtr containing an array of bytes ("ay") from a C string
-GVariantPtr Utils::gvariantPtrFromByteArray(const char* pStr)
-{
-    if (!pStr || *pStr == 0) {
-        // 빈 바이트 배열 생성
+GVariantPtr Utils::gvariantPtrFromByteArray(const char* pStr) {
+    if (!pStr) {
+        // Empty byte array
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("ay"));
         GVariant* result = g_variant_builder_end(&builder);
@@ -494,10 +260,9 @@ GVariantPtr Utils::gvariantPtrFromByteArray(const char* pStr)
 }
 
 // Returns a GVariantPtr containing an array of bytes ("ay") from a string
-GVariantPtr Utils::gvariantPtrFromByteArray(const std::string& str)
-{
+GVariantPtr Utils::gvariantPtrFromByteArray(const std::string& str) {
     if (str.empty()) {
-        // 빈 바이트 배열 생성
+        // Empty byte array
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("ay"));
         GVariant* result = g_variant_builder_end(&builder);
@@ -508,16 +273,16 @@ GVariantPtr Utils::gvariantPtrFromByteArray(const std::string& str)
 }
 
 // Returns a GVariantPtr containing an array of bytes ("ay") from raw byte data
-GVariantPtr Utils::gvariantPtrFromByteArray(const guint8* pBytes, int count)
-{
+GVariantPtr Utils::gvariantPtrFromByteArray(const guint8* pBytes, int count) {
     if (!pBytes || count <= 0) {
-        // 빈 바이트 배열 생성
+        // Empty byte array
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("ay"));
         GVariant* result = g_variant_builder_end(&builder);
         return makeGVariantPtr(result);
     }
     
+    // More efficient implementation using GBytes
     GBytes* bytes = g_bytes_new(pBytes, count);
     GVariant* variant = g_variant_new_from_bytes(G_VARIANT_TYPE_BYTESTRING, bytes, true);
     g_bytes_unref(bytes);
@@ -526,10 +291,9 @@ GVariantPtr Utils::gvariantPtrFromByteArray(const guint8* pBytes, int count)
 }
 
 // Returns a GVariantPtr containing an array of bytes ("ay") from a vector of bytes
-GVariantPtr Utils::gvariantPtrFromByteArray(const std::vector<guint8> bytes)
-{
+GVariantPtr Utils::gvariantPtrFromByteArray(const std::vector<guint8> bytes) {
     if (bytes.empty()) {
-        // 빈 바이트 배열 생성
+        // Empty byte array
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("ay"));
         GVariant* result = g_variant_builder_end(&builder);
@@ -540,8 +304,7 @@ GVariantPtr Utils::gvariantPtrFromByteArray(const std::vector<guint8> bytes)
 }
 
 // Extracts a string from an array of bytes ("ay")
-std::string Utils::stringFromGVariantByteArray(const GVariant *pVariant)
-{
+std::string Utils::stringFromGVariantByteArray(const GVariant *pVariant) {
     if (!pVariant) {
         return "";
     }
@@ -552,24 +315,192 @@ std::string Utils::stringFromGVariantByteArray(const GVariant *pVariant)
         return "";
     }
     
-    std::vector<gchar> array(size + 1, 0);
-    memcpy(array.data(), pPtr, size);
-    return array.data();
+    return std::string(static_cast<const char*>(pPtr), size);
 }
 
-// Make a Empty GvarientBuilder
-GVariant *Utils::createEmptyDictionary() 
-{
-    // 내부적으로 스마트 포인터 버전 사용
-    GVariantPtr ptr = createEmptyDictionaryPtr();
-    // 소유권 이전을 위해 참조 카운트 증가 후 raw 포인터 반환
-    return g_variant_ref_sink(g_variant_ref(ptr.get()));
-}
-
-// Make an Empty GVariantBuilder as a smart pointer
-GVariantPtr Utils::createEmptyDictionaryPtr()
-{
+// Creates an empty dictionary variant
+GVariantPtr Utils::createEmptyDictionaryPtr() {
     return makeGVariantPtr(g_variant_new_array(G_VARIANT_TYPE("{sv}"), NULL, 0));
 }
 
+// Creates an empty array variant of the specified type
+GVariantPtr Utils::createEmptyArrayPtr(const GVariantType* type) {
+    return makeGVariantPtr(g_variant_new_array(type, NULL, 0));
 }
+
+// Parse variant data to boolean
+bool Utils::variantToBoolean(GVariant* variant, bool defaultValue) {
+    if (!variant) {
+        return defaultValue;
+    }
+    
+    if (g_variant_is_of_type(variant, G_VARIANT_TYPE_BOOLEAN)) {
+        return g_variant_get_boolean(variant);
+    }
+    
+    return defaultValue;
+}
+
+// Parse variant data to string
+std::string Utils::variantToString(GVariant* variant, const std::string& defaultValue) {
+    if (!variant) {
+        return defaultValue;
+    }
+    
+    if (g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING)) {
+        const gchar* value = g_variant_get_string(variant, NULL);
+        return value ? value : defaultValue;
+    }
+    
+    return defaultValue;
+}
+
+// Parse variant data to string array
+std::vector<std::string> Utils::variantToStringArray(GVariant* variant) {
+    std::vector<std::string> result;
+    
+    if (!variant || !g_variant_is_of_type(variant, G_VARIANT_TYPE_STRING_ARRAY)) {
+        return result;
+    }
+    
+    gsize size = g_variant_n_children(variant);
+    for (gsize i = 0; i < size; i++) {
+        GVariant* child = g_variant_get_child_value(variant, i);
+        if (child) {
+            const gchar* value = g_variant_get_string(child, NULL);
+            if (value) {
+                result.push_back(value);
+            }
+            g_variant_unref(child);
+        }
+    }
+    
+    return result;
+}
+
+// Parse variant data to byte array
+std::vector<uint8_t> Utils::variantToByteArray(GVariant* variant) {
+    std::vector<uint8_t> result;
+    
+    if (!variant) {
+        return result;
+    }
+    
+    if (g_variant_is_of_type(variant, G_VARIANT_TYPE_BYTESTRING)) {
+        gsize size;
+        const guint8* data = static_cast<const guint8*>(g_variant_get_fixed_array(variant, &size, 1));
+        if (data && size > 0) {
+            result.assign(data, data + size);
+        }
+    }
+    else if (g_variant_is_of_type(variant, G_VARIANT_TYPE("ay"))) {
+        gsize size = g_variant_n_children(variant);
+        result.reserve(size);
+        
+        for (gsize i = 0; i < size; i++) {
+            GVariant* child = g_variant_get_child_value(variant, i);
+            if (child) {
+                guint8 byte = g_variant_get_byte(child);
+                result.push_back(byte);
+                g_variant_unref(child);
+            }
+        }
+    }
+    
+    return result;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------
+// Bluetooth utilities
+// ---------------------------------------------------------------------------------------------------------------------------------
+
+// Check if a command is available
+bool Utils::isCommandAvailable(const std::string& command) {
+    return access((std::string("/usr/bin/") + command).c_str(), X_OK) == 0 ||
+           access((std::string("/bin/") + command).c_str(), X_OK) == 0 ||
+           access((std::string("/usr/sbin/") + command).c_str(), X_OK) == 0 ||
+           access((std::string("/sbin/") + command).c_str(), X_OK) == 0;
+}
+
+// Check if BlueZ service is running
+bool Utils::isBlueZServiceRunning() {
+    int result = system("systemctl is-active --quiet bluetooth.service");
+    return result == 0;
+}
+
+// Check if a Bluetooth adapter is available
+bool Utils::isBluetoothAdapterAvailable(const std::string& adapter) {
+    return std::filesystem::exists("/sys/class/bluetooth/" + adapter);
+}
+
+// Check if a package is installed
+bool Utils::isPackageInstalled(const std::string& packageName) {
+    std::string command = "dpkg -s " + packageName + " 2>/dev/null | grep 'Status: install ok installed' >/dev/null";
+    int result = system(command.c_str());
+    return result == 0;
+}
+
+// Write content to a file
+bool Utils::writeToFile(const std::string& filename, const std::string& content) {
+    try {
+        std::ofstream file(filename);
+        if (!file) {
+            return false;
+        }
+        
+        file << content;
+        return file.good();
+    }
+    catch (const std::exception& e) {
+        Logger::error("Error writing to file: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// Read content from a file
+std::string Utils::readFromFile(const std::string& filename) {
+    try {
+        std::ifstream file(filename);
+        if (!file) {
+            return "";
+        }
+        
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        return buffer.str();
+    }
+    catch (const std::exception& e) {
+        Logger::error("Error reading from file: " + std::string(e.what()));
+        return "";
+    }
+}
+
+// Execute a shell script from string content
+bool Utils::executeScript(const std::string& scriptContent) {
+    try {
+        // Create a temporary file for the script
+        std::string tempFileName = "/tmp/ble_script_" + std::to_string(getpid()) + ".sh";
+        
+        // Write the script content to the file
+        if (!writeToFile(tempFileName, scriptContent)) {
+            return false;
+        }
+        
+        // Make the script executable
+        chmod(tempFileName.c_str(), 0755);
+        
+        // Execute the script
+        int result = system(tempFileName.c_str());
+        
+        // Clean up
+        std::filesystem::remove(tempFileName);
+        
+        return result == 0;
+    }
+    catch (const std::exception& e) {
+        Logger::error("Error executing script: " + std::string(e.what()));
+        return false;
+    }
+}
+
+} // namespace ggk
