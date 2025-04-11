@@ -1,4 +1,5 @@
 #include "DBusError.h"
+#include "Logger.h"
 
 namespace ggk {
 
@@ -20,25 +21,40 @@ DBusError::DBusError(const std::string& name, const std::string& message)
 
 DBusError::DBusError(const GError* error) {
     if (error) {
-        name = g_quark_to_string(error->domain);  // GQuark를 문자열로 변환
-        message = error->message ? error->message : "";
+        // GQuark를 문자열로 안전하게 변환
+        const gchar* domain = g_quark_to_string(error->domain);
+        name = domain ? domain : ERROR_FAILED;
+        message = error->message ? error->message : "Unknown error";
     } else {
+        // 유효하지 않은 GError 처리
         name = ERROR_FAILED;
-        message = "Unknown error";
+        message = "Null error pointer";
     }
 }
 
 GErrorPtr DBusError::toGError() const {
-    GError* error = g_error_new_literal(
-        g_quark_from_string(name.c_str()),
-        0,  // 코드는 일반적으로 중요하지 않음
-        message.c_str()
-    );
-    return GErrorPtr(error, &g_error_free);
+    try {
+        // 새 GError 생성
+        GError* error = g_error_new_literal(
+            g_quark_from_string(name.c_str()),
+            0,  // 코드는 일반적으로 중요하지 않음
+            message.c_str()
+        );
+        
+        // 스마트 포인터로 래핑하여 반환
+        return makeGErrorPtr(error);
+    } catch (const std::exception& e) {
+        Logger::error("Exception in DBusError::toGError: " + std::string(e.what()));
+        return makeGErrorPtr(nullptr);
+    }
 }
 
 std::string DBusError::toString() const {
     return name + ": " + message;
+}
+
+bool DBusError::isErrorType(const std::string& errorName) const {
+    return name == errorName;
 }
 
 } // namespace ggk

@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
 
     // DBus 네임 관련 테스트 환경 등록- DBus 이전 테스트 진행시 주석처리 해도 무방
-    //::testing::AddGlobalTestEnvironment(new ggk::DBusTestEnvironment());
+    ::testing::AddGlobalTestEnvironment(new ggk::DBusTestEnvironment());
 
     return RUN_ALL_TESTS();
 }

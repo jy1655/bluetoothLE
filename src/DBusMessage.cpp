@@ -130,7 +130,9 @@ void DBusMessage::addArgument(const GVariantPtr& variant)
     // 본문 설정 (g_variant_builder_end는 builder를 소비하므로 release 필요)
     GVariant* result = g_variant_builder_end(builder.release());
     g_dbus_message_set_body(message.get(), result);
-    g_variant_unref(result); // 소유권 이전 후 참조 카운트 감소
+    
+    // 소유권 이전 후 참조 카운트 감소
+    GVariantPtr resultPtr = makeGVariantPtr(result, true);
 }
 
 // 인자 목록 추가

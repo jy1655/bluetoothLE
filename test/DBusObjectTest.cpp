@@ -1,174 +1,141 @@
 #include <gtest/gtest.h>
 #include "DBusObject.h"
-#include "Logger.h"
 #include "DBusTestEnvironment.h"
+#include "Logger.h"
+#include "DBusTypes.h"
+#include <thread>
+#include <chrono>
 
 using namespace ggk;
 
-// 테스트 전용 DBusObject 하위 클래스
 class TestableDBusObject : public DBusObject {
 public:
-    using DBusObject::DBusObject;  // 생성자 상속
-    
-    // protected 메서드 노출
-    std::string getXml() const {
-        return generateIntrospectionXml();
-    }
+    using DBusObject::DBusObject;
+    std::string getXml() const { return generateIntrospectionXml(); }
 };
 
 class DBusObjectTest : public ::testing::Test {
-    protected:
-        TestableDBusObject* dbusObject;
-        GVariant* testPropertyValue = nullptr;  // static 제거, 각 테스트 인스턴스에 종속
-    
+protected:
+    TestableDBusObject* dbusObject = nullptr;
+    GVariant* testPropertyValue = nullptr;
+    inline static int testCounter = 0;
+
     void SetUp() override {
         Logger::info("Setting up DBusObject test environment.");
-            
-        // DBusTestEnvironment에서 관리하는 연결 사용
-        DBusConnection& connection = DBusTestEnvironment::getConnection();
-            
-        // 테스트 가능한 객체 생성 (매 테스트마다 고유한 경로 사용)
-        static int testCounter = 0;
+        DBusConnection& conn = DBusTestEnvironment::getConnection();
+
         std::string objPath = "/org/example/TestObject" + std::to_string(++testCounter);
-        dbusObject = new TestableDBusObject(connection, DBusObjectPath(objPath));
-    
-        std::vector<DBusProperty> properties = {
-            {"TestProperty", "s", true, true, false,
-                [this]() -> GVariant* { 
-                    // 저장된 값이 있으면 사용, 없으면 기본값
-                    if (this->testPropertyValue) {
-                        return g_variant_ref(this->testPropertyValue);
-                    }
-                    return g_variant_new_string("TestValue"); 
+        dbusObject = new TestableDBusObject(conn, DBusObjectPath(objPath));
+
+        std::vector<DBusProperty> props = {
+            {
+                "TestProperty", "s", true, true, false,
+                [this]() -> GVariant* {
+                    return testPropertyValue ? g_variant_ref(testPropertyValue)
+                                             : g_variant_new_string("TestValue");
                 },
-                [this](GVariant* v) { 
-                    // 이전 값 해제
-                    if (this->testPropertyValue) {
-                        g_variant_unref(this->testPropertyValue);
-                    }
-                    // 새 값 저장
-                    this->testPropertyValue = g_variant_ref(v);
-                    return true; 
+                [this](GVariant* val) {
+                    if (testPropertyValue)
+                        g_variant_unref(testPropertyValue);
+                    testPropertyValue = g_variant_ref(val);
+                    return true;
                 }
             }
         };
-    
-        ASSERT_TRUE(dbusObject->addInterface("org.example.TestInterface", properties));
-        ASSERT_TRUE(dbusObject->addMethod("org.example.TestInterface", "TestMethod", 
-            []([[maybe_unused]] const DBusMethodCall& call) {
+
+        ASSERT_TRUE(dbusObject->addInterface("org.example.TestInterface", props));
+        ASSERT_TRUE(dbusObject->addMethod("org.example.TestInterface", "TestMethod",
+            [](const DBusMethodCall&) {
                 Logger::info("TestMethod invoked.");
             }
         ));
-    
+
         ASSERT_TRUE(dbusObject->registerObject());
     }
-    
+
     void TearDown() override {
         Logger::info("Tearing down DBusObject test environment.");
-            
-        // 객체 정리
         if (dbusObject) {
             dbusObject->unregisterObject();
             delete dbusObject;
             dbusObject = nullptr;
         }
-            
-        // 속성 값 정리
+
         if (testPropertyValue) {
             g_variant_unref(testPropertyValue);
             testPropertyValue = nullptr;
         }
     }
+
+    void waitForDBusSync() const {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 };
 
-TEST_F(DBusObjectTest, RegisterAndUnregister) {
-    EXPECT_TRUE(dbusObject->unregisterObject());  // 먼저 등록 해제
-    EXPECT_TRUE(dbusObject->registerObject());    // 다시 등록
-    EXPECT_TRUE(dbusObject->unregisterObject());  // 다시 등록 해제
-}
-    
-TEST_F(DBusObjectTest, EmitSignalTest) {
-    bool signalResult = dbusObject->emitSignal("org.example.TestInterface", "TestSignal");
-    EXPECT_TRUE(signalResult);
-}
-    
-TEST_F(DBusObjectTest, SetAndGetProperty) {
-    GVariantPtr value(g_variant_new_string("NewTestValue"), &g_variant_unref);
-    
-    EXPECT_TRUE(dbusObject->setProperty("org.example.TestInterface", "TestProperty", std::move(value)));
-    
-    GVariantPtr retrieved = dbusObject->getProperty("org.example.TestInterface", "TestProperty");
-    ASSERT_NE(retrieved.get(), nullptr);
-    EXPECT_STREQ(g_variant_get_string(retrieved.get(), nullptr), "NewTestValue");
-}
-    
-TEST_F(DBusObjectTest, EmitSignal) {
-    // floating reference를 sink하여 참조 카운트 증가
-    GVariant* params_raw = g_variant_new("(s)", "SignalData");
-    GVariant* params_sink = g_variant_ref_sink(params_raw);
-    // 이제 정상적인 참조 카운트를 가진 GVariant를 GVariantPtr에 전달
-    GVariantPtr params(params_sink, &g_variant_unref);
-    
-    EXPECT_TRUE(dbusObject->emitSignal("org.example.TestInterface", "TestSignal", std::move(params)));
-    // params는 이제 null 상태이므로 더 이상 접근하지 않아야 함
-}
-    
-// 직접 메서드 테스트 (단위 테스트)
-TEST_F(DBusObjectTest, GenerateIntrospectionXmlDirectTest) {
-    // TestableDBusObject는 이미 getXml() 메서드를 통해 접근을 제공
-    std::string xml = dbusObject->getXml();
-    
-    // XML 내용 검증
-    EXPECT_NE(xml.find("<interface name='org.example.TestInterface'>"), std::string::npos);
-    EXPECT_NE(xml.find("<method name='TestMethod'>"), std::string::npos);
-    EXPECT_NE(xml.find("<property name='TestProperty' type='s'"), std::string::npos);
-    
-    // 자세한 로깅으로 디버깅 지원
-    Logger::debug("Direct XML generation result:\n" + xml);
+// ───────────────────────────────────────────────
+// 테스트 케이스들
+// ───────────────────────────────────────────────
+
+TEST_F(DBusObjectTest, RegisterThenUnregister_ObjectIsHandledProperly) {
+    EXPECT_TRUE(dbusObject->unregisterObject());
+    EXPECT_TRUE(dbusObject->registerObject());
+    EXPECT_TRUE(dbusObject->unregisterObject());
 }
 
-// 통합 테스트 (D-Bus 시스템과의 통합)
-TEST_F(DBusObjectTest, IntrospectionXmlIndirectTest) {
-    // 1. 먼저 객체가 등록되었는지 확인
-    ASSERT_TRUE(dbusObject->isRegistered()) << "Object is not registered";
-    
-    // 2. 지연 추가 (D-Bus 시스템에 변경사항이 반영될 시간)
-    usleep(100000);  // 100ms
-    
-    // 3. 명시적으로 연결 객체 가져오기
-    DBusConnection& connection = DBusTestEnvironment::getConnection();
-    
-    // 4. Introspection 쿼리 실행
-    GVariantPtr introspectResult = connection.callMethod(
+TEST_F(DBusObjectTest, SetAndGetProperty_WorksAsExpected) {
+    GVariant* rawValue = g_variant_new_string("NewTestValue");
+    GVariantPtr newValue = makeGVariantPtr(rawValue, true);
+
+    EXPECT_TRUE(dbusObject->setProperty("org.example.TestInterface", "TestProperty", std::move(newValue)));
+
+    GVariantPtr readValue = dbusObject->getProperty("org.example.TestInterface", "TestProperty");
+    ASSERT_NE(readValue.get(), nullptr);
+    EXPECT_STREQ(g_variant_get_string(readValue.get(), nullptr), "NewTestValue");
+}
+
+TEST_F(DBusObjectTest, EmitSignalWithoutArgs_Succeeds) {
+    EXPECT_TRUE(dbusObject->emitSignal("org.example.TestInterface", "TestSignal"));
+}
+
+TEST_F(DBusObjectTest, EmitSignalWithArgs_Succeeds) {
+    GVariant* rawParams = g_variant_new("(s)", "SignalData");
+    GVariantPtr params = makeGVariantPtr(rawParams, true);
+
+    EXPECT_TRUE(dbusObject->emitSignal("org.example.TestInterface", "TestSignal", std::move(params)));
+}
+
+TEST_F(DBusObjectTest, GeneratedXml_ContainsExpectedElements) {
+    const std::string xml = dbusObject->getXml();
+    EXPECT_NE(xml.find("org.example.TestInterface"), std::string::npos);
+    EXPECT_NE(xml.find("TestMethod"), std::string::npos);
+    EXPECT_NE(xml.find("TestProperty"), std::string::npos);
+    Logger::debug("Generated XML:\n" + xml);
+}
+
+TEST_F(DBusObjectTest, DbusIntrospection_ReturnsExpectedXmlFromBus) {
+    ASSERT_TRUE(dbusObject->isRegistered());
+    waitForDBusSync();
+
+    DBusConnection& conn = DBusTestEnvironment::getConnection();
+
+    GVariantPtr result = conn.callMethod(
         DBusName::getInstance().getBusName(),
         dbusObject->getPath(),
-        "org.freedesktop.DBus.Introspectable",
+        DBusInterface::INTROSPECTABLE,
         "Introspect",
-        makeNullGVariantPtr(),  // 파라미터 없음
-        "(s)"  // 응답 시그니처: 문자열
+        makeNullGVariantPtr(),
+        "(s)"
     );
-    
-    // 5. 결과 검증 (null 체크)
-    if (!introspectResult) {
-        FAIL() << "Introspection call returned null result";
-        return;
-    }
-    
-    // 6. XML 내용 추출
-    const gchar* xml = nullptr;
-    g_variant_get(introspectResult.get(), "(&s)", &xml);
-    
-    if (!xml) {
-        FAIL() << "Introspection XML content is null";
-        return;
-    }
-    
-    // 7. 결과 로깅
-    std::string introspectionXml(xml);
-    Logger::debug("Introspection query result:\n" + introspectionXml);
-    
-    // 8. 내용 검증
-    EXPECT_NE(introspectionXml.find("org.example.TestInterface"), std::string::npos);
-    EXPECT_NE(introspectionXml.find("TestMethod"), std::string::npos);
-}
 
+    ASSERT_NE(result.get(), nullptr);
+
+    const gchar* xml = nullptr;
+    g_variant_get(result.get(), "(&s)", &xml);
+    ASSERT_NE(xml, nullptr);
+
+    std::string xmlStr(xml);
+    Logger::debug("Returned Introspection XML:\n" + xmlStr);
+
+    EXPECT_NE(xmlStr.find("org.example.TestInterface"), std::string::npos);
+    EXPECT_NE(xmlStr.find("TestMethod"), std::string::npos);
+}

@@ -48,7 +48,7 @@ bool DBusName::initialize(const std::string& name) {
     try {
         // 복잡한 GVariant 생성을 위한 안전한 방법
         GVariant* paramsRaw = g_variant_new("(su)", busName.c_str(), 0x4);
-        // 이미 floating reference를 가진 GVariant는 소유권 이전 시 sink 처리
+        // makeGVariantPtr 패턴 사용
         GVariantPtr params = makeGVariantPtr(paramsRaw, true);  // true = 소유권 이전
         
         GVariantPtr result = connection->callMethod(
@@ -92,8 +92,8 @@ void DBusName::shutdown() {
             // 빌더로부터 GVariant 생성
             GVariant* params = g_variant_builder_end(&builder);
             
-            // 스마트 포인터로 래핑하여 메모리 관리
-            GVariantPtr params_ptr(g_variant_ref_sink(params), &g_variant_unref);
+            // makeGVariantPtr 패턴 사용
+            GVariantPtr params_ptr = makeGVariantPtr(params, true);
             
             connection->callMethod(
                 "org.freedesktop.DBus",

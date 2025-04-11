@@ -41,22 +41,24 @@ TEST_F(DBusMessageTest, CreateSignalMessage) {
     EXPECT_EQ(message.getMember(), "TestSignal");
 }
 
-// 이 부분은 존재하지 않는 API로 인해 직접적인 생성 불가
-/*
-TEST_F(DBusMessageTest, CreateErrorMessage) {
-    GDBusMessage* dummyMsg = g_dbus_message_new();
-    GDBusMethodInvocationPtr invocation(
-        g_dbus_method_invocation_new(dummyMsg),
-        &g_object_unref
+// 안전한 기본 동작 테스트 - 생성자 없이 nullptr message 처리
+TEST_F(DBusMessageTest, NullMessageReturnsSafeDefaults) {
+    // 임시 메시지 생성
+    auto validMsg = DBusMessage::createSignal(
+        "/org/example/Object",
+        "org.example.Interface",
+        "TestSignal"
     );
 
-    DBusError error(DBusError::ERROR_FAILED, "Test error");
-    auto message = DBusMessage::createError(invocation, error);
+    // move 이후 원래 객체는 "null" 상태가 되어야 함
+    DBusMessage moved = std::move(validMsg);
 
-    EXPECT_EQ(message.getType(), DBusMessageType::ERROR);
-    EXPECT_EQ(message.getInterface(), ""); // 에러 메시지는 인터페이스 없음
-    EXPECT_EQ(message.getMember(), ""); // 에러 메시지는 멤버 없음
-
-    g_object_unref(dummyMsg);
+    // validMsg는 이제 null 상태일 것
+    EXPECT_EQ(validMsg.getPath(), "");
+    EXPECT_EQ(validMsg.getInterface(), "");
+    EXPECT_EQ(validMsg.getMember(), "");
+    EXPECT_EQ(validMsg.getDestination(), "");
+    EXPECT_EQ(validMsg.getSender(), "");
+    EXPECT_EQ(validMsg.getSignature(), "");
+    EXPECT_EQ(validMsg.getType(), DBusMessageType::ERROR); // default fallback
 }
-*/

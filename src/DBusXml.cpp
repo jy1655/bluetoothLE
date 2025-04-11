@@ -24,7 +24,10 @@ std::string DBusXml::createInterface(
     
         // Methods
         for (const auto& method : methods) {
-            xml << createMethod(method.method, {}, {}, indentLevel + 2);
+            std::vector<DBusArgument> inArgs;
+            std::vector<DBusArgument> outArgs;
+            // 실제 구현에서는 method에서 인자 정보를 가져와야 함
+            xml << createMethod(method.method, inArgs, outArgs, indentLevel + 2);
         }
     
         // Signals
@@ -37,7 +40,7 @@ std::string DBusXml::createInterface(
         return xml.str();
     }
     catch (const std::exception& e) {
-        Logger::error(SSTR << "Failed to create interface XML: " << e.what());
+        Logger::error("Failed to create interface XML: " + std::string(e.what()));
         return "";
     }
 }
@@ -73,7 +76,7 @@ std::string DBusXml::createProperty(
         return xml.str();
     }
     catch (const std::exception& e) {
-        Logger::error(SSTR << "Failed to create property XML: " << e.what());
+        Logger::error("Failed to create property XML: " + std::string(e.what()));
         return "";
     }
 }
@@ -108,7 +111,7 @@ std::string DBusXml::createMethod(
         return xml.str();
     }
     catch (const std::exception& e) {
-        Logger::error(SSTR << "Failed to create method XML: " << e.what());
+        Logger::error("Failed to create method XML: " + std::string(e.what()));
         return "";
     }
 }
@@ -132,15 +135,16 @@ std::string DBusXml::createSignal(
         return xml.str();
     }
     catch (const std::exception& e) {
-        Logger::error(SSTR << "Failed to create signal XML: " << e.what());
+        Logger::error("Failed to create signal XML: " + std::string(e.what()));
         return "";
     }
 }
 
 std::string DBusXml::escape(const std::string& str)
 {
+    // 예상 크기 예약하여 성능 최적화
     std::string result;
-    result.reserve(str.length());
+    result.reserve(str.length() * 1.2);  // 대략 20% 정도 더 큰 공간 예약
     
     for (char c : str) {
         switch (c) {
@@ -158,7 +162,8 @@ std::string DBusXml::escape(const std::string& str)
 
 std::string DBusXml::indent(int level)
 {
-    return std::string(level * 2, ' ');
+    // 정해진 들여쓰기 레벨에 맞게 공백 생성
+    return std::string(level * INDENT_SIZE, ' ');
 }
 
 } // namespace ggk

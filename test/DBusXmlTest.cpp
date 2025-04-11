@@ -1,81 +1,109 @@
 #include <gtest/gtest.h>
-#include "../include/DBusXml.h"
-#include "../include/DBusTypes.h"
+#include "DBusXml.h"
+#include "DBusTypes.h"
 #include <gio/gio.h>
 
 using namespace ggk;
 
-using namespace ggk;
-
-class GLibEnvironment : public ::testing::Environment {
-public:
+class DBusXmlTest : public ::testing::Test {
+protected:
     void SetUp() override {
-        // GLib/GIO 초기화 (필요 시)
+        // 필요한 초기화가 있다면 여기에
+    }
+
+    void TearDown() override {
+        // 정리 로직
     }
 };
 
-TEST(DBusXmlTest, CreateProperty) {
-    DBusProperty prop{"TestProperty", "s", true, false, true, nullptr, nullptr};
-    std::string expected =
+TEST_F(DBusXmlTest, CreateProperty_ReadOnlyWithSignal) {
+    DBusProperty prop{
+        "TestProperty",
+        "s",
+        true,  // readable
+        false, // writable
+        true,  // emitsChangedSignal
+        nullptr,
+        nullptr
+    };
+
+    const std::string expected =
         "  <property name='TestProperty' type='s' access='read'>\n"
         "    <annotation name='org.freedesktop.DBus.Property.EmitsChangedSignal' value='true'/>\n"
         "  </property>\n";
 
-    auto result = DBusXml::createProperty(prop, 1);
+    std::string result = DBusXml::createProperty(prop, 1);
     EXPECT_EQ(result, expected);
 }
 
-TEST(DBusXmlTest, CreateMethod) {
-    std::vector<DBusArgument> inArgs = { {"s", "inputArg", "in"} };
-    std::vector<DBusArgument> outArgs = { {"i", "outputArg", "out"} };
+TEST_F(DBusXmlTest, CreateMethod_WithInOutArgs) {
+    std::vector<DBusArgument> inArgs = {
+        {"s", "inputArg", "in"}
+    };
+    std::vector<DBusArgument> outArgs = {
+        {"i", "outputArg", "out"}
+    };
 
-    std::string expected =
+    const std::string expected =
         "  <method name='TestMethod'>\n"
         "    <arg name='inputArg' type='s' direction='in'/>\n"
         "    <arg name='outputArg' type='i' direction='out'/>\n"
         "  </method>\n";
 
-    auto result = DBusXml::createMethod("TestMethod", inArgs, outArgs, 1);
+    std::string result = DBusXml::createMethod("TestMethod", inArgs, outArgs, 1);
     EXPECT_EQ(result, expected);
 }
 
-TEST(DBusXmlTest, CreateSignal) {
-    DBusSignal signal{"TestSignal", { {"s", "signalArg", ""} }};
+TEST_F(DBusXmlTest, CreateSignal_WithSingleArg) {
+    DBusSignal signal{
+        "TestSignal",
+        {
+            {"s", "signalArg"}
+        }
+    };
 
-    std::string expected =
+    const std::string expected =
         "  <signal name='TestSignal'>\n"
         "    <arg name='signalArg' type='s'/>\n"
         "  </signal>\n";
 
-    auto result = DBusXml::createSignal(signal, 1);
+    std::string result = DBusXml::createSignal(signal, 1);
     EXPECT_EQ(result, expected);
 }
 
-TEST(DBusXmlTest, CreateInterface) {
-    DBusProperty prop{"InterfaceProperty", "i", true, true, false, nullptr, nullptr};
+TEST_F(DBusXmlTest, CreateInterface_WithAllElements) {
+    DBusProperty prop{
+        "InterfaceProperty",
+        "i",
+        true,
+        true,
+        false,
+        nullptr,
+        nullptr
+    };
 
     std::vector<DBusMethodCall> methods;
-    methods.push_back(DBusMethodCall{
+    methods.emplace_back(
         "", "", "InterfaceMethod",
-        GVariantPtr(nullptr, g_variant_unref),
-        GDBusMethodInvocationPtr(nullptr, g_object_unref)
-    });
+        makeNullGVariantPtr(),
+        makeNullGDBusMethodInvocationPtr()
+    );
 
-    DBusSignal signal{"InterfaceSignal", {{"s", "interfaceArg", ""}}};
+    DBusSignal signal{
+        "InterfaceSignal",
+        {{"s", "interfaceArg"}}
+    };
 
-    std::string result = DBusXml::createInterface(
+    std::string xml = DBusXml::createInterface(
         "org.example.Interface",
         {prop},
-        std::move(methods),
+        methods, // ✅ 복사 없음
         {signal},
         0
     );
 
-    EXPECT_NE(result.find("<interface name='org.example.Interface'>"), std::string::npos);
-    EXPECT_NE(result.find("<property name='InterfaceProperty' type='i' access='readwrite'/>"), std::string::npos);
-    EXPECT_NE(result.find("<method name='InterfaceMethod'>"), std::string::npos);
-    EXPECT_NE(result.find("<signal name='InterfaceSignal'>"), std::string::npos);
+    EXPECT_NE(xml.find("<interface name='org.example.Interface'>"), std::string::npos);
+    EXPECT_NE(xml.find("<property name='InterfaceProperty' type='i' access='readwrite'/>"), std::string::npos);
+    EXPECT_NE(xml.find("<method name='InterfaceMethod'>"), std::string::npos);
+    EXPECT_NE(xml.find("<signal name='InterfaceSignal'>"), std::string::npos);
 }
-
-
-

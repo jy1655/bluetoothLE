@@ -12,7 +12,7 @@ struct HandlerData {
 };
 
 DBusConnection::DBusConnection(GBusType busType)
-    : busType(busType), connection(nullptr, &g_object_unref) {
+    : busType(busType) {
 }
 
 DBusConnection::~DBusConnection() {
@@ -41,8 +41,7 @@ bool DBusConnection::connect() {
     }
     
     // 중요: 참조 카운트를 명시적으로 증가시킨 후 스마트 포인터에 저장
-    connection = GDBusConnectionPtr(g_object_ref_sink(rawConnection), &g_object_unref);
-
+    connection = makeGDBusConnectionPtr(g_object_ref_sink(rawConnection));
     
     // exit-on-close 설정 해제
     g_dbus_connection_set_exit_on_close(connection.get(), FALSE);
@@ -104,7 +103,8 @@ GVariantPtr DBusConnection::callMethod(
             if (!g_variant_type_string_is_valid(replySignature.c_str())) {
                 Logger::error("Invalid reply signature: " + replySignature);
                 return makeNullGVariantPtr();
-            }replyType = g_variant_type_new(replySignature.c_str());
+            }
+            replyType = g_variant_type_new(replySignature.c_str());
             replyTypeGuard.reset(replyType);  // Ensure cleanup
         }
         
@@ -120,7 +120,7 @@ GVariantPtr DBusConnection::callMethod(
             path.c_str(),
             interface.c_str(),
             method.c_str(),
-            parameters.get(),
+            parameters ? parameters.get() : nullptr,
             replyType,
             G_DBUS_CALL_FLAGS_NONE,
             timeoutMs > 0 ? timeoutMs : -1, 
@@ -150,7 +150,7 @@ GVariantPtr DBusConnection::callMethod(
         
         // Return the result (if any)
         if (result) {
-            return GVariantPtr(result, &g_variant_unref);
+            return makeGVariantPtr(result, true);  // true = take ownership
         }
         
         return makeNullGVariantPtr();
@@ -160,7 +160,6 @@ GVariantPtr DBusConnection::callMethod(
         return makeNullGVariantPtr();
     }
 }
-
 
 bool DBusConnection::emitSignal(
     const DBusObjectPath& path,
@@ -180,7 +179,7 @@ bool DBusConnection::emitSignal(
         path.c_str(),
         interface.c_str(),
         signalName.c_str(),
-        parameters.get(),
+        parameters ? parameters.get() : nullptr,
         &error
     );
     
@@ -210,6 +209,7 @@ bool DBusConnection::registerObject(
     }
     
     // 이미 등록된 객체 확인
+    std::lock_guard<std::mutex> lock(mutex);
     if (registeredObjects.find(path.toString()) != registeredObjects.end()) {
         Logger::warn("Object already registered at path: " + path.toString());
         return false;
@@ -230,7 +230,7 @@ bool DBusConnection::registerObject(
         return false;
     }
     
-    // 핸들러 데이터 설정
+    // 핸들러 데이터 설정 - 소유권을 전달할 데이터 복사 생성
     HandlerData* data = new HandlerData();
     data->connection = this;
     data->methodHandlers = methodHandlers;
@@ -287,6 +287,7 @@ bool DBusConnection::unregisterObject(const DBusObjectPath& path) {
         return false;
     }
     
+    std::lock_guard<std::mutex> lock(mutex);
     auto it = registeredObjects.find(path.toString());
     if (it == registeredObjects.end()) {
         Logger::warn("No registered object at path: " + path.toString());
@@ -336,17 +337,15 @@ bool DBusConnection::emitPropertyChanged(
     g_variant_builder_clear(&invalidatedBuilder);
     
     // 스마트 포인터로 래핑
-    GVariantPtr paramsPtr(ref_sinked_params, &g_variant_unref);
+    GVariantPtr paramsPtr = makeGVariantPtr(params, true); 
     
     // PropertiesChanged 시그널 발생
-    bool result = emitSignal(
+    return emitSignal(
         path,
         "org.freedesktop.DBus.Properties",
         "PropertiesChanged",
         std::move(paramsPtr)
     );
-    
-    return result;
 }
 
 guint DBusConnection::addSignalWatch(
@@ -439,7 +438,7 @@ void DBusConnection::handleMethodCall(
         interfaceName ? interfaceName : "",
         methodName ? methodName : "",
         parameters ? makeGVariantPtr(parameters, false) : makeNullGVariantPtr(),
-        invocation ? makeGDBusMethodInvocationPtr(invocation) : makeNullGDBusMethodInvocationPtr()
+        invocation ? makeGDBusMethodInvocationPtr(g_object_ref(invocation)) : makeNullGDBusMethodInvocationPtr()
     );
 
     try {
@@ -582,7 +581,7 @@ void DBusConnection::handleSignal(
         try {
             handler.second(
                 std::string(signalName ? signalName : ""),
-                makeGVariantPtr(parameters, false) // false = 소유권 이전 안 함
+                parameters ? makeGVariantPtr(parameters, false) : makeNullGVariantPtr() // false = 소유권 이전 안 함
             );
         } catch (const std::exception& e) {
             Logger::error("Exception in D-Bus signal handler: " + std::string(e.what()));

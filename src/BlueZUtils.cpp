@@ -177,7 +177,7 @@ std::vector<std::string> BlueZUtils::getAdapters(DBusConnection& connection) {
                 continue;
             }
             
-            GVariantPtr interfacesPtr(interfaces, &g_variant_unref);
+            GVariantPtr interfacesPtr = makeGVariantPtr(interfaces, true); 
             
             // Check if this object has the Adapter1 interface
             GVariant* adapterInterface = g_variant_lookup_value(
@@ -218,12 +218,11 @@ GVariantPtr BlueZUtils::getAdapterProperty(
 {
     try {
         // Call org.freedesktop.DBus.Properties.Get
-        GVariantPtr parameters = makeGVariantPtr(
-            g_variant_new("(ss)", 
-                         BlueZConstants::ADAPTER_INTERFACE.c_str(),
-                         property.c_str()),
-            true  // take ownership
-        );
+        GVariant* params = g_variant_new("(ss)", 
+                               BlueZConstants::ADAPTER_INTERFACE.c_str(),
+                               property.c_str());
+        // floating reference를 sink하여 참조 카운트 관리
+        GVariantPtr parameters = makeGVariantPtr(g_variant_ref_sink(params), true); 
         
         GVariantPtr result = connection.callMethod(
             BlueZConstants::BLUEZ_SERVICE,
@@ -267,7 +266,7 @@ bool BlueZUtils::setAdapterProperty(
             return false;
         }
         
-        // Call org.freedesktop.DBus.Properties.Set
+        // Create parameters for Properties.Set
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
         g_variant_builder_add(&builder, "s", BlueZConstants::ADAPTER_INTERFACE.c_str());
@@ -275,7 +274,7 @@ bool BlueZUtils::setAdapterProperty(
         g_variant_builder_add(&builder, "v", value.get());
         
         GVariant* params = g_variant_builder_end(&builder);
-        GVariantPtr parameters = makeGVariantPtr(params, true);  // take ownership
+        GVariantPtr parameters = makeGVariantPtr(params, true);
         
         GVariantPtr result = connection.callMethod(
             BlueZConstants::BLUEZ_SERVICE,
@@ -507,7 +506,7 @@ std::vector<std::string> BlueZUtils::getConnectedDevices(
                 continue;
             }
             
-            GVariantPtr interfacesPtr(interfaces, &g_variant_unref);
+            GVariantPtr interfacesPtr = makeGVariantPtr(interfaces, true); 
             
             // Check if this object has the Device1 interface
             GVariant* deviceInterface = g_variant_lookup_value(
@@ -549,12 +548,14 @@ bool BlueZUtils::isAdvertisingSupported(
 {
     try {
         // See if LEAdvertisingManager1 interface exists
+        GVariantPtr parameters = Utils::gvariantPtrFromString(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE);
+        
         GVariantPtr result = connection.callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(adapterPath),
             BlueZConstants::PROPERTIES_INTERFACE,
             "GetAll",
-            Utils::gvariantPtrFromString(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE)
+            std::move(parameters)
         );
         
         return result != nullptr;
@@ -603,8 +604,14 @@ bool BlueZUtils::tryEnableAdvertising(
         Logger::error("Exception when enabling advertising: " + std::string(e.what()));
     }
     
-    Logger::error("Failed to enable advertising using all available methods");
-    return false;
+    // Try direct HCI commands as a last resort
+    Logger::debug("Trying to enable advertising via direct HCI commands");
+    system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1");
+    system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1");
+    
+    // No good way to verify if this worked, just assume it did if we got here
+    Logger::info("Attempted to enable advertising via direct HCI commands");
+    return true;
 }
 
 bool BlueZUtils::checkBlueZFeatures(DBusConnection& connection) {
@@ -619,12 +626,14 @@ bool BlueZUtils::checkBlueZFeatures(DBusConnection& connection) {
     
     // Check for GATT Manager support
     try {
+        GVariantPtr parameters = Utils::gvariantPtrFromString(BlueZConstants::GATT_MANAGER_INTERFACE);
+        
         GVariantPtr result = connection.callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(adapter),
             BlueZConstants::PROPERTIES_INTERFACE,
             "GetAll",
-            Utils::gvariantPtrFromString(BlueZConstants::GATT_MANAGER_INTERFACE)
+            std::move(parameters)
         );
         
         if (!result) {

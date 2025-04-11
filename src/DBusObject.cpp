@@ -107,8 +107,7 @@ GVariantPtr DBusObject::getProperty(const std::string& interface, const std::str
                 try {
                     GVariant* value = prop.getter();
                     if (value) {
-                        // makeGVariantPtr는 이미 내부적으로 참조 카운트를 관리함
-                        // 불필요한 g_variant_ref 호출 제거
+                        // makeGVariantPtr 패턴 사용
                         return makeGVariantPtr(value, true);  // true = 소유권 가져오기
                     }
                 } catch (const std::exception& e) {
@@ -150,10 +149,8 @@ bool DBusObject::emitSignal(
     if (!parameters) {
         // 빈 튜플 생성
         GVariant* empty_tuple = g_variant_new_tuple(NULL, 0);
-        // floating reference를 sink하여 참조 카운트 관리
-        GVariant* owned_empty_tuple = g_variant_ref_sink(empty_tuple);
-        // 소유권이 있는 새 GVariantPtr 생성
-        GVariantPtr owned_params(owned_empty_tuple, &g_variant_unref);
+        // makeGVariantPtr 패턴 사용
+        GVariantPtr owned_params = makeGVariantPtr(empty_tuple, true);
         // 소유권을 connection.emitSignal()에 전달
         return connection.emitSignal(path, interface, name, std::move(owned_params));
     }
@@ -166,11 +163,10 @@ bool DBusObject::emitSignal(
     
     // 원본 GVariant에 대한 새 참조 생성 (소유권 복제)
     GVariant* param_raw = parameters.get();
-    GVariant* param_copy = g_variant_ref(param_raw);
-    // 새 참조를 소유하는 GVariantPtr 생성
-    GVariantPtr owned_params(param_copy, &g_variant_unref);
+    // makeGVariantPtr 패턴 사용
+    GVariantPtr owned_params = makeGVariantPtr(param_raw, false);  // false = 참조만 복사
     
-    // 새 소유권을 connection.emitSignal()에 전달
+    // 소유권을 connection.emitSignal()에 전달
     return connection.emitSignal(path, interface, name, std::move(owned_params));
 }
 

@@ -3,41 +3,32 @@
 
 namespace ggk {
 
-// 정적 멤버 변수 정의
-std::unique_ptr<GattApplication> DBusTestEnvironment::application;
+// 기본값 설정
+std::string DBusTestEnvironment::testBusName = "com.aidall.oculo";
 
 DBusConnection& DBusTestEnvironment::getConnection() {
     return DBusName::getInstance().getConnection();
 }
 
-GattApplication* DBusTestEnvironment::getGattApplication() {
-    return application.get();
+void DBusTestEnvironment::setTestBusName(const std::string& name) {
+    testBusName = name;
 }
 
 void DBusTestEnvironment::SetUp() {
-    // ✅ 먼저 버스 타입을 설정
+    Logger::info("Setting up DBusTestEnvironment");
+
     DBusName::getInstance().setBusType(G_BUS_TYPE_SYSTEM);
-    if (!DBusName::getInstance().initialize()) {
-        FAIL() << "Failed to initialize D-Bus for testing";
+
+    if (!DBusName::getInstance().initialize(testBusName)) {
+        FAIL() << "Failed to initialize D-Bus with name: " << testBusName;
     }
 
-    application = std::make_unique<GattApplication>(
-        DBusName::getInstance().getConnection(),
-        DBusObjectPath("/com/example/test/gatt")
-    );
-    
-    Logger::info("Global test environment set up successfully");
+    Logger::info("DBusTestEnvironment initialized with bus name: " + testBusName);
 }
 
 void DBusTestEnvironment::TearDown() {
-    // 공유 리소스 정리
-    if (application && application->isRegistered()) {
-        application->unregisterFromBlueZ();
-    }
-    application.reset();
-    
     DBusName::getInstance().shutdown();
-    Logger::info("Global test environment torn down");
+    Logger::info("DBusTestEnvironment torn down");
 }
 
 } // namespace ggk
