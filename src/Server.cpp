@@ -7,6 +7,7 @@
 #include <csignal>
 #include <iostream>
 #include <unistd.h>
+#include <future>
 
 namespace ggk {
 
@@ -207,30 +208,64 @@ void Server::stop() {
     }
     
     Logger::info("Stopping BLE Server...");
+    
+    // First set the running flag to false to signal threads to stop
     running = false;
     
     try {
-        // Unregister advertisement and application
+        // 1. 먼저 ConnectionManager 종료 - BlueZ 시그널 핸들러 제거
+        ConnectionManager::getInstance().shutdown();
+        
+        // 2. 광고 중지
         if (advertisement) {
-            advertisement->unregisterFromBlueZ();
+            Logger::info("Unregistering advertisement from BlueZ...");
+            // 여러 번 시도하여 확실히 등록 해제
+            for (int i = 0; i < 2; i++) {
+                if (advertisement->unregisterFromBlueZ()) {
+                    break;
+                }
+                // 짧은 지연 후 재시도
+                usleep(200000);  // 200ms
+            }
         }
         
+        // 3. GATT 애플리케이션 등록 해제
         if (application) {
-            application->unregisterFromBlueZ();
+            bool unregisterResult = application->unregisterFromBlueZ();
+            if (!unregisterResult) {
+                Logger::warn("Failed to properly unregister application - forcing cleanup");
+            }
         }
         
-        // Force stop any advertising
+        // 4. 추가 광고 중지를 위한 직접 명령 실행
+        // 저수준 명령으로 확실히 광고 중지
         system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
         system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1");
         
-        // Perform a clean HCI reset before exiting
+        // 5. Event thread 종료 대기
+        if (eventThread.joinable()) {
+            // 스레드 조인에 제한 시간 설정
+            Logger::debug("Waiting for event thread to complete...");
+            auto future = std::async(std::launch::async, [&]() {
+                eventThread.join();
+            });
+            
+            // 최대 2초 대기
+            auto status = future.wait_for(std::chrono::seconds(2));
+            if (status != std::future_status::ready) {
+                Logger::warn("Event thread did not complete in time - continuing shutdown");
+            } else {
+                Logger::debug("Event thread completed successfully");
+            }
+        }
+        
+        // 6. 블루투스 어댑터 정리
         Logger::info("Performing clean Bluetooth shutdown...");
         system("sudo hciconfig hci0 down > /dev/null 2>&1");
+        usleep(500000);  // 500ms
         
-        // Wait for thread to complete
-        if (eventThread.joinable()) {
-            eventThread.join();
-        }
+        // 7. DBus 연결 정리
+        initialized = false;
         
         Logger::info("BLE Server stopped successfully");
     } catch (const std::exception& e) {

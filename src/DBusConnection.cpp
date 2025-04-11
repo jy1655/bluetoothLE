@@ -76,6 +76,7 @@ bool DBusConnection::isConnected() const {
     return connection && !g_dbus_connection_is_closed(connection.get());
 }
 
+// src/DBusConnection.cpp에서 callMethod 메소드 교체
 GVariantPtr DBusConnection::callMethod(
     const std::string& destination,
     const DBusObjectPath& path,
@@ -90,6 +91,9 @@ GVariantPtr DBusConnection::callMethod(
         return makeNullGVariantPtr();
     }
     
+    // 재시도 설정
+    const int MAX_RETRIES = 3;
+    const int RETRY_DELAY_MS = 500;  // 0.5초 재시도 간격
     GError* error = nullptr;
     GVariantType* replyType = nullptr;
     
@@ -113,23 +117,65 @@ GVariantPtr DBusConnection::callMethod(
             " " + path.toString() + " " + 
             interface + "." + method);
         
-        // Call the method
-        GVariant* result = g_dbus_connection_call_sync(
-            connection.get(),
-            destination.c_str(),
-            path.c_str(),
-            interface.c_str(),
-            method.c_str(),
-            parameters ? parameters.get() : nullptr,
-            replyType,
-            G_DBUS_CALL_FLAGS_NONE,
-            timeoutMs > 0 ? timeoutMs : -1, 
-            nullptr,
-            &error
-        );
+        // 재시도 루프 구현
+        GVariant* result = nullptr;
+        bool success = false;
+        std::string lastErrorMessage;
         
-        // Check for error
-        if (error) {
+        for (int attempt = 0; attempt < MAX_RETRIES && !success; attempt++) {
+            if (attempt > 0) {
+                Logger::info("Retrying D-Bus call (attempt " + std::to_string(attempt+1) + 
+                           " of " + std::to_string(MAX_RETRIES) + "): " + interface + "." + method);
+                // 에러 초기화
+                if (error) {
+                    g_error_free(error);
+                    error = nullptr;
+                }
+                // 재시도 전 딜레이
+                usleep(RETRY_DELAY_MS * 1000);
+            }
+            
+            // Call the method
+            result = g_dbus_connection_call_sync(
+                connection.get(),
+                destination.c_str(),
+                path.c_str(),
+                interface.c_str(),
+                method.c_str(),
+                parameters ? parameters.get() : nullptr,
+                replyType,
+                G_DBUS_CALL_FLAGS_NONE,
+                timeoutMs > 0 ? timeoutMs : 30000,  // 기본값 30초 타임아웃
+                nullptr,
+                &error
+            );
+            
+            // 성공하면 루프 종료
+            if (result) {
+                success = true;
+                break;
+            }
+            
+            // 에러 분석 (특정 에러는 재시도하지 않음)
+            if (error) {
+                lastErrorMessage = error->message ? error->message : "Unknown error";
+                
+                // 특정 오류는 재시도하지 않음 (예: 존재하지 않는 서비스/메소드 등)
+                if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
+                    g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) ||
+                    g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT) ||
+                    g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_INTERFACE)) {
+                    
+                    Logger::error("D-Bus method call failed with non-retriable error: " + lastErrorMessage);
+                    break;  // 재시도 중단
+                }
+                
+                Logger::warn("D-Bus method call failed (will retry): " + lastErrorMessage);
+            }
+        }
+        
+        // Check for final error
+        if (!success && error) {
             std::string errorMessage = error->message ? error->message : "Unknown error";
             Logger::error("D-Bus method call failed: " + errorMessage);
             

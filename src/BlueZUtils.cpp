@@ -371,19 +371,37 @@ bool BlueZUtils::setAdapterDiscoverable(
     return success;
 }
 
+// src/BlueZUtils.cpp에서 setAdapterName 메소드 교체
 bool BlueZUtils::setAdapterName(
     DBusConnection& connection,
     const std::string& name,
     const std::string& adapterPath)
 {
-    Logger::info("Setting adapter name to: " + name);
+    Logger::info("Setting adapter alias to: " + name);
     
+    // BlueZ 5.82에서는 Name 속성이 읽기 전용이므로 Alias 속성을 사용
     GVariantPtr value = Utils::gvariantPtrFromString(name);
     
-    return setAdapterProperty(connection, 
-                             BlueZConstants::ADAPTER_PROPERTY_NAME,
-                             std::move(value),
-                             adapterPath);
+    try {
+        // Alias 속성 설정
+        bool success = setAdapterProperty(connection, 
+                                         "Alias",
+                                         std::move(value),
+                                         adapterPath);
+        
+        if (success) {
+            Logger::info("Successfully set adapter alias");
+            return true;
+        } else {
+            Logger::warn("Failed to set adapter alias, continuing anyway");
+            return false;
+        }
+    }
+    catch (const std::exception& e) {
+        Logger::warn("Exception in setAdapterName (using Alias): " + std::string(e.what()) + 
+                     ". Continuing anyway.");
+        return false;
+    }
 }
 
 bool BlueZUtils::resetAdapter(

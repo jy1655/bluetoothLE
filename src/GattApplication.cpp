@@ -518,6 +518,7 @@ void GattApplication::logObjectHierarchy() const {
     Logger::debug("===== End of object hierarchy =====");
 }
 
+// src/GattApplication.cpp에서 handleGetManagedObjects 메소드 교체
 void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
     if (!call.invocation) {
         Logger::error("Invalid method invocation in GetManagedObjects");
@@ -544,9 +545,43 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
             return;
         }
         
-        // Return the dictionary
-        g_dbus_method_invocation_return_value(call.invocation.get(), objects.get());
+        // BlueZ 5.82에서는 응답 형식이 달라졌을 수 있으므로 형식 확인
+        if (!g_variant_is_of_type(objects.get(), G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
+            Logger::warn("Object dictionary has unexpected type: " + 
+                        std::string(g_variant_get_type_string(objects.get())) +
+                        ". Attempting to adjust.");
+            
+            // 응답을 올바른 형식으로 조정 시도
+            GVariant* adjusted = NULL;
+            
+            // BlueZ 5.82 호환성: 만약 반환 타입이 튜플로 감싸져 있다면 튜플에서 추출
+            if (g_variant_is_of_type(objects.get(), G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
+                Logger::debug("Extracting dictionary from tuple");
+                adjusted = g_variant_get_child_value(objects.get(), 0);
+            }
+            
+            if (adjusted) {
+                // 기존 objects는 자동으로 해제됨
+                objects = makeGVariantPtr(adjusted, true);
+                Logger::info("Successfully adjusted response format");
+            } else {
+                Logger::error("Could not adjust response format");
+            }
+        }
         
+        // Return the dictionary - BlueZ 5.82 호환성을 위한 형식 확인
+        if (g_variant_is_of_type(objects.get(), G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
+            g_dbus_method_invocation_return_value(call.invocation.get(), objects.get());
+            Logger::debug("Returned managed objects to BlueZ");
+        } else {
+            // 호환성 문제인 경우 빈 객체 반환
+            Logger::error("Incompatible result format: " + std::string(g_variant_get_type_string(objects.get())));
+            GVariantBuilder builder;
+            g_variant_builder_init(&builder, G_VARIANT_TYPE("a{oa{sa{sv}}}"));
+            GVariant* empty = g_variant_builder_end(&builder);
+            g_dbus_method_invocation_return_value(call.invocation.get(), empty);
+            g_variant_unref(empty);
+        }
     } catch (const std::exception& e) {
         Logger::error("Exception in handleGetManagedObjects: " + std::string(e.what()));
         g_dbus_method_invocation_return_error_literal(
@@ -558,6 +593,8 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
     }
 }
 
+
+// src/GattApplication.cpp에서 createManagedObjectsDict 메소드 교체
 GVariantPtr GattApplication::createManagedObjectsDict() const {
     try {
         Logger::info("Creating managed objects dictionary");
@@ -616,7 +653,10 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
                                  BlueZConstants::PROPERTY_PRIMARY.c_str(),
                                  g_variant_new_boolean(service->isPrimary()));
             
-            // Add Characteristics property
+            // BlueZ 5.82 호환성 - 속성 이름 확인
+            const char* charsPropertyName = "Characteristics";  // 표준 이름
+            
+            // 특성 경로 목록 생성
             GVariantBuilder char_paths_builder;
             g_variant_builder_init(&char_paths_builder, G_VARIANT_TYPE("ao"));
             
@@ -629,7 +669,7 @@ GVariantPtr GattApplication::createManagedObjectsDict() const {
             }
             
             g_variant_builder_add(&props_builder, "{sv}",
-                                 BlueZConstants::PROPERTY_CHARACTERISTIC.c_str(),
+                                 charsPropertyName,
                                  g_variant_builder_end(&char_paths_builder));
             
             g_variant_builder_add(&interfaces_builder, "{sa{sv}}",
