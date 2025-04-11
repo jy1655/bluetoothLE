@@ -1,5 +1,7 @@
+// src/main.cpp
 #include "Server.h"
 #include "GattTypes.h"
+#include "GattCharacteristic.h"
 #include "Logger.h"
 #include <iostream>
 #include <csignal>
@@ -19,46 +21,38 @@ const GattUuid CUSTOM_READ_CHAR_UUID("944ecf35-cdc3-4b74-b477-5bcfe548c98e");
 const GattUuid CUSTOM_WRITE_CHAR_UUID("92da1d1a-e24f-4270-8890-8bfcf74b3398");
 const GattUuid CUSTOM_NOTIFY_CHAR_UUID("4393fc59-4d51-43ce-a284-cdce8f5fcc7d");
 
-// Signal handling will be done by the Server class
-// We still need this for the main loop though
+// Signal handling is managed by the Server class
+// We still need this for the main loop
 static std::atomic<bool> running(true);
 
 // Helper function to setup a battery service
 GattServicePtr setupBatteryService(Server& server) {
-    // 기존 코드는 그대로 유지
     auto batteryService = server.createService(BATTERY_SERVICE_UUID);
     if (!batteryService) {
         Logger::error("Failed to create Battery Service");
         return nullptr;
     }
     
-    // 배터리 레벨 특성 생성
+    // Create battery level characteristic
     auto batteryLevel = batteryService->createCharacteristic(
         BATTERY_LEVEL_UUID,
         GattProperty::PROP_READ | GattProperty::PROP_NOTIFY,
         GattPermission::PERM_READ
     );
     
-    // 중요: NOTIFY 플래그가 있으므로 CCCD 설명자 추가
-    auto cccd = batteryLevel->createDescriptor(
-        GattUuid::fromShortUuid(0x2902), // CCCD UUID
-        GattPermission::PERM_READ | GattPermission::PERM_WRITE
-    );
+    // Important: CCCD descriptor is now automatically created by the characteristic
+    // when it has NOTIFY/INDICATE properties
     
-    // CCCD 초기값 설정 (알림 비활성화 상태)
-    std::vector<uint8_t> initialCccdValue = {0x00, 0x00};
-    cccd->setValue(initialCccdValue);
-    
-    // 초기값 설정
+    // Set initial value
     std::vector<uint8_t> initialValue = {80};
     batteryLevel->setValue(initialValue);
     
-    // 기존 코드는 그대로 유지
+    // Set read callback
     batteryLevel->setReadCallback([]() -> std::vector<uint8_t> {
         return {80};
     });
     
-    // 서비스 추가
+    // Add service to server
     if (!server.addService(batteryService)) {
         Logger::error("Failed to add Battery Service to server");
         return nullptr;
@@ -69,14 +63,13 @@ GattServicePtr setupBatteryService(Server& server) {
 
 // Helper function to setup a custom service
 GattServicePtr setupCustomService(Server& server) {
-    // 기존 코드는 그대로 유지
     auto customService = server.createService(CUSTOM_SERVICE_UUID);
     if (!customService) {
         Logger::error("Failed to create Custom Service");
         return nullptr;
     }
     
-    // 읽기 특성 설정 - 변경 없음
+    // Read characteristic setup
     auto readChar = customService->createCharacteristic(
         CUSTOM_READ_CHAR_UUID,
         GattProperty::PROP_READ,
@@ -91,7 +84,7 @@ GattServicePtr setupCustomService(Server& server) {
         });
     }
     
-    // 쓰기 특성 설정 - 변경 없음
+    // Write characteristic setup
     auto writeChar = customService->createCharacteristic(
         CUSTOM_WRITE_CHAR_UUID,
         GattProperty::PROP_WRITE,
@@ -106,32 +99,14 @@ GattServicePtr setupCustomService(Server& server) {
         });
     }
     
-    // 알림 특성 설정 - CCCD 추가
+    // Notify characteristic setup
     auto notifyChar = customService->createCharacteristic(
         CUSTOM_NOTIFY_CHAR_UUID,
         GattProperty::PROP_NOTIFY,
         GattPermission::PERM_READ
     );
     
-    if (notifyChar) {
-        // 중요: CCCD 설명자 추가
-        auto cccd = notifyChar->createDescriptor(
-            GattUuid::fromShortUuid(0x2902), // CCCD UUID
-            GattPermission::PERM_READ | GattPermission::PERM_WRITE
-        );
-        
-        // CCCD 초기값 설정 (알림 비활성화 상태)
-        std::vector<uint8_t> initialCccdValue = {0x00, 0x00};
-        cccd->setValue(initialCccdValue);
-        
-        // 빈 초기값 설정
-        notifyChar->setValue({});
-        
-        // 전역 참조 저장
-        static GattCharacteristicPtr notifyCharPtr = notifyChar;
-    }
-    
-    // 서비스 추가
+    // Add service to server
     if (!server.addService(customService)) {
         Logger::error("Failed to add Custom Service to server");
         return nullptr;
@@ -141,9 +116,6 @@ GattServicePtr setupCustomService(Server& server) {
 }
 
 int main(int argc, char** argv) {
-    // We don't need to register signal handlers here
-    // The Server class will handle this
-    
     // Create and initialize the BLE server
     Server server;
     if (!server.initialize("JetsonBLE")) {
@@ -167,7 +139,7 @@ int main(int argc, char** argv) {
     
     // Configure advertisement (optional - defaults are already set in initialize())
     server.configureAdvertisement(
-        "JetsonBLE",               // Local name
+        "JetsonBLE",                // Local name
         {},                         // Service UUIDs (empty = use all)
         0x0059,                    // Manufacturer ID (0x0059 = Jetson)
         {0x01, 0x02, 0x03, 0x04},  // Manufacturer data

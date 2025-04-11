@@ -196,7 +196,7 @@ public:
      */
     static bool checkBlueZFeatures(DBusConnection& connection);
 
-private:
+
     // Helper for getting adapter properties
     static GVariantPtr getAdapterProperty(
         DBusConnection& connection,

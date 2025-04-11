@@ -2,35 +2,62 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <memory>
 #include <functional>
 
 namespace ggk {
 
-// UUID 표현 클래스
+/**
+ * @brief UUID 표현 클래스
+ */
 class GattUuid {
 public:
-    // 128비트 UUID 생성
+    /**
+     * @brief 128비트 UUID 생성
+     * @param uuid UUID 문자열 (형식: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+     */
     explicit GattUuid(const std::string& uuid);
     
-    // 16비트 UUID에서 변환 (표준 BT UUID)
+    /**
+     * @brief 16비트 UUID에서 변환 (표준 BT UUID)
+     * @param uuid 16비트 UUID 값
+     * @return 변환된 GattUuid 객체
+     */
     static GattUuid fromShortUuid(uint16_t uuid);
     
-    // 문자열 변환
+    /**
+     * @brief 문자열로 변환
+     * @return 표준 형식 UUID 문자열
+     */
     std::string toString() const;
     
-    // BlueZ에서 사용하는 형식으로 반환
+    /**
+     * @brief BlueZ에서 사용하는 형식으로 반환 (하이픈 없음)
+     * @return BlueZ 형식 UUID 문자열
+     */
     std::string toBlueZFormat() const;
+    
+    /**
+     * @brief BlueZ 짧은 형식으로 반환 (16비트 UUID의 경우)
+     * @return BlueZ 짧은 형식 UUID 문자열
+     */
     std::string toBlueZShortFormat() const;
     
-    // 비교연산자 추가
+    /**
+     * @brief 비교 연산자
+     */
     bool operator<(const GattUuid& other) const;
+    bool operator==(const GattUuid& other) const;
+    bool operator!=(const GattUuid& other) const;
     
 private:
     std::string uuid;
     bool validate();
 };
 
-// GATT 권한 플래그
+/**
+ * @brief GATT 권한 플래그
+ */
 enum GattPermission {
     PERM_READ = 0x01,
     PERM_WRITE = 0x02,
@@ -40,7 +67,9 @@ enum GattPermission {
     PERM_WRITE_AUTHENTICATED = 0x20
 };
 
-// GATT 특성 속성 플래그
+/**
+ * @brief GATT 특성 속성 플래그
+ */
 enum GattProperty {
     PROP_BROADCAST = 0x01,
     PROP_READ = 0x02,
@@ -52,7 +81,9 @@ enum GattProperty {
     PROP_EXTENDED_PROPERTIES = 0x80
 };
 
-// GATT 설명자 타입 상수
+/**
+ * @brief GATT 설명자 타입 상수
+ */
 struct GattDescriptorType {
     static const std::string CHARACTERISTIC_EXTENDED_PROPERTIES;
     static const std::string CHARACTERISTIC_USER_DESCRIPTION;
@@ -65,7 +96,9 @@ struct GattDescriptorType {
     static const std::string REPORT_REFERENCE;
 };
 
-// 기본 데이터 타입 관련 정의
+/**
+ * @brief GATT 데이터 타입
+ */
 using GattData = std::vector<uint8_t>;
 
 } // namespace ggk

@@ -1,3 +1,4 @@
+// src/GattDescriptor.cpp
 #include "GattDescriptor.h"
 #include "GattCharacteristic.h"
 #include "Logger.h"
@@ -24,15 +25,15 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
             value = newValue;
         }
         
-        // 클라이언트 특성 설정 설명자(CCCD)인 경우, 이 값이 알림 활성화/비활성화를 제어
+        // Handle CCCD descriptor (UUID 2902)
         if (uuid.toBlueZShortFormat() == "00002902") {
             if (newValue.size() >= 2) {
-                // 첫 번째 바이트의 첫 번째 비트는 알림 활성화, 두 번째 비트는 표시(Indication) 활성화
+                // First byte's first bit is for notifications, second bit for indications
                 bool enableNotify = (newValue[0] & 0x01) != 0;
                 bool enableIndicate = (newValue[0] & 0x02) != 0;
                 
                 try {
-                    // 별도의 락 없이 특성의 알림 상태를 직접 변경
+                    // Update characteristic's notification state
                     if (enableNotify || enableIndicate) {
                         characteristic.startNotify();
                     } else {
@@ -44,12 +45,13 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
             }
         }
         
-        // 값 변경 시 D-Bus 속성 변경 알림
+        // Emit property changed if registered
         if (isRegistered()) {
+            // Create a GVariant for the new value - use makeGVariantPtr pattern
             GVariantPtr valueVariant = Utils::gvariantPtrFromByteArray(value.data(), value.size());
             
             if (valueVariant) {
-                // 속성 변경 알림
+                // Emit property changed signal
                 emitPropertyChanged(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, "Value", std::move(valueVariant));
             }
         }
@@ -59,7 +61,7 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
 }
 
 bool GattDescriptor::setupDBusInterfaces() {
-    // 속성 정의
+    // Define properties
     std::vector<DBusProperty> properties = {
         {
             "UUID",
@@ -90,13 +92,13 @@ bool GattDescriptor::setupDBusInterfaces() {
         }
     };
     
-    // 인터페이스 추가
+    // Add interface
     if (!addInterface(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, properties)) {
         Logger::error("Failed to add descriptor interface");
         return false;
     }
     
-    // 메서드 핸들러 등록
+    // Add method handlers
     if (!addMethod(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, "ReadValue", 
                   [this](const DBusMethodCall& call) { handleReadValue(call); })) {
         Logger::error("Failed to add ReadValue method");
@@ -109,7 +111,7 @@ bool GattDescriptor::setupDBusInterfaces() {
         return false;
     }
     
-    // 객체 등록
+    // Register object
     if (!registerObject()) {
         Logger::error("Failed to register descriptor object");
         return false;
@@ -128,12 +130,12 @@ void GattDescriptor::handleReadValue(const DBusMethodCall& call) {
     Logger::debug("ReadValue called for descriptor: " + uuid.toString());
     
     try {
-        // 옵션 파라미터 처리 (예: offset)
-        // 실제 구현에서는 이 부분을 확장해야 함
+        // Handle options parameter (e.g., offset)
+        // In a real implementation, this section would be extended
         
         std::vector<uint8_t> returnValue;
         
-        // 콜백이 있으면 호출
+        // Use callback if available
         {
             std::lock_guard<std::mutex> callbackLock(callbackMutex);
             if (readCallback) {
@@ -150,13 +152,13 @@ void GattDescriptor::handleReadValue(const DBusMethodCall& call) {
                     return;
                 }
             } else {
-                // 콜백이 없으면 저장된 값 반환
+                // Use stored value if no callback
                 std::lock_guard<std::mutex> valueLock(valueMutex);
                 returnValue = value;
             }
         }
         
-        // 결과 반환
+        // Create response
         GVariantPtr resultVariant = Utils::gvariantPtrFromByteArray(returnValue.data(), returnValue.size());
         
         if (!resultVariant) {
@@ -170,7 +172,7 @@ void GattDescriptor::handleReadValue(const DBusMethodCall& call) {
             return;
         }
         
-        // 메서드 응답 생성 및 전송
+        // Return the response
         g_dbus_method_invocation_return_value(call.invocation.get(), resultVariant.get());
         
     } catch (const std::exception& e) {
@@ -192,11 +194,11 @@ void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
     
     Logger::debug("WriteValue called for descriptor: " + uuid.toString());
     
-    // 파라미터 확인
+    // Check parameters
     if (!call.parameters) {
         Logger::error("Missing parameters for descriptor WriteValue");
         
-        // 오류 응답
+        // Return error
         g_dbus_method_invocation_return_error_literal(
             call.invocation.get(),
             G_DBUS_ERROR,
@@ -206,12 +208,12 @@ void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
         return;
     }
     
-    // 바이트 배열 파라미터 추출
+    // Extract byte array parameter
     try {
         std::string byteString = Utils::stringFromGVariantByteArray(call.parameters.get());
         std::vector<uint8_t> newValue(byteString.begin(), byteString.end());
         
-        // 콜백이 있으면 호출
+        // Use callback if available
         bool success = true;
         {
             std::lock_guard<std::mutex> callbackLock(callbackMutex);
@@ -232,13 +234,13 @@ void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
         }
         
         if (success) {
-            // 성공적으로 처리됨
-            setValue(newValue); // setValue를 통해 특성의 알림 상태 업데이트
+            // Successfully processed
+            setValue(newValue); // Use setValue to update notification state
             
-            // 빈 응답 생성 및 전송
+            // Return empty response
             g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
         } else {
-            // 콜백에서 실패 반환
+            // Callback returned failure
             g_dbus_method_invocation_return_error_literal(
                 call.invocation.get(),
                 G_DBUS_ERROR,
@@ -260,7 +262,13 @@ void GattDescriptor::handleWriteValue(const DBusMethodCall& call) {
 
 GVariant* GattDescriptor::getUuidProperty() {
     try {
-        return Utils::gvariantFromString(uuid.toBlueZFormat());
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromString(uuid.toBlueZFormat());
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in descriptor getUuidProperty: " + std::string(e.what()));
         return nullptr;
@@ -269,7 +277,13 @@ GVariant* GattDescriptor::getUuidProperty() {
 
 GVariant* GattDescriptor::getCharacteristicProperty() {
     try {
-        return Utils::gvariantFromObject(characteristic.getPath());
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromObject(characteristic.getPath());
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getCharacteristicProperty: " + std::string(e.what()));
         return nullptr;
@@ -279,9 +293,8 @@ GVariant* GattDescriptor::getCharacteristicProperty() {
 GVariant* GattDescriptor::getPermissionsProperty() {
     try {
         std::vector<std::string> flags;
-
-        Logger::debug("Descriptor permissions flags count: " + std::to_string(flags.size()));
         
+        // Add flags based on permissions
         if (permissions & GattPermission::PERM_READ) {
             flags.push_back("read");
         }
@@ -302,11 +315,17 @@ GVariant* GattDescriptor::getPermissionsProperty() {
         }
 
         if (flags.empty()) {
-            flags.push_back("read");  // 기본값 추가
+            flags.push_back("read");  // Add default permission
             Logger::warn("Descriptor permissions empty, defaulting to 'read'");
         }
         
-        return Utils::gvariantFromStringArray(flags);
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(flags);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getPermissionsProperty: " + std::string(e.what()));
         return nullptr;

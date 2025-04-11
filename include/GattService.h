@@ -1,4 +1,4 @@
-// GattService.h
+// include/GattService.h
 #pragma once
 
 #include "GattTypes.h"
@@ -11,15 +11,27 @@
 
 namespace ggk {
 
-// 전방 선언
+// Forward declarations
 class GattCharacteristic;
 
-// 이 파일에서 사용하는 포인터 타입
+// Smart pointer type
 using GattCharacteristicPtr = std::shared_ptr<GattCharacteristic>;
 
+/**
+ * @brief Class representing a GATT service
+ * 
+ * A GATT service contains one or more characteristics.
+ */
 class GattService : public DBusObject, public std::enable_shared_from_this<GattService> {
 public:
-    // 생성자
+    /**
+     * @brief Constructor
+     * 
+     * @param connection D-Bus connection
+     * @param path Object path
+     * @param uuid Service UUID
+     * @param isPrimary Whether this is a primary service
+     */
     GattService(
         DBusConnection& connection,
         const DBusObjectPath& path,
@@ -27,46 +39,74 @@ public:
         bool isPrimary
     );
     
+    /**
+     * @brief Destructor
+     */
     virtual ~GattService() = default;
     
-    // 속성 접근자
+    /**
+     * @brief Get UUID
+     */
     const GattUuid& getUuid() const { return uuid; }
+    
+    /**
+     * @brief Check if service is primary
+     */
     bool isPrimary() const { return primary; }
     
-    // 특성 관리
+    /**
+     * @brief Create characteristic
+     * 
+     * @param uuid Characteristic UUID
+     * @param properties Characteristic properties
+     * @param permissions Characteristic permissions
+     * @return Characteristic pointer (nullptr on failure)
+     */
     GattCharacteristicPtr createCharacteristic(
         const GattUuid& uuid,
         uint8_t properties,
         uint8_t permissions
     );
     
+    /**
+     * @brief Find characteristic by UUID
+     * 
+     * @param uuid Characteristic UUID
+     * @return Characteristic pointer (nullptr if not found)
+     */
     GattCharacteristicPtr getCharacteristic(const GattUuid& uuid) const;
     
+    /**
+     * @brief Get all characteristics
+     */
     const std::map<std::string, GattCharacteristicPtr>& getCharacteristics() const {
         std::lock_guard<std::mutex> lock(characteristicsMutex);
         return characteristics;
     }
     
-    // BlueZ D-Bus 인터페이스 설정
+    /**
+     * @brief Setup BlueZ D-Bus interfaces
+     * 
+     * @return Success status
+     */
     bool setupDBusInterfaces();
     
 private:
-    
-    // 속성
-    GattUuid uuid;
-    bool primary;
-    
-    // 특성 관리
-    std::map<std::string, GattCharacteristicPtr> characteristics;
-    mutable std::mutex characteristicsMutex;
-    
-    // D-Bus 프로퍼티 획득
+    // D-Bus property getters
     GVariant* getUuidProperty();
     GVariant* getPrimaryProperty();
     GVariant* getCharacteristicsProperty();
+    
+    // Properties
+    GattUuid uuid;
+    bool primary;
+    
+    // Characteristic management
+    std::map<std::string, GattCharacteristicPtr> characteristics;
+    mutable std::mutex characteristicsMutex;
 };
 
-// 스마트 포인터 정의 - 각 헤더에서 자체적으로 정의
+// Smart pointer definition
 using GattServicePtr = std::shared_ptr<GattService>;
 
 } // namespace ggk

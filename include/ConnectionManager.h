@@ -11,54 +11,106 @@
 
 namespace ggk {
 
+/**
+ * @brief Class for managing BLE device connections
+ * 
+ * Monitors and manages connected devices via BlueZ D-Bus signals
+ */
 class ConnectionManager {
 public:
-    // 이벤트 콜백 타입 정의
+    // Callback types
     using ConnectionCallback = std::function<void(const std::string& deviceAddress)>;
     using PropertyChangedCallback = std::function<void(const std::string& interface, 
                                                       const std::string& property, 
                                                       GVariantPtr value)>;
 
+    /**
+     * @brief Get singleton instance
+     * 
+     * @return Reference to singleton instance
+     */
     static ConnectionManager& getInstance();
 
-    // 초기화 및 정리
+    /**
+     * @brief Initialize manager
+     * 
+     * @param connection D-Bus connection
+     * @return Success status
+     */
     bool initialize(DBusConnection& connection);
+    
+    /**
+     * @brief Shutdown manager
+     */
     void shutdown();
 
-    // 이벤트 리스너 등록
+    /**
+     * @brief Set connection callback
+     * 
+     * @param callback Function to call on connection
+     */
     void setOnConnectionCallback(ConnectionCallback callback);
+    
+    /**
+     * @brief Set disconnection callback
+     * 
+     * @param callback Function to call on disconnection
+     */
     void setOnDisconnectionCallback(ConnectionCallback callback);
+    
+    /**
+     * @brief Set property changed callback
+     * 
+     * @param callback Function to call on property changes
+     */
     void setOnPropertyChangedCallback(PropertyChangedCallback callback);
 
-    // 연결 관리
+    /**
+     * @brief Get connected devices
+     * 
+     * @return List of connected device addresses
+     */
     std::vector<std::string> getConnectedDevices() const;
+    
+    /**
+     * @brief Check if device is connected
+     * 
+     * @param deviceAddress Device address to check
+     * @return Connection status
+     */
     bool isDeviceConnected(const std::string& deviceAddress) const;
+    
+    /**
+     * @brief Check if manager is initialized
+     * 
+     * @return Initialization status
+     */
     bool isInitialized() const;
 
 private:
     ConnectionManager();
     ~ConnectionManager();
 
-    // 복사 방지
+    // Prevent copying
     ConnectionManager(const ConnectionManager&) = delete;
     ConnectionManager& operator=(const ConnectionManager&) = delete;
 
-    // 시그널 핸들러 등록
+    // Signal handling
     void registerSignalHandlers();
     void handleInterfacesAddedSignal(const std::string& signalName, GVariantPtr parameters);
     void handleInterfacesRemovedSignal(const std::string& signalName, GVariantPtr parameters);
     void handlePropertiesChangedSignal(const std::string& signalName, GVariantPtr parameters);
 
-    // 실제 연결 데이터
+    // Connection data
     std::map<std::string, DBusObjectPath> connectedDevices;
     mutable std::mutex devicesMutex;
 
-    // 콜백
+    // Callbacks
     ConnectionCallback onConnectionCallback;
     ConnectionCallback onDisconnectionCallback;
     PropertyChangedCallback onPropertyChangedCallback;
 
-    // 시그널 처리 관련
+    // Signal handling
     DBusConnection* connection;
     std::vector<guint> signalHandlerIds;
     bool initialized;

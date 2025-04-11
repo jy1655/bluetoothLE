@@ -1,3 +1,4 @@
+// GattTypes.cpp
 #include "GattTypes.h"
 #include <algorithm>
 #include <stdexcept>
@@ -26,7 +27,6 @@ GattUuid::GattUuid(const std::string& uuid) : uuid(uuid) {
 
 GattUuid GattUuid::fromShortUuid(uint16_t shortUuid) {
     // 블루투스 기본 UUID: 0000xxxx-0000-1000-8000-00805F9B34FB
-    // xxxx는 16비트 UUID
     char buffer[37];
     snprintf(buffer, sizeof(buffer), "0000%04x-0000-1000-8000-00805f9b34fb", shortUuid);
     
@@ -42,7 +42,7 @@ std::string GattUuid::toBlueZFormat() const {
     std::string result = uuid;
     result.erase(std::remove(result.begin(), result.end(), '-'), result.end());
     
-    // 모두 소문자로 변환 (일관성을 위해)
+    // 소문자로 변환 (일관성을 위해)
     std::transform(result.begin(), result.end(), result.begin(), 
                    [](unsigned char c){ return std::tolower(c); });
     
@@ -54,25 +54,34 @@ std::string GattUuid::toBlueZShortFormat() const {
     std::string result = uuid;
     result.erase(std::remove(result.begin(), result.end(), '-'), result.end());
     
-    // 모두 소문자로 변환
+    // 소문자로 변환
     std::transform(result.begin(), result.end(), result.begin(), 
                    [](unsigned char c){ return std::tolower(c); });
     
-    // 짧은 형식으로 반환 (처음 8자리)
-    if (result.length() >= 8) {
+    // 짧은 형식으로 반환 (표준 UUID의 처음 8자리)
+    if (result.length() == 32 && 
+        result.substr(0, 8).find_first_not_of("0") == std::string::npos &&
+        result.substr(12) == "00001000800000805f9b34fb") {
         return result.substr(0, 8);
     }
     
     return result;
 }
 
-
-
 bool GattUuid::validate() {
-    // 기본 UUID 유효성 검사 (간단한 구현)
+    // 기본 UUID 유효성 검사
     if (uuid.length() == 36 && 
         uuid[8] == '-' && uuid[13] == '-' && 
         uuid[18] == '-' && uuid[23] == '-') {
+        
+        // 모든 문자가 16진수인지 확인 (하이픈 제외)
+        for (size_t i = 0; i < uuid.length(); ++i) {
+            if (uuid[i] == '-') continue;
+            
+            if (!isxdigit(static_cast<unsigned char>(uuid[i]))) {
+                return false;
+            }
+        }
         return true;
     }
     
@@ -92,6 +101,14 @@ bool GattUuid::validate() {
 
 bool GattUuid::operator<(const GattUuid& other) const {
     return uuid < other.uuid;
+}
+
+bool GattUuid::operator==(const GattUuid& other) const {
+    return uuid == other.uuid;
+}
+
+bool GattUuid::operator!=(const GattUuid& other) const {
+    return uuid != other.uuid;
 }
 
 } // namespace ggk

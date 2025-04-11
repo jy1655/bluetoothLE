@@ -1,3 +1,4 @@
+// src/GattAdvertisement.cpp
 #include "GattAdvertisement.h"
 #include "Logger.h"
 #include "Utils.h"
@@ -29,7 +30,7 @@ void GattAdvertisement::addServiceUUID(const GattUuid& uuid) {
     if (!uuid.toString().empty()) {
         for (const auto& existingUuid : serviceUUIDs) {
             if (existingUuid.toString() == uuid.toString()) {
-                return; // UUID가 이미 존재함
+                return; // UUID already exists
             }
         }
         serviceUUIDs.push_back(uuid);
@@ -45,7 +46,8 @@ void GattAdvertisement::addServiceUUIDs(const std::vector<GattUuid>& uuids) {
 
 void GattAdvertisement::setManufacturerData(uint16_t manufacturerId, const std::vector<uint8_t>& data) {
     manufacturerData[manufacturerId] = data;
-    Logger::debug(SSTR << "Set manufacturer data for ID 0x" << Utils::hex(manufacturerId) << " with " << data.size() << " bytes");
+    Logger::debug("Set manufacturer data for ID 0x" + Utils::hex(manufacturerId) + " with " + 
+                 std::to_string(data.size()) + " bytes");
 }
 
 void GattAdvertisement::setServiceData(const GattUuid& serviceUuid, const std::vector<uint8_t>& data) {
@@ -62,21 +64,21 @@ void GattAdvertisement::setLocalName(const std::string& name) {
 
 void GattAdvertisement::setAppearance(uint16_t value) {
     appearance = value;
-    Logger::debug(SSTR << "Set appearance: 0x" << Utils::hex(value));
+    Logger::debug("Set appearance: 0x" + Utils::hex(value));
 }
 
 void GattAdvertisement::setDuration(uint16_t value) {
     duration = value;
-    Logger::debug(SSTR << "Set advertisement duration: " << value << " seconds");
+    Logger::debug("Set advertisement duration: " + std::to_string(value) + " seconds");
 }
 
 void GattAdvertisement::setIncludeTxPower(bool include) {
     includeTxPower = include;
-    Logger::debug(SSTR << "Set include TX power: " << (include ? "true" : "false"));
+    Logger::debug("Set include TX power: " + std::string(include ? "true" : "false"));
 }
 
 bool GattAdvertisement::setupDBusInterfaces() {
-    // 이미 등록된 경우 재등록하지 않음
+    // If already registered, don't re-register
     if (isRegistered()) {
         Logger::warn("Advertisement already registered with D-Bus");
         return true;
@@ -84,7 +86,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
     
     Logger::info("Setting up D-Bus interfaces for advertisement: " + getPath().toString());
     
-    // 속성 정의
+    // Define properties
     std::vector<DBusProperty> properties = {
         {
             "Type",
@@ -133,7 +135,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         }
     };
     
-    // LocalName이 설정되어 있는 경우에만 속성 추가
+    // Add optional properties
     if (!localName.empty()) {
         properties.push_back({
             "LocalName",
@@ -146,7 +148,6 @@ bool GattAdvertisement::setupDBusInterfaces() {
         });
     }
     
-    // Appearance가 설정되어 있는 경우에만 속성 추가
     if (appearance != 0) {
         properties.push_back({
             "Appearance",
@@ -159,7 +160,6 @@ bool GattAdvertisement::setupDBusInterfaces() {
         });
     }
     
-    // Duration이 설정되어 있는 경우에만 속성 추가
     if (duration != 0) {
         properties.push_back({
             "Duration",
@@ -172,20 +172,20 @@ bool GattAdvertisement::setupDBusInterfaces() {
         });
     }
 
-    // 1. LE Advertisement 인터페이스 추가 - 반드시 registerObject() 호출 전에 수행
+    // 1. Add LEAdvertisement interface
     if (!addInterface(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, properties)) {
         Logger::error("Failed to add LEAdvertisement interface");
         return false;
     }
     
-    // 2. Release 메서드 추가 - 반드시 registerObject() 호출 전에 수행
+    // 2. Add Release method
     if (!addMethod(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, "Release", 
                   [this](const DBusMethodCall& call) { handleRelease(call); })) {
         Logger::error("Failed to add Release method");
         return false;
     }
     
-    // 3. 객체 등록 - 모든 인터페이스와 메서드 추가 후에 마지막으로 수행
+    // 3. Register object
     if (!registerObject()) {
         Logger::error("Failed to register advertisement object");
         return false;
@@ -203,10 +203,10 @@ void GattAdvertisement::handleRelease(const DBusMethodCall& call) {
     
     Logger::info("BlueZ called Release on advertisement: " + getPath().toString());
     
-    // Release는 반환값이 없는 메서드
+    // Release has no return value
     g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
     
-    // 실제로 해제 작업 수행
+    // Update registration state
     registered = false;
 }
 
@@ -318,7 +318,6 @@ bool GattAdvertisement::activateAdvertisingFallback() {
     }
     
     // 6. Set non-connectable advertising parameters for better visibility
-    // Parameters: min interval, max interval, type (0=connectable, 3=non-connectable), etc.
     if (system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 03 00 00 00 00 00 00 00 00 07 00") != 0) {
         Logger::warn("Failed to set advertising parameters - continuing anyway");
     }
@@ -378,11 +377,8 @@ bool GattAdvertisement::cleanupExistingAdvertisements() {
                 
                 try {
                     // Build parameters
-                    GVariantBuilder builder;
-                    g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
-                    g_variant_builder_add(&builder, "o", path.c_str());
-                    GVariant* params = g_variant_builder_end(&builder);
-                    GVariantPtr params_ptr(g_variant_ref_sink(params), &g_variant_unref);
+                    GVariant* paramsRaw = g_variant_new("(o)", path.c_str());
+                    GVariantPtr params = makeGVariantPtr(paramsRaw, true);
                     
                     // Call UnregisterAdvertisement
                     getConnection().callMethod(
@@ -390,7 +386,7 @@ bool GattAdvertisement::cleanupExistingAdvertisements() {
                         DBusObjectPath(BlueZConstants::ADAPTER_PATH),
                         BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
                         BlueZConstants::UNREGISTER_ADVERTISEMENT,
-                        std::move(params_ptr)
+                        std::move(params)
                     );
                 } catch (...) {
                     // Ignore failures, just try to clean up as much as possible
@@ -407,10 +403,9 @@ bool GattAdvertisement::cleanupExistingAdvertisements() {
     return true;
 }
 
-
 bool GattAdvertisement::unregisterFromBlueZ() {
     try {
-        // 등록되어 있지 않으면 성공으로 간주
+        // If not registered, consider it a success
         if (!registered) {
             Logger::debug("Advertisement not registered, nothing to unregister");
             return true;
@@ -419,26 +414,26 @@ bool GattAdvertisement::unregisterFromBlueZ() {
         Logger::info("Unregistering advertisement from BlueZ...");
         bool success = false;
         
-        // 방법 1: DBus API를 통한 등록 해제
+        // Method 1: Unregister via D-Bus API
         try {
-            // 더 간단한 방식으로 매개변수 생성
-            GVariant* params = g_variant_new("(o)", getPath().c_str());
-            GVariantPtr parameters(g_variant_ref_sink(params), &g_variant_unref);
+            // Create parameters using makeGVariantPtr pattern
+            GVariant* paramsRaw = g_variant_new("(o)", getPath().c_str());
+            GVariantPtr params = makeGVariantPtr(paramsRaw, true);
             
             getConnection().callMethod(
                 BlueZConstants::BLUEZ_SERVICE,
                 DBusObjectPath(BlueZConstants::ADAPTER_PATH),
                 BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
                 BlueZConstants::UNREGISTER_ADVERTISEMENT,
-                std::move(parameters),
+                std::move(params),
                 "",
-                5000  // 5초 타임아웃
+                5000  // 5 second timeout
             );
             
             success = true;
             Logger::info("Successfully unregistered advertisement via BlueZ DBus API");
         } catch (const std::exception& e) {
-            // DoesNotExist 오류의 경우 이미 BlueZ에서 해제된 것으로 간주
+            // Ignore DoesNotExist errors
             std::string error = e.what();
             if (error.find("DoesNotExist") != std::string::npos || 
                 error.find("Does Not Exist") != std::string::npos ||
@@ -450,7 +445,7 @@ bool GattAdvertisement::unregisterFromBlueZ() {
             }
         }
         
-        // 방법 2: bluetoothctl을 사용한 등록 해제 (방법 1이 실패한 경우)
+        // Method 2: Disable via bluetoothctl (if method 1 failed)
         if (!success) {
             Logger::info("Trying to unregister advertisement via bluetoothctl...");
             if (system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
@@ -459,7 +454,7 @@ bool GattAdvertisement::unregisterFromBlueZ() {
             }
         }
         
-        // 방법 3: hciconfig를 사용한 등록 해제 (방법 1, 2가 실패한 경우)
+        // Method 3: Disable via hciconfig (if methods 1 and 2 failed)
         if (!success) {
             Logger::info("Trying to disable advertisement via hciconfig...");
             if (system("sudo hciconfig hci0 noleadv > /dev/null 2>&1") == 0) {
@@ -468,26 +463,88 @@ bool GattAdvertisement::unregisterFromBlueZ() {
             }
         }
         
-        // 최후의 방법: BlueZ 광고 객체 명시적 삭제 시도
+        // Last resort: Try to remove all advertising instances
         if (!success) {
             Logger::info("Trying to remove all advertising instances...");
             system("echo -e 'remove-advertising 0\\nremove-advertising 1\\nremove-advertising 2\\nremove-advertising 3\\n' | bluetoothctl > /dev/null 2>&1");
-            success = true;  // 성공 여부를 정확히 확인하기 어려움
+            success = true;  // Hard to verify success accurately
         }
         
-        // 로컬 상태 업데이트
+        // Update local state
         registered = false;
         
         return success;
     } catch (const std::exception& e) {
         Logger::error("Exception in unregisterFromBlueZ: " + std::string(e.what()));
-        registered = false;  // 안전을 위해 로컬 상태 업데이트
-        return false;
-    } catch (...) {
-        Logger::error("Unknown exception in unregisterFromBlueZ");
-        registered = false;  // 안전을 위해 로컬 상태 업데이트
+        registered = false;  // Update local state for safety
         return false;
     }
+}
+
+bool GattAdvertisement::registerWithDBusApi() {
+    // Try up to 3 times, with increasing wait time
+    bool success = false;
+    std::string errorMsg;
+    
+    for (int retryCount = 0; retryCount < MAX_REGISTRATION_RETRIES; retryCount++) {
+        try {
+            // Create empty options dictionary using Utils helper function
+            GVariantPtr emptyOptions = Utils::createEmptyDictionaryPtr();
+            
+            // Create tuple parameter
+            GVariant* paramsRaw = g_variant_new("(o@a{sv})", 
+                                        getPath().c_str(), 
+                                        emptyOptions.get());
+            
+            // Manage parameter with makeGVariantPtr pattern
+            GVariantPtr params = makeGVariantPtr(paramsRaw, true);
+            
+            // Call BlueZ
+            GVariantPtr result = getConnection().callMethod(
+                BlueZConstants::BLUEZ_SERVICE,
+                DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
+                BlueZConstants::REGISTER_ADVERTISEMENT,
+                std::move(params),
+                "",
+                5000
+            );
+            
+            // If call succeeds
+            registered = true;
+            return true;
+        }
+        catch (const std::exception& e) {
+            errorMsg = e.what();
+            
+            if (errorMsg.find("Maximum advertisements reached") != std::string::npos) {
+                Logger::error("Maximum advertisements reached. Attempting to clean up...");
+                
+                // Try to clean up advertisements
+                cleanupExistingAdvertisements();
+                
+                // Try restarting BlueZ on last attempt
+                if (retryCount == MAX_REGISTRATION_RETRIES - 1) {
+                    Logger::info("Trying to restart BlueZ to clear advertisements...");
+                    system("sudo systemctl restart bluetooth.service");
+                    sleep(2);  // Wait for restart
+                }
+            } else {
+                Logger::error("DBus method failed: " + errorMsg);
+            }
+            
+            // Wait before retry
+            int waitTime = BASE_RETRY_WAIT_MS * (1 << retryCount);  // Exponential backoff
+            Logger::info("Retry " + std::to_string(retryCount + 1) + 
+                        " of " + std::to_string(MAX_REGISTRATION_RETRIES) + 
+                        " in " + std::to_string(waitTime / 1000.0) + " seconds");
+            usleep(waitTime * 1000);
+        }
+    }
+    
+    Logger::error("Failed to register advertisement after " + 
+                 std::to_string(MAX_REGISTRATION_RETRIES) + " attempts. Last error: " + errorMsg);
+    return false;
 }
 
 GVariant* GattAdvertisement::getTypeProperty() {
@@ -504,7 +561,13 @@ GVariant* GattAdvertisement::getTypeProperty() {
                 break;
         }
         
-        return Utils::gvariantFromString(typeStr);
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromString(typeStr);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getTypeProperty: " + std::string(e.what()));
         return nullptr;
@@ -519,7 +582,13 @@ GVariant* GattAdvertisement::getServiceUUIDsProperty() {
             uuidStrings.push_back(uuid.toBlueZFormat());
         }
         
-        return Utils::gvariantFromStringArray(uuidStrings);
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(uuidStrings);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getServiceUUIDsProperty: " + std::string(e.what()));
         return nullptr;
@@ -529,8 +598,11 @@ GVariant* GattAdvertisement::getServiceUUIDsProperty() {
 GVariant* GattAdvertisement::getManufacturerDataProperty() {
     try {
         if (manufacturerData.empty()) {
-            // 유효한 빈 사전 형식 제공
-            return g_variant_new_array(G_VARIANT_TYPE("{qv}"), NULL, 0);
+            // Create valid empty dictionary
+            GVariantBuilder builder;
+            g_variant_builder_init(&builder, G_VARIANT_TYPE("a{qv}"));
+            GVariant* result = g_variant_builder_end(&builder);
+            return result;  // No need for ref/unref
         }
         
         GVariantBuilder builder;
@@ -540,7 +612,7 @@ GVariant* GattAdvertisement::getManufacturerDataProperty() {
             uint16_t id = pair.first;
             const std::vector<uint8_t>& data = pair.second;
             
-            // 바이트 배열을 ay 형식으로 변환
+            // Create byte array
             GVariant* bytes = g_variant_new_fixed_array(
                 G_VARIANT_TYPE_BYTE,
                 data.data(),
@@ -548,7 +620,7 @@ GVariant* GattAdvertisement::getManufacturerDataProperty() {
                 sizeof(uint8_t)
             );
             
-            // 올바른 variant 래핑
+            // Wrap in variant
             GVariant* dataVariant = g_variant_new_variant(bytes);
             
             g_variant_builder_add(&builder, "{qv}", id, dataVariant);
@@ -556,12 +628,12 @@ GVariant* GattAdvertisement::getManufacturerDataProperty() {
         
         GVariant* result = g_variant_builder_end(&builder);
         
-        // 디버깅: 형식 검증 
+        // Debug validation
         char* debug_str = g_variant_print(result, TRUE);
         Logger::debug("ManufacturerData property: " + std::string(debug_str));
         g_free(debug_str);
         
-        return result;
+        return result;  // No need for ref/unref
     } catch (const std::exception& e) {
         Logger::error("Exception in getManufacturerDataProperty: " + std::string(e.what()));
         return nullptr;
@@ -577,18 +649,17 @@ GVariant* GattAdvertisement::getServiceDataProperty() {
             const GattUuid& uuid = pair.first;
             const std::vector<uint8_t>& data = pair.second;
             
-            // GVariant를 먼저 생성
-            GVariant* dataVariant = Utils::gvariantFromByteArray(data.data(), data.size());
+            // Create byte array variant
+            GVariantPtr dataVariant = Utils::gvariantPtrFromByteArray(data.data(), data.size());
             
-            // 그 다음 builder에 추가
+            // Add to builder
             g_variant_builder_add(&builder, "{sv}", 
                                  uuid.toBlueZFormat().c_str(), 
-                                 dataVariant);
-            
-            // dataVariant는 builder가 소유권을 가짐
+                                 dataVariant.get());
         }
         
-        return g_variant_builder_end(&builder);
+        GVariant* result = g_variant_builder_end(&builder);
+        return result;  // No need for ref/unref
     } catch (const std::exception& e) {
         Logger::error("Exception in getServiceDataProperty: " + std::string(e.what()));
         return nullptr;
@@ -597,7 +668,13 @@ GVariant* GattAdvertisement::getServiceDataProperty() {
 
 GVariant* GattAdvertisement::getLocalNameProperty() {
     try {
-        return Utils::gvariantFromString(localName);
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromString(localName);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getLocalNameProperty: " + std::string(e.what()));
         return nullptr;
@@ -606,6 +683,7 @@ GVariant* GattAdvertisement::getLocalNameProperty() {
 
 GVariant* GattAdvertisement::getAppearanceProperty() {
     try {
+        // Use direct GVariant creation for simple numeric type
         return g_variant_new_uint16(appearance);
     } catch (const std::exception& e) {
         Logger::error("Exception in getAppearanceProperty: " + std::string(e.what()));
@@ -615,6 +693,7 @@ GVariant* GattAdvertisement::getAppearanceProperty() {
 
 GVariant* GattAdvertisement::getDurationProperty() {
     try {
+        // Use direct GVariant creation for simple numeric type
         return g_variant_new_uint16(duration);
     } catch (const std::exception& e) {
         Logger::error("Exception in getDurationProperty: " + std::string(e.what()));
@@ -624,100 +703,21 @@ GVariant* GattAdvertisement::getDurationProperty() {
 
 GVariant* GattAdvertisement::getIncludeTxPowerProperty() {
     try {
-        return Utils::gvariantFromBoolean(includeTxPower);
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromBoolean(includeTxPower);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getIncludeTxPowerProperty: " + std::string(e.what()));
         return nullptr;
     }
 }
 
-bool GattAdvertisement::cleanupExistingAdvertisements() {
-    Logger::info("Cleaning up any existing advertisements...");
-    
-    // 1. 먼저 bluetoothctl을 통해 광고 중지 시도
-    system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1");
-    
-    // 2. HCI 명령어로 광고 중지 시도
-    system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
-    
-    // 3. 모든 광고 인스턴스 제거 시도
-    bool success = (system("echo -e 'remove-advertising 0\\nremove-advertising 1\\nremove-advertising 2\\nremove-advertising 3\\n' | bluetoothctl > /dev/null 2>&1") == 0);
-    
-    // 적절한 대기 시간 적용
-    usleep(500000);  // 500ms
-    
-    return success;
-}
-
-bool GattAdvertisement::registerWithDBusApi() {
-    // 최대 3번의 재시도, 각 시도마다 대기 시간 증가
-    bool success = false;
-    std::string errorMsg;
-    
-    for (int retryCount = 0; retryCount < MAX_REGISTRATION_RETRIES; retryCount++) {
-        try {
-            // 빈 딕셔너리를 Utils 헬퍼 함수를 사용해 생성
-            GVariantPtr emptyOptions = Utils::createEmptyDictionaryPtr();
-            
-            // 튜플 형태로 파라미터 생성
-            GVariant* tuple = g_variant_new("(o@a{sv})", 
-                                        getPath().c_str(), 
-                                        emptyOptions.get());
-            
-            // 튜플에 대한 참조 관리
-            GVariant* owned_tuple = g_variant_ref_sink(tuple);
-            GVariantPtr parameters(owned_tuple, &g_variant_unref);
-            
-            // BlueZ 호출
-            GVariantPtr result = getConnection().callMethod(
-                BlueZConstants::BLUEZ_SERVICE,
-                DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-                BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
-                BlueZConstants::REGISTER_ADVERTISEMENT,
-                std::move(parameters),
-                "",
-                5000
-            );
-            
-            // 호출이 성공하면
-            registered = true;
-            return true;
-        }
-        catch (const std::exception& e) {
-            errorMsg = e.what();
-            
-            if (errorMsg.find("Maximum advertisements reached") != std::string::npos) {
-                Logger::error("Maximum advertisements reached. Attempting to clean up...");
-                
-                // 광고 정리 시도
-                cleanupExistingAdvertisements();
-                
-                // BlueZ 종료 후 재시작 시도 (마지막 시도에서만)
-                if (retryCount == MAX_REGISTRATION_RETRIES - 1) {
-                    Logger::info("Trying to restart BlueZ to clear advertisements...");
-                    system("sudo systemctl restart bluetooth.service");
-                    sleep(2);  // 재시작 대기 시간
-                }
-            } else {
-                Logger::error("DBus method failed: " + errorMsg);
-            }
-            
-            // 재시도 전 대기
-            int waitTime = BASE_RETRY_WAIT_MS * (1 << retryCount);  // Exponential backoff
-            Logger::info("Retry " + std::to_string(retryCount + 1) + 
-                        " of " + std::to_string(MAX_REGISTRATION_RETRIES) + 
-                        " in " + std::to_string(waitTime / 1000.0) + " seconds");
-            usleep(waitTime * 1000);
-        }
-    }
-    
-    Logger::error("Failed to register advertisement after " + 
-                 std::to_string(MAX_REGISTRATION_RETRIES) + " attempts. Last error: " + errorMsg);
-    return false;
-}
-
 std::string GattAdvertisement::getAdvertisementStateString() const {
-    std::ostringstream oss;
+    std::stringstream oss;
     
     oss << "Advertisement State:\n";
     oss << "  Path: " << getPath().toString() << "\n";
@@ -753,6 +753,7 @@ std::string GattAdvertisement::getAdvertisementStateString() const {
     return oss.str();
 }
 
+// src/GattAdvertisement.cpp (continued)
 std::vector<uint8_t> GattAdvertisement::buildRawAdvertisingData() const {
     std::vector<uint8_t> adData;
     

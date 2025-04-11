@@ -19,6 +19,7 @@ pkg_check_modules(BLUEZ REQUIRED bluez)
 
 # Source files
 set(SOURCES
+    src/BlueZUtils.cpp
     src/ConnectionManager.cpp
     src/DBusConnection.cpp
     src/DBusError.cpp
@@ -33,9 +34,7 @@ set(SOURCES
     src/GattService.cpp
     src/GattTypes.cpp
     src/HciAdapter.cpp
-    src/HciSocket.cpp
     src/Logger.cpp
-    src/Mgmt.cpp
     src/Server.cpp
     src/Utils.cpp
 )

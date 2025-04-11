@@ -1,4 +1,4 @@
-// GattAdvertisement.h
+// include/GattAdvertisement.h
 #pragma once
 
 #include "DBusObject.h"
@@ -11,61 +11,151 @@
 
 namespace ggk {
 
+/**
+ * @brief Class for BLE advertising management
+ */
 class GattAdvertisement : public DBusObject {
 public:
+    /**
+     * @brief Advertisement type enum
+     */
     enum class AdvertisementType {
         BROADCAST,
         PERIPHERAL
     };
     
+    /**
+     * @brief Constructor
+     * 
+     * @param connection D-Bus connection
+     * @param path Object path
+     * @param type Advertisement type
+     */
     GattAdvertisement(
         DBusConnection& connection,
         const DBusObjectPath& path,
         AdvertisementType type = AdvertisementType::PERIPHERAL
     );
 
-    // DBusName 사용하는 생성자 추가
+    /**
+     * @brief Constructor using DBusName singleton
+     * 
+     * @param path Object path
+     */
     GattAdvertisement(const DBusObjectPath& path);
     
+    /**
+     * @brief Destructor
+     */
     virtual ~GattAdvertisement() = default;
     
-    // 서비스 UUID 설정
+    /**
+     * @brief Add service UUID
+     * 
+     * @param uuid Service UUID
+     */
     void addServiceUUID(const GattUuid& uuid);
+    
+    /**
+     * @brief Add multiple service UUIDs
+     * 
+     * @param uuids List of service UUIDs
+     */
     void addServiceUUIDs(const std::vector<GattUuid>& uuids);
     
-    // 제조사 데이터 설정 (Company ID + 임의 데이터)
+    /**
+     * @brief Set manufacturer data
+     * 
+     * @param manufacturerId Manufacturer ID
+     * @param data Manufacturer-specific data
+     */
     void setManufacturerData(uint16_t manufacturerId, const std::vector<uint8_t>& data);
     
-    // 서비스 데이터 설정 (Service UUID + 임의 데이터)
+    /**
+     * @brief Set service data
+     * 
+     * @param serviceUuid Service UUID
+     * @param data Service-specific data
+     */
     void setServiceData(const GattUuid& serviceUuid, const std::vector<uint8_t>& data);
     
-    // 기타 광고 속성 설정
+    /**
+     * @brief Set local name
+     * 
+     * @param name Local name to advertise
+     */
     void setLocalName(const std::string& name);
+    
+    /**
+     * @brief Set appearance
+     * 
+     * @param appearance Appearance value
+     */
     void setAppearance(uint16_t appearance);
+    
+    /**
+     * @brief Set advertisement duration
+     * 
+     * @param duration Duration in seconds
+     */
     void setDuration(uint16_t duration);
+    
+    /**
+     * @brief Set TX power inclusion
+     * 
+     * @param include Whether to include TX power
+     */
     void setIncludeTxPower(bool include);
     
-    // BlueZ 등록
+    /**
+     * @brief Register with BlueZ
+     * 
+     * @return Success status
+     */
     bool registerWithBlueZ();
+    
+    /**
+     * @brief Unregister from BlueZ
+     * 
+     * @return Success status
+     */
     bool unregisterFromBlueZ();
+    
+    /**
+     * @brief Check if registered
+     */
     bool isRegistered() const { return registered; }
 
-    // D-Bus 인터페이스 설정
+    /**
+     * @brief Setup D-Bus interfaces
+     * 
+     * @return Success status
+     */
     bool setupDBusInterfaces();
     
-    // D-Bus 메서드 핸들러
+    /**
+     * @brief Handle Release method call
+     * 
+     * @param call Method call info
+     */
     void handleRelease(const DBusMethodCall& call);
     
-    // 현재 광고 상태 문자열로 얻기 (디버깅용)
+    /**
+     * @brief Get advertisement state as string
+     * 
+     * @return Debug string
+     */
     std::string getAdvertisementStateString() const;
     
-    // 광고 데이터 직접 구성 (HCI 직접 제어용)
+    /**
+     * @brief Build raw advertising data
+     * 
+     * @return Binary advertising data
+     */
     std::vector<uint8_t> buildRawAdvertisingData() const;
 
 private:
-    
-    
-    // D-Bus 속성 획득
+    // D-Bus property getters
     GVariant* getTypeProperty();
     GVariant* getServiceUUIDsProperty();
     GVariant* getManufacturerDataProperty();
@@ -75,11 +165,13 @@ private:
     GVariant* getDurationProperty();
     GVariant* getIncludeTxPowerProperty();
     
-    // BlueZ 등록 내부 헬퍼 함수
+    // Helper methods
     bool registerWithDBusApi();
     bool cleanupExistingAdvertisements();
+    bool activateAdvertising();
+    bool activateAdvertisingFallback();
     
-    // 속성
+    // Properties
     AdvertisementType type;
     std::vector<GattUuid> serviceUUIDs;
     std::map<uint16_t, std::vector<uint8_t>> manufacturerData;
@@ -90,7 +182,7 @@ private:
     bool includeTxPower;
     bool registered;
     
-    // 최대 재시도 횟수 및 대기 시간
+    // Retry constants
     static constexpr int MAX_REGISTRATION_RETRIES = 3;
     static constexpr int BASE_RETRY_WAIT_MS = 1000;
 };

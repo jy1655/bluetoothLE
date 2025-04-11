@@ -1,9 +1,9 @@
+// src/GattCharacteristic.cpp
 #include "GattCharacteristic.h"
 #include "GattService.h"
 #include "GattDescriptor.h"
 #include "Logger.h"
 #include "Utils.h"
-#include "DBusMessage.h"
 
 namespace ggk {
 
@@ -30,9 +30,9 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
             value = newValue;
         }
         
-        // Emit value change notification if registered
+        // Emit PropertyChanged signal if registered
         if (isRegistered()) {
-            // Create a GVariant for the new value
+            // Create GVariant using makeGVariantPtr pattern
             GVariantPtr valueVariant = Utils::gvariantPtrFromByteArray(newValue.data(), newValue.size());
             
             if (!valueVariant) {
@@ -40,12 +40,12 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
                 return;
             }
             
-            // Send PropertyChanged signal for Value
+            // Emit ValueChanged signal
             emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
                                "Value", 
                                std::move(valueVariant));
             
-            // If notifying, also send notification
+            // If notifying, handle notification
             bool isNotifying = false;
             {
                 std::lock_guard<std::mutex> notifyLock(notifyMutex);
@@ -53,7 +53,7 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
             }
             
             if (isNotifying) {
-                // Create a D-Bus signal params
+                // Execute callback if registered
                 std::lock_guard<std::mutex> callbackLock(callbackMutex);
                 if (notifyCallback) {
                     try {
@@ -69,33 +69,32 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
     }
 }
 
-
-// 이동 시맨틱스를 사용한 오버로드 추가
 void GattCharacteristic::setValue(std::vector<uint8_t>&& newValue) {
     try {
-        // 값 설정 및 잠금 관리 (이동 의미론 활용)
+        // Set the value using move semantics
         {
             std::lock_guard<std::mutex> lock(valueMutex);
             value = std::move(newValue);
         }
         
-        // 값 변경 시 D-Bus 속성 변경 알림
+        // Emit PropertyChanged signal if registered
         if (isRegistered()) {
-            // 스마트 포인터 기반 함수 사용
-            auto valueVariant = Utils::gvariantPtrFromByteArray(value.data(), value.size());
+            // Create GVariant using makeGVariantPtr pattern
+            GVariantPtr valueVariant = Utils::gvariantPtrFromByteArray(value.data(), value.size());
             
             if (!valueVariant) {
-                Logger::error("Failed to create GVariant for value");
+                Logger::error("Failed to create GVariant for characteristic value");
                 return;
             }
             
+            // Check notification state
             bool isNotifying = false;
             {
                 std::lock_guard<std::mutex> notifyLock(notifyMutex);
                 isNotifying = notifying;
             }
             
-            // Notify 활성화된 경우 시그널 발생
+            // Handle notification if active
             if (isNotifying) {
                 std::lock_guard<std::mutex> callbackLock(callbackMutex);
                 if (notifyCallback) {
@@ -107,11 +106,13 @@ void GattCharacteristic::setValue(std::vector<uint8_t>&& newValue) {
                 }
             }
             
-            // Value 속성 변경 알림 - 속성이 공개되어 있는 경우에만
-            emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Value", std::move(valueVariant));
+            // Emit property changed signal
+            emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
+                               "Value", 
+                               std::move(valueVariant));
         }
     } catch (const std::exception& e) {
-        Logger::error("Exception in setValue: " + std::string(e.what()));
+        Logger::error("Exception in setValue (move): " + std::string(e.what()));
     }
 }
 
@@ -128,7 +129,7 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
     
     std::lock_guard<std::mutex> lock(descriptorsMutex);
     
-    // 이미 존재하는 경우 기존 설명자 반환
+    // Check if already exists
     auto it = descriptors.find(uuidStr);
     if (it != descriptors.end()) {
         if (!it->second) {
@@ -140,11 +141,11 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
     }
     
     try {
-        // 새 경로 생성 - 일관된 명명 규칙 사용
+        // Create consistent object path
         std::string descNum = "desc" + std::to_string(descriptors.size() + 1);
         DBusObjectPath descriptorPath = getPath() + descNum;
         
-        // 설명자 생성
+        // Create descriptor
         GattDescriptorPtr descriptor = std::make_shared<GattDescriptor>(
             getConnection(),
             descriptorPath,
@@ -158,7 +159,7 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
             return nullptr;
         }
         
-        // 맵에 추가
+        // Add to map
         descriptors[uuidStr] = descriptor;
         
         Logger::info("Created descriptor: " + uuidStr + " at path: " + descriptorPath.toString());
@@ -168,6 +169,7 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
         return nullptr;
     }
 }
+
 GattDescriptorPtr GattCharacteristic::getDescriptor(const GattUuid& uuid) const {
     std::string uuidStr = uuid.toString();
     
@@ -202,6 +204,7 @@ bool GattCharacteristic::startNotify() {
     
     // Emit PropertyChanged signal for Notifying
     if (isRegistered()) {
+        // Use makeGVariantPtr pattern
         GVariantPtr valueVariant = Utils::gvariantPtrFromBoolean(true);
         
         if (!valueVariant) {
@@ -232,28 +235,29 @@ bool GattCharacteristic::startNotify() {
     return true;
 }
 
-
 bool GattCharacteristic::stopNotify() {
     std::lock_guard<std::mutex> lock(notifyMutex);
     
     if (!notifying) {
-        return true;  // 이미 알림 중지 상태
+        return true;  // Already stopped
     }
     
     notifying = false;
     
-    // 알림 상태 변경 이벤트 발생
+    // Emit PropertyChanged signal for Notifying
     if (isRegistered()) {
-        // 스마트 포인터 기반 함수 사용
-        auto valueVariant = Utils::gvariantPtrFromBoolean(false);
+        // Use makeGVariantPtr pattern
+        GVariantPtr valueVariant = Utils::gvariantPtrFromBoolean(false);
         
         if (!valueVariant) {
             Logger::error("Failed to create GVariant for notification state");
-            notifying = true;  // 원래 상태로 복원
+            notifying = true;  // Restore original state
             return false;
         }
         
-        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Notifying", std::move(valueVariant));
+        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
+                           "Notifying", 
+                           std::move(valueVariant));
     }
     
     Logger::info("Stopped notifications for: " + uuid.toString());
@@ -276,11 +280,11 @@ void GattCharacteristic::ensureCCCDExists() {
             }
         }
         
-        // If CCCD doesn't exist yet, create it
+        // Create CCCD if it doesn't exist
         if (!hasCccd) {
             Logger::info("Auto-creating CCCD for characteristic: " + uuid.toString());
             
-            // Create the CCCD descriptor
+            // Create CCCD descriptor
             GattDescriptorPtr cccd = createDescriptor(
                 GattUuid(CCCD_UUID),
                 GattPermission::PERM_READ | GattPermission::PERM_WRITE
@@ -298,11 +302,11 @@ void GattCharacteristic::ensureCCCDExists() {
     }
 }
 
-
 bool GattCharacteristic::setupDBusInterfaces() {
-    // NOTIFY/INDICATE 속성이 있는 특성의 CCCD 자동 추가
+    // Ensure CCCD exists for characteristics with notify/indicate properties
     ensureCCCDExists();
-    // 속성 정의
+    
+    // Define properties
     std::vector<DBusProperty> properties = {
         {
             "UUID",
@@ -351,13 +355,13 @@ bool GattCharacteristic::setupDBusInterfaces() {
         }
     };
     
-    // 인터페이스 추가
+    // Add interface
     if (!addInterface(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, properties)) {
         Logger::error("Failed to add characteristic interface");
         return false;
     }
     
-    // 메서드 핸들러 등록
+    // Add method handlers
     if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "ReadValue", 
                   [this](const DBusMethodCall& call) { handleReadValue(call); })) {
         Logger::error("Failed to add ReadValue method");
@@ -382,7 +386,7 @@ bool GattCharacteristic::setupDBusInterfaces() {
         return false;
     }
     
-    // 객체 등록
+    // Register object
     if (!registerObject()) {
         Logger::error("Failed to register characteristic object");
         return false;
@@ -401,12 +405,12 @@ void GattCharacteristic::handleReadValue(const DBusMethodCall& call) {
     Logger::debug("ReadValue called for characteristic: " + uuid.toString());
     
     try {
-        // 옵션 파라미터 처리 (예: offset)
-        // 실제 구현에서는 이 부분을 확장해야 함
+        // Options parameter handling
+        // In a real implementation, handle options like offset
         
         std::vector<uint8_t> returnValue;
         
-        // 콜백이 있으면 호출
+        // Use callback if available
         {
             std::lock_guard<std::mutex> callbackLock(callbackMutex);
             if (readCallback) {
@@ -423,14 +427,14 @@ void GattCharacteristic::handleReadValue(const DBusMethodCall& call) {
                     return;
                 }
             } else {
-                // 콜백이 없으면 저장된 값 반환
+                // Use stored value if no callback
                 std::lock_guard<std::mutex> valueLock(valueMutex);
                 returnValue = value;
             }
         }
         
-        // 결과 반환
-        auto resultVariant = Utils::gvariantPtrFromByteArray(returnValue.data(), returnValue.size());
+        // Create response using makeGVariantPtr pattern
+        GVariantPtr resultVariant = Utils::gvariantPtrFromByteArray(returnValue.data(), returnValue.size());
         
         if (!resultVariant) {
             Logger::error("Failed to create GVariant for read response");
@@ -443,7 +447,7 @@ void GattCharacteristic::handleReadValue(const DBusMethodCall& call) {
             return;
         }
         
-        // 메서드 응답 생성 및 전송
+        // Return the response
         g_dbus_method_invocation_return_value(call.invocation.get(), resultVariant.get());
         
     } catch (const std::exception& e) {
@@ -465,11 +469,11 @@ void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
     
     Logger::debug("WriteValue called for characteristic: " + uuid.toString());
     
-    // 파라미터 확인
+    // Check parameters
     if (!call.parameters) {
         Logger::error("Missing parameters for WriteValue");
         
-        // 오류 응답
+        // Return error
         g_dbus_method_invocation_return_error_literal(
             call.invocation.get(),
             G_DBUS_ERROR,
@@ -479,12 +483,12 @@ void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
         return;
     }
     
-    // 바이트 배열 파라미터 추출
+    // Extract byte array parameter
     try {
         std::string byteString = Utils::stringFromGVariantByteArray(call.parameters.get());
         std::vector<uint8_t> newValue(byteString.begin(), byteString.end());
         
-        // 콜백이 있으면 호출
+        // Use callback if available
         bool success = true;
         {
             std::lock_guard<std::mutex> callbackLock(callbackMutex);
@@ -505,16 +509,13 @@ void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
         }
         
         if (success) {
-            // 성공적으로 처리됨
-            {
-                std::lock_guard<std::mutex> valueLock(valueMutex);
-                value = newValue;
-            }
+            // Successfully processed
+            setValue(newValue);
             
-            // 빈 응답 생성 및 전송
+            // Return empty response
             g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
         } else {
-            // 콜백에서 실패 반환
+            // Callback returned failure
             g_dbus_method_invocation_return_error_literal(
                 call.invocation.get(),
                 G_DBUS_ERROR,
@@ -543,10 +544,10 @@ void GattCharacteristic::handleStartNotify(const DBusMethodCall& call) {
     Logger::debug("StartNotify called for characteristic: " + uuid.toString());
     
     if (startNotify()) {
-        // 성공 응답
+        // Success response
         g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
     } else {
-        // 실패 응답
+        // Error response
         g_dbus_method_invocation_return_error_literal(
             call.invocation.get(),
             G_DBUS_ERROR,
@@ -565,10 +566,10 @@ void GattCharacteristic::handleStopNotify(const DBusMethodCall& call) {
     Logger::debug("StopNotify called for characteristic: " + uuid.toString());
     
     if (stopNotify()) {
-        // 성공 응답
+        // Success response
         g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
     } else {
-        // 실패 응답
+        // Error response
         g_dbus_method_invocation_return_error_literal(
             call.invocation.get(),
             G_DBUS_ERROR,
@@ -580,9 +581,12 @@ void GattCharacteristic::handleStopNotify(const DBusMethodCall& call) {
 
 GVariant* GattCharacteristic::getUuidProperty() {
     try {
-        // 스마트 포인터 기반 함수 사용
-        auto variantPtr = Utils::gvariantPtrFromString(uuid.toBlueZFormat());
-        // 소유권 이전 - 호출자가 참조 카운트 관리 책임
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromString(uuid.toBlueZFormat());
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
         return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getUuidProperty: " + std::string(e.what()));
@@ -592,9 +596,12 @@ GVariant* GattCharacteristic::getUuidProperty() {
 
 GVariant* GattCharacteristic::getServiceProperty() {
     try {
-        // 스마트 포인터 기반 함수 사용
-        auto variantPtr = Utils::gvariantPtrFromObject(service.getPath());
-        // 소유권 이전 - 호출자가 참조 카운트 관리 책임
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromObject(service.getPath());
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
         return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getServiceProperty: " + std::string(e.what()));
@@ -606,6 +613,7 @@ GVariant* GattCharacteristic::getPropertiesProperty() {
     try {
         std::vector<std::string> flags;
         
+        // Add flags based on properties
         if (properties & GattProperty::PROP_BROADCAST) {
             flags.push_back("broadcast");
         }
@@ -628,17 +636,26 @@ GVariant* GattCharacteristic::getPropertiesProperty() {
             flags.push_back("authenticated-signed-writes");
         }
         
-        // 권한 기반 추가 플래그
+        // Add permission flags
         if (permissions & GattPermission::PERM_READ_ENCRYPTED) {
             flags.push_back("encrypt-read");
         }
         if (permissions & GattPermission::PERM_WRITE_ENCRYPTED) {
             flags.push_back("encrypt-write");
         }
+        if (permissions & GattPermission::PERM_READ_AUTHENTICATED) {
+            flags.push_back("auth-read");
+        }
+        if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED) {
+            flags.push_back("auth-write");
+        }
         
-        // 스마트 포인터 기반 함수 사용
-        auto variantPtr = Utils::gvariantPtrFromStringArray(flags);
-        // 소유권 이전 - 호출자가 참조 카운트 관리 책임
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(flags);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
         return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getPropertiesProperty: " + std::string(e.what()));
@@ -653,14 +670,17 @@ GVariant* GattCharacteristic::getDescriptorsProperty() {
         std::lock_guard<std::mutex> lock(descriptorsMutex);
         
         for (const auto& pair : descriptors) {
-            if (pair.second) {  // nullptr 체크
+            if (pair.second) {  // Check for nullptr
                 paths.push_back(pair.second->getPath().toString());
             }
         }
         
-        // 스마트 포인터 기반 함수 사용
-        auto variantPtr = Utils::gvariantPtrFromStringArray(paths);
-        // 소유권 이전 - 호출자가 참조 카운트 관리 책임
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(paths);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
         return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getDescriptorsProperty: " + std::string(e.what()));
@@ -671,9 +691,12 @@ GVariant* GattCharacteristic::getDescriptorsProperty() {
 GVariant* GattCharacteristic::getNotifyingProperty() {
     try {
         std::lock_guard<std::mutex> lock(notifyMutex);
-        // 스마트 포인터 기반 함수 사용
-        auto variantPtr = Utils::gvariantPtrFromBoolean(notifying);
-        // 소유권 이전 - 호출자가 참조 카운트 관리 책임
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromBoolean(notifying);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
         return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getNotifyingProperty: " + std::string(e.what()));

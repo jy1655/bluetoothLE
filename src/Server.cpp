@@ -1,7 +1,9 @@
+// src/Server.cpp
 #include "Server.h"
 #include "Logger.h"
 #include "Utils.h"
-#include "BlueZConstants.h"
+#include "ConnectionManager.h"
+#include "BlueZUtils.h"
 #include <csignal>
 #include <iostream>
 #include <unistd.h>
@@ -18,18 +20,18 @@ static void signalHandler(int signal) {
     ggk::Logger::info("Received signal: " + std::to_string(signal));
     g_signalReceived = true;
     
-    // 첫 번째 신호는 정상 종료 시도
+    // First signal attempts normal shutdown
     if (signalCount++ == 0 && g_shutdownCallback) {
         g_shutdownCallback();
         
-        // 종료 타이머 설정 (5초 후 강제 종료)
+        // Set shutdown timer (5 seconds before forced exit)
         std::thread([]{
             sleep(5);
             Logger::error("Forced exit due to timeout during shutdown");
             exit(1);
         }).detach();
     } 
-    // 두 번째 신호부터는 즉시 종료
+    // Second signal forces immediate exit
     else if (signalCount > 1) {
         Logger::warn("Forced exit requested");
         exit(1);
@@ -39,7 +41,7 @@ static void signalHandler(int signal) {
 Server::Server()
     : running(false)
     , initialized(false)
-    , deviceName("JetsonBLE")
+    , deviceName("BLEDevice")
     , advTimeout(0) {
     // Initialize logger
     ggk::Logger::registerDebugReceiver([](const char* msg) { std::cout << "DEBUG: " << msg << std::endl; });
@@ -47,9 +49,6 @@ Server::Server()
     ggk::Logger::registerErrorReceiver([](const char* msg) { std::cerr << "ERROR: " << msg << std::endl; });
     ggk::Logger::registerWarnReceiver([](const char* msg) { std::cout << "WARN: " << msg << std::endl; });
     ggk::Logger::registerStatusReceiver([](const char* msg) { std::cout << "STATUS: " << msg << std::endl; });
-    ggk::Logger::registerFatalReceiver([](const char* msg) { std::cerr << "FATAL: " << msg << std::endl; });
-    ggk::Logger::registerAlwaysReceiver([](const char* msg) { std::cout << "ALWAYS: " << msg << std::endl; });
-    ggk::Logger::registerTraceReceiver([](const char* msg) { std::cout << "TRACE: " << msg << std::endl; });
     
     Logger::info("BLE Server instance created");
 }
@@ -75,32 +74,19 @@ bool Server::initialize(const std::string& name) {
     deviceName = name;
     Logger::info("Initializing BLE Server with name: " + deviceName);
     
-    /*
-    // Step 1: Initialize HCI adapter
-    hciAdapter = std::make_unique<HciAdapter>();
-    if (!hciAdapter->initialize()) {
-        Logger::error("Failed to initialize HCI adapter");
-        return false;
-    }
-    
-
-    // Step 2: Initialize Bluetooth management
-    mgmt = std::make_unique<Mgmt>(*hciAdapter);
-    */
-
-    // Step 3: Setup D-Bus name and connection
+    // Setup D-Bus name and connection
     if (!DBusName::getInstance().initialize("com.example.ble")) {
         Logger::error("Failed to initialize D-Bus name");
         return false;
     }
     
-    // Step 4: Create GATT application
+    // Create GATT application
     application = std::make_unique<GattApplication>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath("/com/example/ble/gatt")
     );
     
-    // Step 5: Create advertisement
+    // Create advertisement
     advertisement = std::make_unique<GattAdvertisement>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath("/com/example/ble/advertisement")
@@ -110,7 +96,7 @@ bool Server::initialize(const std::string& name) {
     advertisement->setLocalName(deviceName);
     advertisement->setIncludeTxPower(true);
     
-    // Step 6: Initialize ConnectionManager
+    // Initialize ConnectionManager
     if (!ConnectionManager::getInstance().initialize(DBusName::getInstance().getConnection())) {
         Logger::warn("Failed to initialize ConnectionManager, connection events may not be detected");
         // Not critical for initialization - continue anyway
@@ -160,18 +146,12 @@ bool Server::start(bool secureMode) {
     // Check BlueZ service
     if (system("systemctl is-active --quiet bluetooth.service") != 0) {
         Logger::warn("BlueZ service not active, attempting restart...");
-        system("sudo systemctl restart bluetooth.service");
-        sleep(2);
-        
-        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-            Logger::error("Failed to start BlueZ service");
-            return false;
-        }
+        restartBlueZService();
     }
     
-    // Perform HCI setup
-    if (!setupHciInterface()) {
-        Logger::error("Failed to setup HCI interface");
+    // Perform BlueZ setup
+    if (!setupBlueZInterface()) {
+        Logger::error("Failed to setup BlueZ interface");
         return false;
     }
     
@@ -179,6 +159,30 @@ bool Server::start(bool secureMode) {
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");
         return false;
+    }
+    
+    // Set security mode if requested
+    if (secureMode) {
+        Logger::info("Enabling secure mode...");
+        // Use BlueZUtils to set security properties
+        auto& connection = DBusName::getInstance().getConnection();
+        
+        // Set security properties using D-Bus API
+        GVariantPtr secureValue = Utils::gvariantPtrFromBoolean(true);
+        BlueZUtils::setAdapterProperty(
+            connection,
+            "SecureConnections",
+            std::move(secureValue),
+            BlueZConstants::ADAPTER_PATH
+        );
+        
+        GVariantPtr bondableValue = Utils::gvariantPtrFromBoolean(true);
+        BlueZUtils::setAdapterProperty(
+            connection,
+            "Bondable",
+            std::move(bondableValue),
+            BlueZConstants::ADAPTER_PATH
+        );
     }
     
     // Register advertisement with BlueZ
@@ -196,7 +200,6 @@ bool Server::start(bool secureMode) {
     Logger::info("BLE Server started successfully");
     return true;
 }
-
 
 void Server::stop() {
     if (!running) {
@@ -221,7 +224,7 @@ void Server::stop() {
         system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1");
         
         // Perform a clean HCI reset before exiting
-        Logger::info("Performing clean HCI shutdown...");
+        Logger::info("Performing clean Bluetooth shutdown...");
         system("sudo hciconfig hci0 down > /dev/null 2>&1");
         
         // Wait for thread to complete
@@ -260,10 +263,9 @@ bool Server::addService(GattServicePtr service) {
     }
     
     // Add service UUID to advertisement if not already present
-    const GattUuid& uuid = service->getUuid();
-    advertisement->addServiceUUID(uuid);
+    advertisement->addServiceUUID(service->getUuid());
     
-    Logger::info("Added service: " + uuid.toString());
+    Logger::info("Added service: " + service->getUuid().toString());
     return true;
 }
 
@@ -273,11 +275,11 @@ GattServicePtr Server::createService(const GattUuid& uuid, bool isPrimary) {
         return nullptr;
     }
     
-    // 일관된 경로 명명 규칙 사용
+    // Use consistent path naming convention
     std::string serviceNum = "service" + std::to_string(application->getServices().size() + 1);
     std::string servicePath = application->getPath().toString() + "/" + serviceNum;
     
-    // 서비스 생성
+    // Create service
     auto service = std::make_shared<GattService>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath(servicePath),
@@ -332,16 +334,13 @@ void Server::configureAdvertisement(
     // Set TX power inclusion
     advertisement->setIncludeTxPower(includeTxPower);
     
-    // Set advertisement duration (if supported by your GattAdvertisement class)
+    // Set advertisement duration
     if (timeout > 0) {
         advertisement->setDuration(timeout);
     }
     
     // Store timeout for discoverable mode
     advTimeout = timeout;
-
-    system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00");
-    system("sudo hcitool -i hci0 cmd 0x08 0x000a 01");
     
     // Additional debug printing
     Logger::info("Advertisement configured with service UUIDs:");
@@ -349,7 +348,7 @@ void Server::configureAdvertisement(
         Logger::info("  - " + service->getUuid().toString());
     }
     
-    Logger::info("Advertisement configured");
+    Logger::info("Advertisement configuration complete");
 }
 
 void Server::run() {
@@ -412,20 +411,11 @@ void Server::eventLoop() {
                     Logger::debug("Connected devices: " + std::to_string(devices.size()));
                 }
             }
-            
-            // Optional: Add adaptive advertising logic based on connection state
-            // For example, increase advertising power when no devices connected
-            // or reduce it when devices are connected to save power
         }
         
-        // Check for connections/disconnections
-        // This would ideally monitor D-Bus signals from BlueZ
-        // For now, we just sleep to avoid busy waiting
+        // Sleep to avoid busy waiting
         usleep(100000);  // 100ms
     }
-    
-    // Note: We don't need to call stop() here as the signal handler will do it
-    // This prevents potential double-stopping issues
     
     Logger::info("BLE event loop ended");
 }
@@ -489,9 +479,6 @@ void Server::handlePropertyChangeEvent(const std::string& interface,
         Logger::debug("Property changed: " + interface + "." + property + " = " + valueStr);
         g_free(valueStr);
     }
-    
-    // Handle specific properties that might be interesting
-    // For example, MTU size changes could affect how much data we can send
 }
 
 std::vector<std::string> Server::getConnectedDevices() const {
@@ -508,65 +495,49 @@ bool Server::isDeviceConnected(const std::string& deviceAddress) const {
     return false;
 }
 
-bool Server::setupHciInterface() {
-    Logger::info("Setting up HCI interface...");
+bool Server::setupBlueZInterface() {
+    Logger::info("Setting up BlueZ interface...");
     
-    // Check if HCI0 exists
-    if (system("ls /sys/class/bluetooth/hci0 > /dev/null 2>&1") != 0) {
-        Logger::error("HCI0 interface does not exist. Check if Bluetooth adapter is present.");
+    // Get D-Bus connection
+    DBusConnection& connection = DBusName::getInstance().getConnection();
+    
+    // Check if adapter exists
+    std::string adapterPath = BlueZConstants::ADAPTER_PATH;
+    
+    // Reset adapter if needed
+    if (!BlueZUtils::resetAdapter(connection, adapterPath)) {
+        Logger::error("Failed to reset BlueZ adapter");
         return false;
     }
     
-    // Reset HCI interface
-    Logger::info("Resetting HCI interface");
-    system("sudo hciconfig hci0 down > /dev/null 2>&1");
-    usleep(500000);  // 500ms wait
-    system("sudo hciconfig hci0 up > /dev/null 2>&1");
-    usleep(500000);  // 500ms wait
-    
-    // Verify HCI interface is up
-    if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") != 0) {
-        Logger::warn("HCI interface not running, attempting reset");
-        system("sudo hciconfig hci0 reset > /dev/null 2>&1");
-        sleep(1);
-        
-        if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") != 0) {
-            Logger::error("Failed to reset HCI interface");
-            return false;
-        }
+    // Set adapter name
+    if (!BlueZUtils::setAdapterName(connection, deviceName, adapterPath)) {
+        Logger::warn("Failed to set adapter name, continuing anyway");
     }
     
-    // Set device name
-    system(("sudo hciconfig hci0 name '" + deviceName + "'").c_str());
+    // Set adapter discoverable
+    if (!BlueZUtils::setAdapterDiscoverable(connection, true, advTimeout, adapterPath)) {
+        Logger::warn("Failed to set adapter as discoverable, continuing anyway");
+    }
     
+    // Set adapter powered
+    if (!BlueZUtils::setAdapterPower(connection, true, adapterPath)) {
+        Logger::error("Failed to power on adapter");
+        return false;
+    }
+    
+    Logger::info("BlueZ interface setup complete");
     return true;
 }
 
 bool Server::enableAdvertisingFallback() {
     Logger::info("Trying alternative advertising methods...");
     
-    // Method 1: Using hciconfig
-    if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
-        Logger::info("Advertisement enabled via hciconfig");
-        return true;
-    }
-    
-    // Method 2: Using bluetoothctl
-    if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
-        Logger::info("Advertisement enabled via bluetoothctl");
-        return true;
-    }
-    
-    // Method 3: Using direct HCI commands
-    Logger::info("Trying direct HCI commands for advertising");
-    system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 00 00 00 00 00 00 00 00 00 07 00 > /dev/null 2>&1");
-    usleep(100000);  // 100ms wait
-    if (system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1") == 0) {
-        Logger::info("Advertisement enabled via direct HCI commands");
-        return true;
-    }
-    
-    return false;
+    // Use BlueZUtils to try enabling advertising
+    return BlueZUtils::tryEnableAdvertising(
+        DBusName::getInstance().getConnection(),
+        BlueZConstants::ADAPTER_PATH
+    );
 }
 
 bool Server::restartBlueZService() {
@@ -590,8 +561,8 @@ bool Server::restartBlueZService() {
     return true;
 }
 
-bool Server::resetHciAdapter() {
-    Logger::info("Resetting HCI adapter");
+bool Server::resetBluetoothAdapter() {
+    Logger::info("Resetting Bluetooth adapter");
     
     // Down the adapter
     system("sudo hciconfig hci0 down");
@@ -609,7 +580,7 @@ bool Server::resetHciAdapter() {
         sleep(1);
         
         if (system("hciconfig hci0 | grep 'UP RUNNING' > /dev/null 2>&1") != 0) {
-            Logger::error("Failed to reset HCI adapter");
+            Logger::error("Failed to reset Bluetooth adapter");
             return false;
         }
     }
@@ -617,7 +588,7 @@ bool Server::resetHciAdapter() {
     // Set device name
     system(("sudo hciconfig hci0 name '" + deviceName + "'").c_str());
     
-    Logger::info("HCI adapter reset successfully");
+    Logger::info("Bluetooth adapter reset successfully");
     return true;
 }
 

@@ -1,6 +1,7 @@
 // src/ConnectionManager.cpp
 #include "ConnectionManager.h"
 #include "Logger.h"
+#include "Utils.h"
 
 namespace ggk {
 
@@ -39,7 +40,7 @@ void ConnectionManager::shutdown() {
         return;
     }
 
-    // 시그널 핸들러 해제
+    // Unregister signal handlers
     for (guint handlerId : signalHandlerIds) {
         if (connection) {
             connection->removeSignalWatch(handlerId);
@@ -47,7 +48,7 @@ void ConnectionManager::shutdown() {
     }
     signalHandlerIds.clear();
 
-    // 연결된 장치 목록 초기화
+    // Clear connected devices list
     {
         std::lock_guard<std::mutex> lock(devicesMutex);
         connectedDevices.clear();
@@ -64,7 +65,7 @@ void ConnectionManager::registerSignalHandlers() {
         return;
     }
 
-    // 1. InterfacesAdded 시그널 - 새 장치 연결 감지
+    // 1. InterfacesAdded signal - detect new device connections
     guint id1 = connection->addSignalWatch(
         BlueZConstants::BLUEZ_SERVICE,
         BlueZConstants::OBJECT_MANAGER_INTERFACE,
@@ -76,7 +77,7 @@ void ConnectionManager::registerSignalHandlers() {
     );
     signalHandlerIds.push_back(id1);
 
-    // 2. InterfacesRemoved 시그널 - 장치 연결 해제 감지
+    // 2. InterfacesRemoved signal - detect device disconnections
     guint id2 = connection->addSignalWatch(
         BlueZConstants::BLUEZ_SERVICE,
         BlueZConstants::OBJECT_MANAGER_INTERFACE,
@@ -88,12 +89,12 @@ void ConnectionManager::registerSignalHandlers() {
     );
     signalHandlerIds.push_back(id2);
 
-    // 3. PropertiesChanged 시그널 - 속성 변경 감지 (연결 상태, MTU 등)
+    // 3. PropertiesChanged signal - detect property changes (connection state, MTU, etc.)
     guint id3 = connection->addSignalWatch(
         BlueZConstants::BLUEZ_SERVICE,
         BlueZConstants::PROPERTIES_INTERFACE,
         "PropertiesChanged",
-        DBusObjectPath(""),  // 모든 객체 경로 감시
+        DBusObjectPath(""),  // Watch all object paths
         [this](const std::string& signalName, GVariantPtr parameters) {
             this->handlePropertiesChangedSignal(signalName, std::move(parameters));
         }
@@ -109,9 +110,9 @@ void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalNam
     }
 
     try {
-        // parameters 형식: (o, a{sa{sv}})
-        // o - 객체 경로
-        // a{sa{sv}} - 인터페이스 -> 속성 맵
+        // Format: (o, a{sa{sv}})
+        // o - object path
+        // a{sa{sv}} - interface to properties map
         const char* objectPath = nullptr;
         GVariant* interfacesVariant = nullptr;
         g_variant_get(parameters.get(), "(&o@a{sa{sv}})", &objectPath, &interfacesVariant);
@@ -120,14 +121,15 @@ void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalNam
             return;
         }
 
-        GVariantPtr interfaces(interfacesVariant, &g_variant_unref);
+        // Use makeGVariantPtr instead of direct construction
+        GVariantPtr interfaces = makeGVariantPtr(interfacesVariant, true);
 
-        // Device 인터페이스 확인
+        // Check for Device interface
         GVariant* deviceInterface = g_variant_lookup_value(interfaces.get(), 
                                                          BlueZConstants::DEVICE_INTERFACE.c_str(), 
                                                          G_VARIANT_TYPE("a{sv}"));
         if (deviceInterface) {
-            // Connected 속성 확인
+            // Check Connected property
             GVariant* connectedVariant = g_variant_lookup_value(deviceInterface, 
                                                              "Connected", 
                                                              G_VARIANT_TYPE_BOOLEAN);
@@ -137,7 +139,7 @@ void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalNam
                 g_variant_unref(connectedVariant);
                 
                 if (connected) {
-                    // 주소 속성 가져오기
+                    // Get device address
                     GVariant* addressVariant = g_variant_lookup_value(deviceInterface, 
                                                                   "Address", 
                                                                   G_VARIANT_TYPE_STRING);
@@ -146,13 +148,13 @@ void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalNam
                         const char* address = g_variant_get_string(addressVariant, nullptr);
                         std::string deviceAddress(address);
                         
-                        // 연결된 장치 추가
+                        // Add to connected devices
                         {
                             std::lock_guard<std::mutex> lock(devicesMutex);
                             connectedDevices[deviceAddress] = DBusObjectPath(objectPath);
                         }
                         
-                        // 콜백 호출
+                        // Execute callback
                         if (onConnectionCallback) {
                             onConnectionCallback(deviceAddress);
                         }
@@ -177,9 +179,9 @@ void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalN
     }
 
     try {
-        // parameters 형식: (o, as)
-        // o - 객체 경로
-        // as - 제거된 인터페이스 목록
+        // Format: (o, as)
+        // o - object path
+        // as - removed interfaces list
         const char* objectPath = nullptr;
         GVariant* interfacesVariant = nullptr;
         g_variant_get(parameters.get(), "(&o@as)", &objectPath, &interfacesVariant);
@@ -188,9 +190,10 @@ void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalN
             return;
         }
 
-        GVariantPtr interfaces(interfacesVariant, &g_variant_unref);
+        // Use makeGVariantPtr instead of direct construction
+        GVariantPtr interfaces = makeGVariantPtr(interfacesVariant, true);
 
-        // 제거된 인터페이스 중에 Device 인터페이스가 있는지 확인
+        // Check if Device interface was removed
         bool deviceRemoved = false;
         
         gsize numInterfaces = g_variant_n_children(interfaces.get());
@@ -205,7 +208,7 @@ void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalN
         }
 
         if (deviceRemoved) {
-            // 연결 해제된 장치 찾기
+            // Find which device was disconnected
             std::string deviceAddress;
             
             {
@@ -237,10 +240,10 @@ void ConnectionManager::handlePropertiesChangedSignal(const std::string& signalN
     }
 
     try {
-        // parameters 형식: (s, a{sv}, as)
-        // s - 인터페이스 이름
-        // a{sv} - 변경된 속성과 값
-        // as - 무효화된 속성
+        // Format: (s, a{sv}, as)
+        // s - interface name
+        // a{sv} - changed properties and values
+        // as - invalidated properties
         const char* interface = nullptr;
         GVariant* propertiesVariant = nullptr;
         GVariant* invalidatedVariant = nullptr;
@@ -252,27 +255,27 @@ void ConnectionManager::handlePropertiesChangedSignal(const std::string& signalN
             return;
         }
 
-        GVariantPtr properties(propertiesVariant, &g_variant_unref);
-        GVariantPtr invalidated(invalidatedVariant, &g_variant_unref);
+        // Use makeGVariantPtr instead of direct construction
+        GVariantPtr properties = makeGVariantPtr(propertiesVariant, true);
+        GVariantPtr invalidated = makeGVariantPtr(invalidatedVariant, true);
 
         std::string interfaceName(interface);
 
-        // Device 인터페이스의 Connected 속성 변화 감지
+        // Check for Device interface Connected property change
         if (interfaceName == BlueZConstants::DEVICE_INTERFACE) {
             GVariant* connectedVariant = g_variant_lookup_value(properties.get(), 
                                                              "Connected", 
                                                              G_VARIANT_TYPE_BOOLEAN);
             
             if (connectedVariant) {
-                // TODO: 여기서 연결 상태 변화 처리
-                // 현재는 InterfacesAdded/Removed에서 처리 중이므로 중복 처리를 방지하기 위해 생략
+                // Connection state change is already handled by InterfacesAdded/Removed
+                // so we skip duplicate processing here
                 g_variant_unref(connectedVariant);
             }
         }
 
-        // 속성 변경 콜백 호출
+        // Execute property changed callback for all properties
         if (onPropertyChangedCallback) {
-            // 모든 속성에 대해 개별적으로 콜백 호출
             GVariantIter iter;
             g_variant_iter_init(&iter, properties.get());
             
@@ -280,7 +283,8 @@ void ConnectionManager::handlePropertiesChangedSignal(const std::string& signalN
             GVariant* value;
             
             while (g_variant_iter_next(&iter, "{&sv}", &property, &value)) {
-                GVariantPtr valuePtr(value, &g_variant_unref);
+                // Create new GVariantPtr with proper ownership
+                GVariantPtr valuePtr = makeGVariantPtr(value, true);
                 onPropertyChangedCallback(interfaceName, property, std::move(valuePtr));
             }
         }

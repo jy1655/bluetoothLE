@@ -1,12 +1,10 @@
-// Server.h
+// include/Server.h
 #pragma once
 
 #include "GattApplication.h"
 #include "GattAdvertisement.h"
-#include "Mgmt.h"
-#include "HciAdapter.h"
 #include "DBusName.h"
-#include "ConnectionManager.h"
+#include "BlueZConstants.h"
 #include <memory>
 #include <atomic>
 #include <thread>
@@ -21,7 +19,7 @@ namespace ggk {
  * @brief Main BLE peripheral server class that manages the entire BLE stack
  * 
  * The Server class is responsible for:
- * - Initializing the BLE hardware (via HciAdapter and Mgmt)
+ * - Initializing the BLE hardware via BlueZ D-Bus API
  * - Managing GATT services (via GattApplication)
  * - Handling BLE advertisements (via GattAdvertisement)
  * - Maintaining the event loop for BLE events
@@ -46,13 +44,13 @@ public:
     /**
      * @brief Initializes the BLE stack
      * 
-     * Sets up HCI adapter, Bluetooth management, D-Bus connection,
-     * GATT application, advertisement objects, and ConnectionManager
+     * Sets up BlueZ, D-Bus connection, GATT application,
+     * advertisement objects, and ConnectionManager
      * 
      * @param deviceName The name to advertise for this BLE peripheral
      * @return true if initialization was successful, false otherwise
      */
-    bool initialize(const std::string& deviceName = "JetsonBLE");
+    bool initialize(const std::string& deviceName = "BLEDevice");
     
     /**
      * @brief Starts the BLE peripheral
@@ -103,7 +101,7 @@ public:
      * @param manufacturerId Manufacturer ID for advertisement data (0 for none)
      * @param manufacturerData Data to include with manufacturer ID
      * @param includeTxPower Whether to include TX power in advertisement
-     * @param timeout Advertisement timeout in seconds (0 for indefinite)
+     * @param timeout Advertisement timeout in seconds (0 for no timeout)
      */
     void configureAdvertisement(
         const std::string& name = "",
@@ -191,8 +189,6 @@ public:
     
 private:
     // Core BLE components
-    std::unique_ptr<HciAdapter> hciAdapter;
-    std::unique_ptr<Mgmt> mgmt;
     std::unique_ptr<GattApplication> application;
     std::unique_ptr<GattAdvertisement> advertisement;
     
@@ -216,17 +212,17 @@ private:
     void handleConnectionEvent(const std::string& deviceAddress);
     void handleDisconnectionEvent(const std::string& deviceAddress);
     void handlePropertyChangeEvent(const std::string& interface, 
-                                   const std::string& property, 
-                                   GVariantPtr value);
+                                  const std::string& property, 
+                                  GVariantPtr value);
     
     /**
-     * @brief Sets up the HCI interface for BLE operation
+     * @brief Sets up the BlueZ interface for BLE operation
      * 
-     * Resets and configures the HCI interface with proper settings
+     * Resets and configures the Bluetooth adapter with proper settings
      * 
      * @return true if setup was successful, false otherwise
      */
-    bool setupHciInterface();
+    bool setupBlueZInterface();
     
     /**
      * @brief Fallback methods for enabling advertising
@@ -245,9 +241,19 @@ private:
      */
     static void registerShutdownHandler(Server* server);
 
-
+    /**
+     * @brief Restart BlueZ service
+     * 
+     * @return true if successful, false otherwise
+     */
     bool restartBlueZService();
-    bool resetHciAdapter();
+    
+    /**
+     * @brief Reset Bluetooth adapter
+     * 
+     * @return true if successful, false otherwise
+     */
+    bool resetBluetoothAdapter();
 };
 
 } // namespace ggk

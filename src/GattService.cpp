@@ -1,3 +1,4 @@
+// src/GattService.cpp
 #include "GattService.h"
 #include "GattCharacteristic.h"
 #include "Logger.h"
@@ -92,7 +93,7 @@ GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const
 }
 
 bool GattService::setupDBusInterfaces() {
-    // 속성 정의
+    // Define properties
     std::vector<DBusProperty> properties = {
         {
             "UUID",
@@ -123,15 +124,13 @@ bool GattService::setupDBusInterfaces() {
         }
     };
     
-    // 인터페이스 추가
+    // Add interface
     if (!addInterface(BlueZConstants::GATT_SERVICE_INTERFACE, properties)) {
         Logger::error("Failed to add service interface");
         return false;
     }
     
-    // 서비스는 별도의 메서드가 없음
-    
-    // 객체 등록
+    // Register object
     if (!registerObject()) {
         Logger::error("Failed to register service object");
         return false;
@@ -143,7 +142,13 @@ bool GattService::setupDBusInterfaces() {
 
 GVariant* GattService::getUuidProperty() {
     try {
-        return Utils::gvariantFromString(uuid.toBlueZFormat());
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromString(uuid.toBlueZFormat());
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getUuidProperty: " + std::string(e.what()));
         return nullptr;
@@ -152,7 +157,13 @@ GVariant* GattService::getUuidProperty() {
 
 GVariant* GattService::getPrimaryProperty() {
     try {
-        return Utils::gvariantFromBoolean(primary);
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromBoolean(primary);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getPrimaryProperty: " + std::string(e.what()));
         return nullptr;
@@ -166,12 +177,18 @@ GVariant* GattService::getCharacteristicsProperty() {
         std::lock_guard<std::mutex> lock(characteristicsMutex);
         
         for (const auto& pair : characteristics) {
-            if (pair.second) {  // nullptr 체크
+            if (pair.second) {  // Check for nullptr
                 paths.push_back(pair.second->getPath().toString());
             }
         }
         
-        return Utils::gvariantFromStringArray(paths);
+        // Use makeGVariantPtr pattern
+        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(paths);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // Transfer ownership
+        return g_variant_ref(variantPtr.get());
     } catch (const std::exception& e) {
         Logger::error("Exception in getCharacteristicsProperty: " + std::string(e.what()));
         return nullptr;
