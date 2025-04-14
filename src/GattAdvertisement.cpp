@@ -2,6 +2,9 @@
 #include "GattAdvertisement.h"
 #include "Logger.h"
 #include "Utils.h"
+#include <sstream>
+#include <iomanip>
+
 
 namespace ggk {
 
@@ -14,6 +17,7 @@ GattAdvertisement::GattAdvertisement(
       appearance(0),
       duration(0),
       includeTxPower(false),
+      discoverable(true), 
       registered(false) {
 }
 
@@ -23,6 +27,7 @@ GattAdvertisement::GattAdvertisement(const DBusObjectPath& path)
       appearance(0),
       duration(0),
       includeTxPower(false),
+      discoverable(true),    // 기본값은 true로 설정
       registered(false) {
 }
 
@@ -62,6 +67,11 @@ void GattAdvertisement::setLocalName(const std::string& name) {
     Logger::debug("Set local name: " + name);
 }
 
+void GattAdvertisement::setDiscoverable(bool value) {
+    discoverable = value;
+    Logger::debug("Set discoverable: " + std::string(value ? "true" : "false"));
+}
+
 void GattAdvertisement::setAppearance(uint16_t value) {
     appearance = value;
     Logger::debug("Set appearance: 0x" + Utils::hex(value));
@@ -78,7 +88,7 @@ void GattAdvertisement::setIncludeTxPower(bool include) {
 }
 
 bool GattAdvertisement::setupDBusInterfaces() {
-    // If already registered, don't re-register
+    // 이미 등록되었는지 확인
     if (isRegistered()) {
         Logger::warn("Advertisement already registered with D-Bus");
         return true;
@@ -86,7 +96,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
     
     Logger::info("Setting up D-Bus interfaces for advertisement: " + getPath().toString());
     
-    // Define properties
+    // 속성 정의
     std::vector<DBusProperty> properties = {
         {
             "Type",
@@ -125,6 +135,28 @@ bool GattAdvertisement::setupDBusInterfaces() {
             nullptr
         },
         {
+            "Discoverable",
+            "b",
+            true,
+            false,
+            false,
+            [this]() { return getDiscoverableProperty(); },
+            nullptr
+        },
+        {
+            "Includes",
+            "as",
+            true,
+            false,
+            false,
+            [this]() { return getIncludesProperty(); },
+            nullptr
+        }
+    };
+    
+    // 이전 버전 호환성을 위한 속성 추가
+    if (includeTxPower) {
+        properties.push_back({
             "IncludeTxPower",
             "b",
             true,
@@ -132,10 +164,10 @@ bool GattAdvertisement::setupDBusInterfaces() {
             false,
             [this]() { return getIncludeTxPowerProperty(); },
             nullptr
-        }
-    };
+        });
+    }
     
-    // Add optional properties
+    // 선택적 속성 추가
     if (!localName.empty()) {
         properties.push_back({
             "LocalName",
@@ -172,20 +204,20 @@ bool GattAdvertisement::setupDBusInterfaces() {
         });
     }
 
-    // 1. Add LEAdvertisement interface
+    // 인터페이스 추가
     if (!addInterface(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, properties)) {
         Logger::error("Failed to add LEAdvertisement interface");
         return false;
     }
     
-    // 2. Add Release method
+    // Release 메서드 추가
     if (!addMethod(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, "Release", 
                   [this](const DBusMethodCall& call) { handleRelease(call); })) {
         Logger::error("Failed to add Release method");
         return false;
     }
     
-    // 3. Register object
+    // 객체 등록
     if (!registerObject()) {
         Logger::error("Failed to register advertisement object");
         return false;
@@ -779,7 +811,15 @@ std::string GattAdvertisement::getAdvertisementStateString() const {
     oss << "  Registered: " << (registered ? "Yes" : "No") << "\n";
     oss << "  D-Bus Object Registered: " << (isRegistered() ? "Yes" : "No") << "\n";
     oss << "  Local Name: " << (localName.empty() ? "[None]" : localName) << "\n";
+    oss << "  Discoverable: " << (discoverable ? "Yes" : "No") << "\n";
     oss << "  Include TX Power: " << (includeTxPower ? "Yes" : "No") << "\n";
+    
+    if (!includes.empty()) {
+        oss << "  Includes:\n";
+        for (const auto& item : includes) {
+            oss << "    - " << item << "\n";
+        }
+    }
     
     if (!serviceUUIDs.empty()) {
         oss << "  Service UUIDs:\n";
@@ -811,58 +851,124 @@ std::string GattAdvertisement::getAdvertisementStateString() const {
 std::vector<uint8_t> GattAdvertisement::buildRawAdvertisingData() const {
     std::vector<uint8_t> adData;
     
-    // 1. Flags - Always include (required by BLE spec)
+    // 1. Flags - 항상 포함 (BLE 스펙에서 요구됨)
     const uint8_t flags = 0x06;  // LE General Discoverable, BR/EDR not supported
     adData.push_back(2);         // Length (flags + type)
     adData.push_back(0x01);      // Flags type
     adData.push_back(flags);     // Flags value
     
-    // 2. Complete Local Name (if set)
+    // 2. Complete Local Name (설정된 경우)
     if (!localName.empty()) {
         adData.push_back(static_cast<uint8_t>(localName.length() + 1));  // Length
         adData.push_back(0x09);                                          // Complete Local Name type
         adData.insert(adData.end(), localName.begin(), localName.end());  // Name
     }
     
-    // 3. TX Power (if enabled)
+    // 3. TX Power (활성화된 경우)
     if (includeTxPower) {
         adData.push_back(2);     // Length
         adData.push_back(0x0A);  // TX Power type
         adData.push_back(0x00);  // 0 dBm (default)
     }
     
-    // 4. Service UUIDs (up to space limit)
+    // 4. Service UUIDs (16비트와 128비트 모두 지원)
     if (!serviceUUIDs.empty()) {
-        // For simplicity, we'll use 16-bit UUID format if available
-        std::vector<uint8_t> uuidBytes;
+        // 16비트 및 128비트 UUID 분류
+        std::vector<uint16_t> shortUuids;
+        std::vector<std::vector<uint8_t>> fullUuids;
+
         for (const auto& uuid : serviceUUIDs) {
-            // Extract 16-bit UUID if possible, otherwise skip
             std::string blueZFormat = uuid.toBlueZFormat();
-            if (blueZFormat.size() == 32 && blueZFormat.substr(0, 8) == "0000" && 
-                blueZFormat.substr(12) == "00001000800000805f9b34fb") {
-                // Extract 16-bit part
+            
+            // 16비트 UUID 형식 확인 (0000xxxx-0000-1000-8000-00805F9B34FB)
+            if (blueZFormat.size() == 32 && 
+                blueZFormat.substr(0, 4) == "0000" &&
+                blueZFormat.substr(8) == "00001000800000805f9b34fb") {
+                
+                // 16비트 부분 추출
                 uint16_t shortUuid;
-                std::istringstream iss(blueZFormat.substr(8, 4));
+                std::istringstream iss(blueZFormat.substr(4, 4));
                 iss >> std::hex >> shortUuid;
                 
-                uuidBytes.push_back(shortUuid & 0xFF);
-                uuidBytes.push_back((shortUuid >> 8) & 0xFF);
+                shortUuids.push_back(shortUuid);
+            }
+            // 128비트 UUID 처리
+            else {
+                std::vector<uint8_t> fullUuidBytes;
+                
+                // 문자열 UUID를 바이트 배열로 변환
+                for (size_t i = 0; i < blueZFormat.length(); i += 2) {
+                    if (i + 1 < blueZFormat.length()) {
+                        std::string byteStr = blueZFormat.substr(i, 2);
+                        
+                        // 수정된 부분: 올바른 16진수 문자열 파싱
+                        int temp;
+                        std::istringstream iss(byteStr);
+                        iss >> std::hex >> temp;
+                        
+                        // 값 검증 (파싱 성공 및 범위 확인)
+                        if (!iss.fail() && temp >= 0 && temp <= 255) {
+                            fullUuidBytes.push_back(static_cast<uint8_t>(temp));
+                        } else {
+                            Logger::warn("Invalid hex value in UUID: " + byteStr);
+                            // 기본값 0 추가
+                            fullUuidBytes.push_back(0);
+                        }
+                    }
+                }
+                
+                // 바이트가 16개인 경우만 추가 (128비트 = 16바이트)
+                if (fullUuidBytes.size() == 16) {
+                    fullUuids.push_back(fullUuidBytes);
+                } else {
+                    Logger::warn("Invalid 128-bit UUID byte length: " + std::to_string(fullUuidBytes.size()));
+                }
             }
         }
         
-        if (!uuidBytes.empty()) {
-            adData.push_back(static_cast<uint8_t>(uuidBytes.size() + 1));  // Length
+        // 16비트 UUID 추가 (있는 경우)
+        if (!shortUuids.empty()) {
+            size_t dataSize = shortUuids.size() * 2;
+            adData.push_back(static_cast<uint8_t>(dataSize + 1));  // Length
             adData.push_back(0x03);  // Complete List of 16-bit Service UUIDs
-            adData.insert(adData.end(), uuidBytes.begin(), uuidBytes.end());
+            
+            for (uint16_t uuid : shortUuids) {
+                adData.push_back(uuid & 0xFF);
+                adData.push_back((uuid >> 8) & 0xFF);
+            }
+        }
+        
+        // 128비트 UUID 추가 (있고 공간이 남는 경우)
+        // 주의: 광고 패킷은 총 31바이트로 제한됨
+        const size_t MAX_AD_SIZE = 31;
+        
+        for (const auto& fullUuid : fullUuids) {
+            // 패킷 크기 계산: 현재 크기 + UUID 길이(16) + 헤더(2)
+            if (adData.size() + 18 <= MAX_AD_SIZE) {
+                adData.push_back(17);  // Length (16 + type)
+                adData.push_back(0x07);  // Complete List of 128-bit Service UUIDs
+                adData.insert(adData.end(), fullUuid.begin(), fullUuid.end());
+            } else {
+                // 공간 부족으로 추가 불가
+                Logger::warn("Advertising data too large to include all 128-bit UUIDs");
+                break;
+            }
         }
     }
     
-    // 5. Manufacturer Data (if any)
+    // 5. Manufacturer Data (있는 경우)
     for (const auto& pair : manufacturerData) {
         const uint16_t id = pair.first;
         const auto& data = pair.second;
         
-        if (data.size() > 25) continue;  // Skip if too large (max AD size minus headers)
+        // 데이터가 너무 크면 건너뜀 (최대 AD 크기 31바이트 감안)
+        if (data.size() > 25) continue;
+        
+        // 남은 공간 확인
+        if (adData.size() + data.size() + 4 > 31) {
+            Logger::warn("Skipping manufacturer data due to size limit");
+            break;
+        }
         
         adData.push_back(static_cast<uint8_t>(data.size() + 3));  // Length (data + type + 2 bytes ID)
         adData.push_back(0xFF);                                  // Manufacturer Data type
@@ -872,6 +978,110 @@ std::vector<uint8_t> GattAdvertisement::buildRawAdvertisingData() const {
     }
     
     return adData;
+}
+
+void GattAdvertisement::addInclude(const std::string& item) {
+    // 이미 포함되어 있는지 확인
+    for (const auto& existing : includes) {
+        if (existing == item) {
+            return; // 중복 방지
+        }
+    }
+    
+    includes.push_back(item);
+    Logger::debug("Added include item: " + item);
+    
+    // 이전 방식과의 호환성을 위한 특수 처리
+    if (item == "tx-power") {
+        includeTxPower = true;
+    }
+}
+
+void GattAdvertisement::setIncludes(const std::vector<std::string>& items) {
+    includes.clear();
+    for (const auto& item : items) {
+        addInclude(item);
+    }
+    Logger::debug("Set includes array with " + std::to_string(includes.size()) + " items");
+}
+
+// 새 속성 게터 구현
+GVariant* GattAdvertisement::getDiscoverableProperty() {
+    try {
+        // makeGVariantPtr 패턴 사용
+        GVariantPtr variantPtr = Utils::gvariantPtrFromBoolean(discoverable);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // 소유권 이전
+        return g_variant_ref(variantPtr.get());
+    } catch (const std::exception& e) {
+        Logger::error("Exception in getDiscoverableProperty: " + std::string(e.what()));
+        return nullptr;
+    }
+}
+
+GVariant* GattAdvertisement::getIncludesProperty() {
+    try {
+        // BlueZ 5.82 버전 호환을 위해 이전 방식(IncludeTxPower)과 호환 유지
+        std::vector<std::string> allIncludes = includes;
+        
+        // includeTxPower가 true이고 "tx-power"가 includes에 없으면 추가
+        if (includeTxPower) {
+            bool hasTxPower = false;
+            for (const auto& item : allIncludes) {
+                if (item == "tx-power") {
+                    hasTxPower = true;
+                    break;
+                }
+            }
+            
+            if (!hasTxPower) {
+                allIncludes.push_back("tx-power");
+            }
+        }
+        
+        // appearance가 0이 아니고 "appearance"가 includes에 없으면 추가
+        if (appearance != 0) {
+            bool hasAppearance = false;
+            for (const auto& item : allIncludes) {
+                if (item == "appearance") {
+                    hasAppearance = true;
+                    break;
+                }
+            }
+            
+            if (!hasAppearance) {
+                allIncludes.push_back("appearance");
+            }
+        }
+        
+        // localName이 비어있지 않고 "local-name"이 includes에 없으면 추가
+        if (!localName.empty()) {
+            bool hasLocalName = false;
+            for (const auto& item : allIncludes) {
+                if (item == "local-name") {
+                    hasLocalName = true;
+                    break;
+                }
+            }
+            
+            if (!hasLocalName) {
+                allIncludes.push_back("local-name");
+            }
+        }
+        
+        // makeGVariantPtr 패턴 사용
+        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(allIncludes);
+        if (!variantPtr) {
+            return nullptr;
+        }
+        // 소유권 이전
+        return g_variant_ref(variantPtr.get());
+    } catch (const std::exception& e) {
+        Logger::error("Exception in getIncludesProperty: " + std::string(e.what()));
+        return nullptr;
+    }
 }
 
 } // namespace ggk

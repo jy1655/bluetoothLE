@@ -104,8 +104,30 @@ public:
      * @brief Set TX power inclusion
      * 
      * @param include Whether to include TX power
+     * @deprecated Use addInclude("tx-power") instead for BlueZ 5.82+
      */
     void setIncludeTxPower(bool include);
+
+    /**
+     * @brief Set whether the advertisement is discoverable
+     * 
+     * @param discoverable Whether the advertisement is discoverable
+     */
+    void setDiscoverable(bool discoverable);
+    
+    /**
+     * @brief Add an item to Includes array (BlueZ 5.82+)
+     * 
+     * @param item Item to include in advertisement ("tx-power", "appearance", "local-name")
+     */
+    void addInclude(const std::string& item);
+    
+    /**
+     * @brief Set the Includes array (BlueZ 5.82+)
+     * 
+     * @param items List of items to include in advertisement
+     */
+    void setIncludes(const std::vector<std::string>& items);
     
     /**
      * @brief Register with BlueZ
@@ -164,6 +186,8 @@ private:
     GVariant* getAppearanceProperty();
     GVariant* getDurationProperty();
     GVariant* getIncludeTxPowerProperty();
+    GVariant* getDiscoverableProperty();
+    GVariant* getIncludesProperty();
     
     // Helper methods
     bool registerWithDBusApi();
@@ -180,6 +204,8 @@ private:
     uint16_t appearance;
     uint16_t duration;
     bool includeTxPower;
+    bool discoverable;
+    std::vector<std::string> includes;
     bool registered;
     
     // Retry constants

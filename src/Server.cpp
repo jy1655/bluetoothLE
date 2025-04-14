@@ -344,46 +344,65 @@ void Server::configureAdvertisement(
         return;
     }
     
-    // Set local name (if provided, otherwise use device name)
-    if (!name.empty()) {
-        advertisement->setLocalName(name);
-    } else {
-        advertisement->setLocalName(deviceName);
+    // BlueZ 5.82 형식의 Includes 배열 설정
+    std::vector<std::string> includes;
+    
+    // TX Power를 Includes에 추가 (BlueZ 5.82 스타일)
+    if (includeTxPower) {
+        includes.push_back("tx-power");
     }
     
-    // Add service UUIDs
+    // 이전 호환성을 위해 이전 방식(IncludeTxPower)도 설정
+    advertisement->setIncludeTxPower(includeTxPower);
+    
+    // Includes 배열 설정
+    advertisement->setIncludes(includes);
+    
+    // Discoverable 설정 (일반적으로 항상 true로 설정)
+    advertisement->setDiscoverable(true);
+    
+    // 로컬 이름 설정 (제공된 경우, 아니면 장치 이름 사용)
+    if (!name.empty()) {
+        advertisement->setLocalName(name);
+        // BlueZ 5.82 스타일: local-name을 Includes에 추가하지 않음 (직접 설정하므로)
+    } else {
+        advertisement->setLocalName(deviceName);
+        // BlueZ 5.82 스타일: local-name을 Includes에 추가하지 않음 (직접 설정하므로)
+    }
+    
+    // 서비스 UUID 추가
     if (!serviceUuids.empty()) {
         advertisement->addServiceUUIDs(serviceUuids);
     } else {
-        // Add all services from the application if no specific UUIDs provided
+        // 애플리케이션의 모든 서비스 UUID 추가
         for (const auto& service : application->getServices()) {
             advertisement->addServiceUUID(service->getUuid());
         }
     }
     
-    // Set manufacturer data if provided
+    // 제조사 데이터 설정 (제공된 경우)
     if (manufacturerId != 0 && !manufacturerData.empty()) {
         advertisement->setManufacturerData(manufacturerId, manufacturerData);
     }
     
-    // Set TX power inclusion
-    advertisement->setIncludeTxPower(includeTxPower);
-    
-    // Set advertisement duration
+    // 광고 지속 시간 설정
     if (timeout > 0) {
         advertisement->setDuration(timeout);
     }
     
-    // Store timeout for discoverable mode
+    // 타임아웃을 디스커버러블 모드에도 저장
     advTimeout = timeout;
     
-    // Additional debug printing
+    // 디버그 정보 출력
     Logger::info("Advertisement configured with service UUIDs:");
     for (const auto& service : application->getServices()) {
         Logger::info("  - " + service->getUuid().toString());
     }
     
     Logger::info("Advertisement configuration complete");
+    
+    // 디버그용: 광고 상태 문자열 출력
+    Logger::debug(advertisement->getAdvertisementStateString());
 }
 
 void Server::run() {

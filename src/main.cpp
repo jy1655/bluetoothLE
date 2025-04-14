@@ -139,12 +139,37 @@ int main(int argc, char** argv) {
     
     // Configure advertisement (optional - defaults are already set in initialize())
     server.configureAdvertisement(
-        "JetsonBLE",                // Local name
-        {},                         // Service UUIDs (empty = use all)
-        0x0059,                    // Manufacturer ID (0x0059 = Jetson)
-        {0x01, 0x02, 0x03, 0x04},  // Manufacturer data
-        true                        // Include TX power
+        "JetsonBLE",                // 로컬 이름
+        {},                         // 서비스 UUID (빈 배열 = 모든 서비스 사용)
+        0x0059,                     // 제조사 ID (0x0059 = Jetson)
+        {0x01, 0x02, 0x03, 0x04},   // 제조사 데이터
+        true                        // TX Power 포함
     );
+
+    // 수동으로 128비트 UUID 및 세부 구성이 필요한 경우의 예시
+    // 아래와 같이 advertisement 객체를 직접 구성할 수도 있습니다
+    /*
+    auto& adv = server.getAdvertisement();
+    adv.setLocalName("JetsonBLE");
+    adv.setDiscoverable(true);
+
+    // BlueZ 5.82 스타일 Includes 배열 설정
+    adv.addInclude("tx-power");
+    adv.addInclude("appearance");
+
+    // 필요시 appearance 코드 설정 (예: 0x0340 = Generic 센서)
+    adv.setAppearance(0x0340);
+
+    // 128비트 UUID 직접 추가
+    adv.addServiceUUID(GattUuid("0193d852-eba5-7d28-9abe-e30a67d39d72"));
+
+    // 16비트 UUID도 함께 추가 가능
+    adv.addServiceUUID(GattUuid::fromShortUuid(0x180F)); // Battery Service
+
+    // 제조사 데이터 설정
+    std::vector<uint8_t> mfgData = {0x01, 0x02, 0x03, 0x04};
+    adv.setManufacturerData(0x0059, mfgData);
+    */
     
     // Set connection callback
     server.setConnectionCallback([](const std::string& deviceAddress) {
