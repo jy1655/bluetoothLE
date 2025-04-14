@@ -30,6 +30,7 @@ busctl list | grep example
 sudo kill -9 1234  # 위에서 찾은 PID 입력
 
 sudo dbus-monitor --system "interface=org.bluez.GattManager1"
+sudo dbus-monitor --system "interface=org.freedesktop.DBus.ObjectManager"
 ```
 
 

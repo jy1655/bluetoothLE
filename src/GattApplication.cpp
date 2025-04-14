@@ -127,10 +127,16 @@ GattServicePtr GattApplication::getService(const GattUuid& uuid) const {
     std::lock_guard<std::mutex> lock(servicesMutex);
     
     for (const auto& service : services) {
-        if (service->getUuid().toString() == uuidStr) {
-            return service;
+        for (const auto& charPair : service->getCharacteristics()) {
+            auto characteristic = charPair.second;
+            if (characteristic) {
+                characteristic->ensureCCCDExists();
+            }
         }
     }
+    // 약간의 지연을 줘서 등록 완료 대기
+    usleep(100000);  // 100ms
+    validateObjectHierarchy();
     
     return nullptr;
 }
@@ -518,7 +524,6 @@ void GattApplication::logObjectHierarchy() const {
     Logger::debug("===== End of object hierarchy =====");
 }
 
-// src/GattApplication.cpp에서 handleGetManagedObjects 메소드 교체
 void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
     if (!call.invocation) {
         Logger::error("Invalid method invocation in GetManagedObjects");
@@ -545,23 +550,23 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
             return;
         }
         
-        // BlueZ 5.82에서는 응답 형식이 달라졌을 수 있으므로 형식 확인
+        // Check if the format needs adjustment for BlueZ 5.82
         if (!g_variant_is_of_type(objects.get(), G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
             Logger::warn("Object dictionary has unexpected type: " + 
                         std::string(g_variant_get_type_string(objects.get())) +
                         ". Attempting to adjust.");
             
-            // 응답을 올바른 형식으로 조정 시도
+            // Try to adjust the response format
             GVariant* adjusted = NULL;
             
-            // BlueZ 5.82 호환성: 만약 반환 타입이 튜플로 감싸져 있다면 튜플에서 추출
+            // If the return type is wrapped in a tuple, extract from the tuple
             if (g_variant_is_of_type(objects.get(), G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
                 Logger::debug("Extracting dictionary from tuple");
                 adjusted = g_variant_get_child_value(objects.get(), 0);
             }
             
             if (adjusted) {
-                // 기존 objects는 자동으로 해제됨
+                // The original objects is automatically released
                 objects = makeGVariantPtr(adjusted, true);
                 Logger::info("Successfully adjusted response format");
             } else {
@@ -569,12 +574,12 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
             }
         }
         
-        // Return the dictionary - BlueZ 5.82 호환성을 위한 형식 확인
+        // Return the dictionary - check format for BlueZ 5.82 compatibility
         if (g_variant_is_of_type(objects.get(), G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
             g_dbus_method_invocation_return_value(call.invocation.get(), objects.get());
             Logger::debug("Returned managed objects to BlueZ");
         } else {
-            // 호환성 문제인 경우 빈 객체 반환
+            // Return empty object in case of compatibility issue
             Logger::error("Incompatible result format: " + std::string(g_variant_get_type_string(objects.get())));
             GVariantBuilder builder;
             g_variant_builder_init(&builder, G_VARIANT_TYPE("a{oa{sa{sv}}}"));

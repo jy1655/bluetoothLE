@@ -76,7 +76,7 @@ bool DBusConnection::isConnected() const {
     return connection && !g_dbus_connection_is_closed(connection.get());
 }
 
-// src/DBusConnection.cpp에서 callMethod 메소드 교체
+
 GVariantPtr DBusConnection::callMethod(
     const std::string& destination,
     const DBusObjectPath& path,
@@ -91,9 +91,9 @@ GVariantPtr DBusConnection::callMethod(
         return makeNullGVariantPtr();
     }
     
-    // 재시도 설정
+    // Retry configuration
     const int MAX_RETRIES = 3;
-    const int RETRY_DELAY_MS = 500;  // 0.5초 재시도 간격
+    const int RETRY_DELAY_MS = 500;  // 0.5 second retry interval
     GError* error = nullptr;
     GVariantType* replyType = nullptr;
     
@@ -117,7 +117,7 @@ GVariantPtr DBusConnection::callMethod(
             " " + path.toString() + " " + 
             interface + "." + method);
         
-        // 재시도 루프 구현
+        // Implement retry loop
         GVariant* result = nullptr;
         bool success = false;
         std::string lastErrorMessage;
@@ -126,12 +126,12 @@ GVariantPtr DBusConnection::callMethod(
             if (attempt > 0) {
                 Logger::info("Retrying D-Bus call (attempt " + std::to_string(attempt+1) + 
                            " of " + std::to_string(MAX_RETRIES) + "): " + interface + "." + method);
-                // 에러 초기화
+                // Reset error
                 if (error) {
                     g_error_free(error);
                     error = nullptr;
                 }
-                // 재시도 전 딜레이
+                // Delay before retry
                 usleep(RETRY_DELAY_MS * 1000);
             }
             
@@ -145,29 +145,29 @@ GVariantPtr DBusConnection::callMethod(
                 parameters ? parameters.get() : nullptr,
                 replyType,
                 G_DBUS_CALL_FLAGS_NONE,
-                timeoutMs > 0 ? timeoutMs : 30000,  // 기본값 30초 타임아웃
+                timeoutMs > 0 ? timeoutMs : 30000,  // Default 30 second timeout
                 nullptr,
                 &error
             );
             
-            // 성공하면 루프 종료
+            // End loop if successful
             if (result) {
                 success = true;
                 break;
             }
             
-            // 에러 분석 (특정 에러는 재시도하지 않음)
+            // Analyze error (don't retry certain errors)
             if (error) {
                 lastErrorMessage = error->message ? error->message : "Unknown error";
                 
-                // 특정 오류는 재시도하지 않음 (예: 존재하지 않는 서비스/메소드 등)
+                // Don't retry specific errors (e.g., non-existent service/method)
                 if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
                     g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) ||
                     g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT) ||
                     g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_INTERFACE)) {
                     
                     Logger::error("D-Bus method call failed with non-retriable error: " + lastErrorMessage);
-                    break;  // 재시도 중단
+                    break;  // Stop retrying
                 }
                 
                 Logger::warn("D-Bus method call failed (will retry): " + lastErrorMessage);
@@ -196,7 +196,36 @@ GVariantPtr DBusConnection::callMethod(
         
         // Return the result (if any)
         if (result) {
-            return makeGVariantPtr(result, true);  // true = take ownership
+            // Case 1: 이미 알고 있는 타입이 딕셔너리인데 튜플을 받은 경우
+            if (replyType && 
+                g_variant_type_equal(replyType, G_VARIANT_TYPE("a{oa{sa{sv}}}")) && 
+                g_variant_is_of_type(result, G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
+                    
+                Logger::debug("Detected tuple-wrapped dictionary from BlueZ 5.82+ (with type)");
+                // Extract the dictionary from the tuple
+                GVariant* extracted = g_variant_get_child_value(result, 0);
+                g_variant_unref(result);
+                
+                if (extracted) {
+                    return makeGVariantPtr(extracted, true);
+                }
+            }
+            // Case 2: replyType이 없지만 GetManagedObjects 결과 포맷인 경우
+            else if (!replyType && 
+                    g_variant_is_of_type(result, G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
+                
+                Logger::debug("Detected tuple-wrapped dictionary from BlueZ 5.82+ (no expected type)");
+                // Extract the dictionary from the tuple
+                GVariant* extracted = g_variant_get_child_value(result, 0);
+                g_variant_unref(result);
+                
+                if (extracted) {
+                    return makeGVariantPtr(extracted, true);
+                }
+            }
+            
+            // Normal case - return the result as-is
+            return makeGVariantPtr(result, true);
         }
         
         return makeNullGVariantPtr();

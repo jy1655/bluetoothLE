@@ -349,48 +349,102 @@ bool GattAdvertisement::cleanupExistingAdvertisements() {
             BlueZConstants::OBJECT_MANAGER_INTERFACE,
             BlueZConstants::GET_MANAGED_OBJECTS,
             makeNullGVariantPtr(),
-            "a{oa{sa{sv}}}"
+            ""
         );
         
         if (result) {
-            GVariantIter *iter1;
-            g_variant_get(result.get(), "a{oa{sa{sv}}}", &iter1);
-            
-            const gchar *objPath;
-            GVariant *interfaces;
-            std::vector<std::string> advPaths;
-            
-            // Find all advertisement objects
-            while (g_variant_iter_loop(iter1, "{&o@a{sa{sv}}}", &objPath, &interfaces)) {
-                if (g_variant_lookup_value(interfaces, 
-                                          BlueZConstants::LE_ADVERTISEMENT_INTERFACE.c_str(), 
-                                          NULL)) {
-                    advPaths.push_back(objPath);
+            // BlueZ 5.82 형식 확인 (튜플로 감싸진 딕셔너리)
+            if (g_variant_is_of_type(result.get(), G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
+                Logger::debug("BlueZ 5.82 형식 감지: 튜플에서 딕셔너리 추출");
+                // 튜플에서 딕셔너리 추출
+                GVariant* extracted = g_variant_get_child_value(result.get(), 0);
+                GVariantPtr extractedPtr = makeGVariantPtr(extracted, true);
+                
+                GVariantIter *iter1;
+                g_variant_get(extractedPtr.get(), "a{oa{sa{sv}}}", &iter1);
+                
+                const gchar *objPath;
+                GVariant *interfaces;
+                std::vector<std::string> advPaths;
+                
+                // 모든 광고 객체 찾기
+                while (g_variant_iter_loop(iter1, "{&o@a{sa{sv}}}", &objPath, &interfaces)) {
+                    if (g_variant_lookup_value(interfaces, 
+                                               BlueZConstants::LE_ADVERTISEMENT_INTERFACE.c_str(), 
+                                               NULL)) {
+                        advPaths.push_back(objPath);
+                    }
+                }
+                
+                g_variant_iter_free(iter1);
+                
+                // 찾은 각 광고 등록 해제 시도
+                for (const auto& path : advPaths) {
+                    Logger::debug("Attempting to unregister advertisement: " + path);
+                    
+                    try {
+                        // 파라미터 빌드
+                        GVariant* paramsRaw = g_variant_new("(o)", path.c_str());
+                        GVariantPtr params = makeGVariantPtr(paramsRaw, true);
+                        
+                        // UnregisterAdvertisement 호출
+                        getConnection().callMethod(
+                            BlueZConstants::BLUEZ_SERVICE,
+                            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                            BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
+                            BlueZConstants::UNREGISTER_ADVERTISEMENT,
+                            std::move(params)
+                        );
+                    } catch (...) {
+                        // 실패 무시, 가능한 한 많이 정리
+                    }
+                }
+            } 
+            // 기존 BlueZ 형식 (직접 딕셔너리)
+            else if (g_variant_is_of_type(result.get(), G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
+                GVariantIter *iter1;
+                g_variant_get(result.get(), "a{oa{sa{sv}}}", &iter1);
+                
+                const gchar *objPath;
+                GVariant *interfaces;
+                std::vector<std::string> advPaths;
+                
+                // 모든 광고 객체 찾기
+                while (g_variant_iter_loop(iter1, "{&o@a{sa{sv}}}", &objPath, &interfaces)) {
+                    if (g_variant_lookup_value(interfaces,
+                                              BlueZConstants::LE_ADVERTISEMENT_INTERFACE.c_str(),
+                                              NULL)) {
+                        advPaths.push_back(objPath);
+                    }
+                }
+                
+                g_variant_iter_free(iter1);
+                
+                // 찾은 각 광고 등록 해제 시도
+                for (const auto& path : advPaths) {
+                    Logger::debug("Attempting to unregister advertisement: " + path);
+                    
+                    try {
+                        // 파라미터 빌드
+                        GVariant* paramsRaw = g_variant_new("(o)", path.c_str());
+                        GVariantPtr params = makeGVariantPtr(paramsRaw, true);
+                        
+                        // UnregisterAdvertisement 호출
+                        getConnection().callMethod(
+                            BlueZConstants::BLUEZ_SERVICE,
+                            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                            BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
+                            BlueZConstants::UNREGISTER_ADVERTISEMENT,
+                            std::move(params)
+                        );
+                    } catch (...) {
+                        // 실패 무시, 가능한 한 많이 정리
+                    }
                 }
             }
-            
-            g_variant_iter_free(iter1);
-            
-            // Try to unregister each advertisement found
-            for (const auto& path : advPaths) {
-                Logger::debug("Attempting to unregister advertisement: " + path);
-                
-                try {
-                    // Build parameters
-                    GVariant* paramsRaw = g_variant_new("(o)", path.c_str());
-                    GVariantPtr params = makeGVariantPtr(paramsRaw, true);
-                    
-                    // Call UnregisterAdvertisement
-                    getConnection().callMethod(
-                        BlueZConstants::BLUEZ_SERVICE,
-                        DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-                        BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
-                        BlueZConstants::UNREGISTER_ADVERTISEMENT,
-                        std::move(params)
-                    );
-                } catch (...) {
-                    // Ignore failures, just try to clean up as much as possible
-                }
+            else {
+                Logger::warn("GetManagedObjects 결과가 예상치 못한 형식: " + 
+                            std::string(g_variant_get_type_string(result.get())));
             }
         }
     } catch (...) {

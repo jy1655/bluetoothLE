@@ -44,8 +44,8 @@ GattCharacteristicPtr GattService::createCharacteristic(
     try {
         // Create standardized object path
         // Format: <service_path>/char<uuid_short>
-        std::string uuidShort = uuid.toBlueZShortFormat().substr(0, 8);
-        DBusObjectPath charPath = getPath() + "/char" + uuidShort;
+        std::string uuidShort = "/char" + uuid.toBlueZShortFormat().substr(0, 8);
+        DBusObjectPath charPath = getPath() + uuidShort;
         
         // Create characteristic
         GattCharacteristicPtr characteristic = std::make_shared<GattCharacteristic>(
