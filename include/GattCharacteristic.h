@@ -173,14 +173,6 @@ public:
      * @brief Get parent service
      */
     GattService& getService() const { return service; }
-
-    /**
-     * @brief Ensure CCCD descriptor exists
-     * 
-     * Creates CCCD descriptor if needed for characteristics with
-     * notify or indicate properties.
-     */
-    void ensureCCCDExists();
     
 private:
     // D-Bus method handlers

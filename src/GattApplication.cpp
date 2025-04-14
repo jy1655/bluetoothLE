@@ -127,13 +127,11 @@ GattServicePtr GattApplication::getService(const GattUuid& uuid) const {
     std::lock_guard<std::mutex> lock(servicesMutex);
     
     for (const auto& service : services) {
-        for (const auto& charPair : service->getCharacteristics()) {
-            auto characteristic = charPair.second;
-            if (characteristic) {
-                characteristic->ensureCCCDExists();
-            }
+        if (service->getUuid().toString() == uuidStr) {
+            return service;
         }
     }
+    
     // 약간의 지연을 줘서 등록 완료 대기
     usleep(100000);  // 100ms
     validateObjectHierarchy();
@@ -170,12 +168,6 @@ bool GattApplication::ensureInterfacesRegistered() {
             for (const auto& charPair : characteristics) {
                 auto characteristic = charPair.second;
                 if (characteristic) {
-                    // Ensure CCCD exists for characteristics with notify/indicate
-                    if ((characteristic->getProperties() & GattProperty::PROP_NOTIFY) ||
-                        (characteristic->getProperties() & GattProperty::PROP_INDICATE)) {
-                        characteristic->ensureCCCDExists();
-                    }
-                    
                     allCharacteristics.push_back(characteristic);
                     
                     // Collect descriptors for this characteristic
@@ -423,11 +415,6 @@ bool GattApplication::validateObjectHierarchy() const {
                 valid = false;
             }
             
-            // Check CCCD for notify/indicate characteristics
-            uint8_t props = characteristic->getProperties();
-            bool needsCccd = (props & GattProperty::PROP_NOTIFY) || (props & GattProperty::PROP_INDICATE);
-            bool hasCccd = false;
-            
             // Check descriptors
             auto descriptors = characteristic->getDescriptors();
             for (const auto& descPair : descriptors) {
@@ -436,18 +423,6 @@ bool GattApplication::validateObjectHierarchy() const {
                     Logger::error("Descriptor " + descriptor->getUuid().toString() + " not registered");
                     valid = false;
                 }
-                
-                // Check for CCCD
-                if (descriptor->getUuid().toBlueZShortFormat() == "00002902") {
-                    hasCccd = true;
-                }
-            }
-            
-            // Critical error if notify/indicate is set but no CCCD exists
-            if (needsCccd && !hasCccd) {
-                Logger::error("CRITICAL ERROR: Characteristic " + characteristic->getUuid().toString() + 
-                            " has NOTIFY/INDICATE but no CCCD descriptor!");
-                valid = false;
             }
         }
     }
@@ -492,9 +467,6 @@ void GattApplication::logObjectHierarchy() const {
                          " (Registered: " + (characteristic->isRegistered() ? "Yes" : "No") + ")" +
                          " Props: [" + propStr + "]");
             
-            // Check for CCCD
-            bool hasCccd = false;
-            
             // Check descriptors
             auto descriptors = characteristic->getDescriptors();
             if (!descriptors.empty()) {
@@ -505,18 +477,7 @@ void GattApplication::logObjectHierarchy() const {
                     Logger::debug("          - Descriptor: " + descriptor->getUuid().toString() + 
                                  " at " + descriptor->getPath().toString() +
                                  " (Registered: " + (descriptor->isRegistered() ? "Yes" : "No") + ")");
-                    
-                    // Check for CCCD
-                    if (descriptor->getUuid().toBlueZShortFormat() == "00002902") {
-                        hasCccd = true;
-                    }
                 }
-            }
-            
-            // Warning if NOTIFY/INDICATE without CCCD
-            if ((props & GattProperty::PROP_NOTIFY || props & GattProperty::PROP_INDICATE) && !hasCccd) {
-                Logger::error("WARNING: Characteristic " + characteristic->getUuid().toString() + 
-                             " has NOTIFY/INDICATE but no CCCD descriptor!");
             }
         }
     }

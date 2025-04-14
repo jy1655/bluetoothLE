@@ -65,12 +65,6 @@ GattCharacteristicPtr GattService::createCharacteristic(
         // Add to map
         characteristics[uuidStr] = characteristic;
         
-        // Ensure CCCD exists for notify/indicate characteristics
-        if ((properties & GattProperty::PROP_NOTIFY) || 
-            (properties & GattProperty::PROP_INDICATE)) {
-            characteristic->ensureCCCDExists();
-        }
-        
         Logger::info("Created characteristic: " + uuidStr + " at path: " + charPath.toString());
         return characteristic;
     } catch (const std::exception& e) {

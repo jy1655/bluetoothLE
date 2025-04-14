@@ -125,6 +125,17 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
         return nullptr;
     }
     
+    // CCCD UUID (0x2902)
+    const std::string CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb";
+    
+    // Check if trying to create CCCD descriptor while characteristic has notify/indicate
+    if (uuid.toString() == CCCD_UUID && 
+        (properties & GattProperty::PROP_NOTIFY || properties & GattProperty::PROP_INDICATE)) {
+        Logger::warn("Attempted to manually create CCCD descriptor for characteristic with notify/indicate. " 
+                    "This is handled automatically by BlueZ 5.82+. Ignoring request.");
+        return nullptr;
+    }
+    
     std::string uuidStr = uuid.toString();
     
     std::lock_guard<std::mutex> lock(descriptorsMutex);
@@ -197,9 +208,6 @@ bool GattCharacteristic::startNotify() {
         return false;
     }
     
-    // Ensure CCCD exists
-    ensureCCCDExists();
-    
     notifying = true;
     
     // Emit PropertyChanged signal for Notifying
@@ -264,82 +272,7 @@ bool GattCharacteristic::stopNotify() {
     return true;
 }
 
-void GattCharacteristic::ensureCCCDExists() {
-    if (properties & GattProperty::PROP_NOTIFY || properties & GattProperty::PROP_INDICATE) {
-        const std::string CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb";
-        
-        // Check if CCCD already exists
-        bool hasCccd = false;
-        GattDescriptorPtr existingCccd = nullptr;
-        
-        {
-            std::lock_guard<std::mutex> lock(descriptorsMutex);
-            for (const auto& pair : descriptors) {
-                if (pair.second && pair.second->getUuid().toString() == CCCD_UUID) {
-                    hasCccd = true;
-                    existingCccd = pair.second;
-                    break;
-                }
-            }
-        }
-        
-        // Create CCCD if it doesn't exist
-        if (!hasCccd) {
-            Logger::info("Auto-creating CCCD for characteristic: " + uuid.toString());
-            
-            // Create consistent object path
-            std::string descName = "desc_cccd";
-            DBusObjectPath descriptorPath = getPath() + "/" + descName;
-            
-            // Create CCCD descriptor with proper permissions
-            GattDescriptorPtr cccd = std::make_shared<GattDescriptor>(
-                getConnection(),
-                descriptorPath,
-                GattUuid(CCCD_UUID),
-                *this,
-                GattPermission::PERM_READ | GattPermission::PERM_WRITE
-            );
-            
-            if (cccd) {
-                // Set initial value to disable notifications
-                std::vector<uint8_t> initialValue = {0x00, 0x00};
-                cccd->setValue(initialValue);
-                
-                // Register in map
-                std::lock_guard<std::mutex> lock(descriptorsMutex);
-                descriptors[CCCD_UUID] = cccd;
-                
-                // Explicitly register with D-Bus if characteristic is already registered
-                if (isRegistered() && !cccd->isRegistered()) {
-                    Logger::debug("Explicitly registering CCCD descriptor with D-Bus");
-                    if (cccd->setupDBusInterfaces()) {
-                        Logger::info("CCCD created and registered successfully");
-                    } else {
-                        Logger::error("Failed to register CCCD with D-Bus");
-                    }
-                } else {
-                    Logger::debug("CCCD created but not registered yet (will be registered with characteristic)");
-                }
-            } else {
-                Logger::error("Failed to create CCCD for characteristic: " + uuid.toString());
-            }
-        } else if (existingCccd && !existingCccd->isRegistered() && isRegistered()) {
-            // Ensure existing CCCD is registered if characteristic is registered
-            Logger::debug("Ensuring existing CCCD is registered with D-Bus");
-            if (existingCccd->setupDBusInterfaces()) {
-                Logger::info("Existing CCCD registered successfully");
-            } else {
-                Logger::error("Failed to register existing CCCD with D-Bus");
-            }
-        }
-    }
-}
-
-
 bool GattCharacteristic::setupDBusInterfaces() {
-    // Ensure CCCD exists for characteristics with notify/indicate properties
-    ensureCCCDExists();
-    
     // Define properties
     std::vector<DBusProperty> properties = {
         {
