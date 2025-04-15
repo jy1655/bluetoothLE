@@ -18,20 +18,20 @@ DBusObject::~DBusObject() {
 bool DBusObject::addInterface(const std::string& interface, const std::vector<DBusProperty>& properties) {
     std::lock_guard<std::mutex> lock(mutex);
     
-    // 이미 등록된 객체에 인터페이스 추가는 불가
+    // Cannot add interfaces to already registered object
     if (registered) {
         Logger::warn("Cannot add interface to already registered object: " + path.toString());
         return false;
     }
     
-    // 인터페이스가 이미 존재하는 경우 속성 업데이트
+    // Update properties if interface already exists
     auto it = interfaces.find(interface);
     if (it != interfaces.end()) {
         it->second = properties;
         return true;
     }
     
-    // 새 인터페이스 추가
+    // Add new interface
     interfaces[interface] = properties;
     Logger::debug("Added interface: " + interface + " to object: " + path.toString());
     return true;
@@ -45,7 +45,7 @@ bool DBusObject::addMethod(const std::string& interface, const std::string& meth
         return false;
     }
     
-    // 인터페이스가 존재하지 않으면 자동 생성
+    // Auto-create interface if it doesn't exist
     if (interfaces.find(interface) == interfaces.end()) {
         interfaces[interface] = {};
     }
@@ -55,10 +55,13 @@ bool DBusObject::addMethod(const std::string& interface, const std::string& meth
     return true;
 }
 
-bool DBusObject::addMethodWithSignature(const std::string& interface, const std::string& method, 
-                                    DBusConnection::MethodHandler handler,
-                                    const std::string& inSignature, 
-                                    const std::string& outSignature) {
+bool DBusObject::addMethodWithSignature(
+    const std::string& interface, 
+    const std::string& method, 
+    DBusConnection::MethodHandler handler,
+    const std::string& inSignature, 
+    const std::string& outSignature)
+{
     std::lock_guard<std::mutex> lock(mutex);
     
     if (registered) {
@@ -66,27 +69,21 @@ bool DBusObject::addMethodWithSignature(const std::string& interface, const std:
         return false;
     }
     
-    // 인터페이스가 존재하지 않으면 자동 추가
-    auto ifaceIt = interfaces.find(interface);
-    if (ifaceIt == interfaces.end()) {
+    // Add interface if it doesn't exist
+    if (interfaces.find(interface) == interfaces.end()) {
         interfaces[interface] = {};
     }
     
+    // Store method handler
     methodHandlers[interface][method] = handler;
     
-    // 추가로 시그니처 정보 저장 (DBusXml 클래스가 해당 정보를 사용할 수 있도록)
-    // 이 부분은 코드베이스에 따라 구현이 달라질 수 있습니다.
-    // 간단한 예시를 들자면:
-    
-    // XML 파일을 사용하는 코드베이스인 경우 시그니처 정보를 적절히 전달
-    // 또는 메서드 메타데이터를 저장하는 맵 추가
+    // Store method signatures for XML generation
+    methodSignatures[interface][method] = std::make_pair(inSignature, outSignature);
     
     Logger::debug("Added method with signature: " + interface + "." + method + 
-                " (in: " + inSignature + ", out: " + outSignature + ") " + 
-                "to object: " + path.toString());
+                 " (in: " + inSignature + ", out: " + outSignature + ") to object: " + path.toString());
     return true;
 }
-
 
 bool DBusObject::emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value) {
     if (!registered) {
@@ -94,53 +91,101 @@ bool DBusObject::emitPropertyChanged(const std::string& interface, const std::st
         return false;
     }
     
-    // 속성 변경 시그널 발생 - 이동 의미론 사용
     return connection.emitPropertyChanged(path, interface, name, std::move(value));
 }
 
-bool DBusObject::emitSignal(
-    const std::string& interface,
-    const std::string& name,
-    GVariantPtr parameters)
-{
+bool DBusObject::emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters) {
     if (!registered) {
         Logger::error("Cannot emit signals on unregistered object: " + path.toString());
         return false;
     }
     
-    // parameters가 nullptr이면 빈 튜플 생성
+    // Create empty tuple if no parameters provided
     if (!parameters) {
         GVariant* empty_tuple = g_variant_new_tuple(NULL, 0);
-        GVariantPtr owned_params = makeGVariantPtr(empty_tuple, true);
-        return connection.emitSignal(path, interface, name, std::move(owned_params));
+        GVariantPtr empty_params = makeGVariantPtr(empty_tuple, true);
+        return connection.emitSignal(path, interface, name, std::move(empty_params));
     }
     
-    // 원본 GVariant에 대한 참조 복제
-    GVariant* param_raw = parameters.get();
-    GVariantPtr owned_params = makeGVariantPtr(param_raw, false);  // false = 참조만 복사
+    return connection.emitSignal(path, interface, name, std::move(parameters));
+}
+
+void DBusObject::addStandardInterfaces() {
+    // Add Introspectable interface
+    addMethod("org.freedesktop.DBus.Introspectable", "Introspect",
+              [this](const DBusMethodCall& call) { this->handleIntrospect(call); });
     
-    return connection.emitSignal(path, interface, name, std::move(owned_params));
+    // Properties interface is handled automatically by DBusConnection
+}
+
+void DBusObject::handleIntrospect(const DBusMethodCall& call) {
+    if (!call.invocation) {
+        Logger::error("Invalid method invocation in Introspect");
+        return;
+    }
+    
+    Logger::debug("Introspect method called for object: " + getPath().toString());
+    
+    try {
+        std::string xml = generateIntrospectionXml();
+        
+        // Create response
+        GVariantPtr response = Utils::gvariantPtrFromString(xml);
+        if (!response) {
+            Logger::error("Failed to create GVariant for introspection XML");
+            g_dbus_method_invocation_return_error_literal(
+                call.invocation.get(),
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_FAILED,
+                "Internal error"
+            );
+            return;
+        }
+        
+        // Return XML
+        g_dbus_method_invocation_return_value(
+            call.invocation.get(),
+            g_variant_new("(s)", g_variant_get_string(response.get(), NULL))
+        );
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in handleIntrospect: " + std::string(e.what()));
+        g_dbus_method_invocation_return_error_literal(
+            call.invocation.get(),
+            G_DBUS_ERROR,
+            G_DBUS_ERROR_FAILED,
+            e.what()
+        );
+    }
+}
+
+bool DBusObject::hasInterface(const std::string& interface) const {
+    return methodHandlers.find(interface) != methodHandlers.end() ||
+           interfaces.find(interface) != interfaces.end();
 }
 
 bool DBusObject::registerObject() {
     std::lock_guard<std::mutex> lock(mutex);
     
-    // 이미 등록된 경우 성공 반환
+    // If already registered, return success
     if (registered) {
         Logger::debug("Object already registered: " + path.toString());
         return true;
     }
     
-    // 연결 확인
+    // Check connection
     if (!connection.isConnected()) {
-        Logger::error("D-Bus connection not available");
+        Logger::error("Cannot register object: D-Bus connection not available");
         return false;
     }
     
-    // 인트로스펙션 XML 생성
+    // Add standard interfaces (Introspectable, Properties)
+    addStandardInterfaces();
+    
+    // Generate introspection XML
     std::string xml = generateIntrospectionXml();
     
-    // D-Bus에 객체 등록
+    // Register object with connection
     registered = connection.registerObject(
         path,
         xml,
@@ -149,6 +194,7 @@ bool DBusObject::registerObject() {
     );
     
     if (registered) {
+        Logger::info("Registered D-Bus object at path: " + path.toString());
         Logger::info("Registered D-Bus object: " + path.toString());
     } else {
         Logger::error("Failed to register D-Bus object: " + path.toString());
@@ -161,17 +207,17 @@ bool DBusObject::unregisterObject() {
     std::lock_guard<std::mutex> lock(mutex);
     
     if (!registered) {
-        return true; // 이미 등록 해제됨
+        return true; // Already unregistered
     }
     
-    // 연결이 끊어진 경우 로컬 상태만 업데이트
+    // If connection is lost, just update local state
     if (!connection.isConnected()) {
         Logger::warn("D-Bus connection not available, updating local registration state only");
         registered = false;
         return true;
     }
     
-    // 객체 등록 해제 시도
+    // Try to unregister
     bool success = connection.unregisterObject(path);
     if (success) {
         registered = false;
@@ -186,13 +232,14 @@ bool DBusObject::unregisterObject() {
 std::string DBusObject::generateIntrospectionXml() const {
     std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<node>\n";
     
-    // 표준 인터페이스 추가
+    // Always add Introspectable interface
     xml += "  <interface name=\"org.freedesktop.DBus.Introspectable\">\n";
     xml += "    <method name=\"Introspect\">\n";
     xml += "      <arg name=\"xml_data\" type=\"s\" direction=\"out\"/>\n";
     xml += "    </method>\n";
     xml += "  </interface>\n";
     
+    // Always add Properties interface
     xml += "  <interface name=\"org.freedesktop.DBus.Properties\">\n";
     xml += "    <method name=\"Get\">\n";
     xml += "      <arg name=\"interface_name\" type=\"s\" direction=\"in\"/>\n";
@@ -215,26 +262,36 @@ std::string DBusObject::generateIntrospectionXml() const {
     xml += "    </signal>\n";
     xml += "  </interface>\n";
     
-    // ObjectManager 인터페이스 추가
-    xml += "  <interface name=\"org.freedesktop.DBus.ObjectManager\">\n";
-    xml += "    <method name=\"GetManagedObjects\">\n";
-    xml += "      <arg name=\"objects\" type=\"a{oa{sa{sv}}}\" direction=\"out\"/>\n";
-    xml += "    </method>\n";
-    xml += "    <signal name=\"InterfacesAdded\">\n";
-    xml += "      <arg name=\"object_path\" type=\"o\"/>\n";
-    xml += "      <arg name=\"interfaces_and_properties\" type=\"a{sa{sv}}\"/>\n";
-    xml += "    </signal>\n";
-    xml += "    <signal name=\"InterfacesRemoved\">\n";
-    xml += "      <arg name=\"object_path\" type=\"o\"/>\n";
-    xml += "      <arg name=\"interfaces\" type=\"as\"/>\n";
-    xml += "    </signal>\n";
-    xml += "  </interface>\n";
+    // Only add ObjectManager if it has a handler defined
+    bool hasObjectManager = hasInterface("org.freedesktop.DBus.ObjectManager");
+    if (hasObjectManager) {
+        xml += "  <interface name=\"org.freedesktop.DBus.ObjectManager\">\n";
+        xml += "    <method name=\"GetManagedObjects\">\n";
+        xml += "      <arg name=\"objects\" type=\"a{oa{sa{sv}}}\" direction=\"out\"/>\n";
+        xml += "    </method>\n";
+        xml += "    <signal name=\"InterfacesAdded\">\n";
+        xml += "      <arg name=\"object_path\" type=\"o\"/>\n";
+        xml += "      <arg name=\"interfaces_and_properties\" type=\"a{sa{sv}}\"/>\n";
+        xml += "    </signal>\n";
+        xml += "    <signal name=\"InterfacesRemoved\">\n";
+        xml += "      <arg name=\"object_path\" type=\"o\"/>\n";
+        xml += "      <arg name=\"interfaces\" type=\"as\"/>\n";
+        xml += "    </signal>\n";
+        xml += "  </interface>\n";
+    }
     
-    // 사용자 정의 인터페이스 추가
+    // Add custom interfaces
     for (const auto& iface : interfaces) {
+        // Skip already added standard interfaces
+        if (iface.first == "org.freedesktop.DBus.Introspectable" ||
+            iface.first == "org.freedesktop.DBus.Properties" ||
+            (iface.first == "org.freedesktop.DBus.ObjectManager" && hasObjectManager)) {
+            continue;
+        }
+        
         xml += "  <interface name=\"" + iface.first + "\">\n";
         
-        // 인터페이스의 속성들 추가
+        // Add properties
         for (const auto& prop : iface.second) {
             xml += "    <property name=\"" + prop.name + "\" type=\"" + prop.signature + "\" access=\"";
             
@@ -255,35 +312,66 @@ std::string DBusObject::generateIntrospectionXml() const {
             }
         }
         
-        // 인터페이스의 메서드들 추가
+        // Add methods
         auto it = methodHandlers.find(iface.first);
         if (it != methodHandlers.end()) {
             for (const auto& method : it->second) {
-                xml += "    <method name=\"" + method.first + "\">\n";
+                const std::string& methodName = method.first;
                 
-                // BlueZ 특정 메서드들을 위한 특별한 시그니처 추가
-                if (iface.first == "org.bluez.GattCharacteristic1") {
-                    if (method.first == "ReadValue") {
+                // Check if we have signature info
+                bool hasSignature = methodSignatures.count(iface.first) > 0 && 
+                                   methodSignatures.at(iface.first).count(methodName) > 0;
+                
+                xml += "    <method name=\"" + methodName + "\">\n";
+                
+                // Add signatures if available
+                if (hasSignature) {
+                    const auto& signatures = methodSignatures.at(iface.first).at(methodName);
+                    const std::string& inSig = signatures.first;
+                    const std::string& outSig = signatures.second;
+                    
+                    // Add input arguments
+                    if (!inSig.empty()) {
+                        if (inSig == "a{sv}") {
+                            xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
+                        } else if (inSig == "ay") {
+                            xml += "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n";
+                        } else if (inSig == "aya{sv}") {
+                            xml += "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n";
+                            xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
+                        } else {
+                            xml += "      <arg name=\"arg0\" type=\"" + inSig + "\" direction=\"in\"/>\n";
+                        }
+                    }
+                    
+                    // Add output arguments
+                    if (!outSig.empty()) {
+                        if (outSig == "ay") {
+                            xml += "      <arg name=\"value\" type=\"ay\" direction=\"out\"/>\n";
+                        } else {
+                            xml += "      <arg name=\"result\" type=\"" + outSig + "\" direction=\"out\"/>\n";
+                        }
+                    }
+                }
+                // Handle special BlueZ method signatures
+                else if (iface.first == "org.bluez.GattCharacteristic1") {
+                    if (methodName == "ReadValue") {
                         xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
                         xml += "      <arg name=\"value\" type=\"ay\" direction=\"out\"/>\n";
-                    } else if (method.first == "WriteValue") {
+                    } else if (methodName == "WriteValue") {
                         xml += "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n";
                         xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
-                    } else if (method.first == "StartNotify" || method.first == "StopNotify") {
-                        // 이 메서드들은 인자가 없음
                     }
                 } else if (iface.first == "org.bluez.GattDescriptor1") {
-                    if (method.first == "ReadValue") {
+                    if (methodName == "ReadValue") {
                         xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
                         xml += "      <arg name=\"value\" type=\"ay\" direction=\"out\"/>\n";
-                    } else if (method.first == "WriteValue") {
+                    } else if (methodName == "WriteValue") {
                         xml += "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n";
                         xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
                     }
-                } else if (iface.first == "org.bluez.LEAdvertisement1") {
-                    if (method.first == "Release") {
-                        // Release 메서드는 인자가 없음
-                    }
+                } else if (iface.first == "org.bluez.LEAdvertisement1" && methodName == "Release") {
+                    // No arguments for Release
                 }
                 
                 xml += "    </method>\n";

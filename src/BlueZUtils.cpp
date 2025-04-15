@@ -600,25 +600,33 @@ bool BlueZUtils::tryEnableAdvertising(
     
     // Method 1: Try using bluetoothctl (most reliable)
     Logger::debug("Method 1: Enabling advertising via bluetoothctl");
-    methods.bluetoothctl = runBluetoothCtlCommands({
-        "menu advertise",
-        "on",
-        "back"
-    });
-    
-    if (methods.bluetoothctl) {
-        Logger::info("Successfully enabled advertising via bluetoothctl");
-        return true;
+    try {
+        methods.bluetoothctl = runBluetoothCtlCommands({
+            "menu advertise",
+            "on",
+            "back"
+        });
+        
+        if (methods.bluetoothctl) {
+            Logger::info("Successfully enabled advertising via bluetoothctl");
+            return true;
+        }
+    } catch (...) {
+        Logger::warn("bluetoothctl method failed with exception");
     }
     
     // Method 2: Try using hciconfig
     Logger::debug("Method 2: Enabling advertising via hciconfig");
-    int hciResult = system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1");
-    methods.hciconfig = (hciResult == 0);
-    
-    if (methods.hciconfig) {
-        Logger::info("Successfully enabled advertising via hciconfig");
-        return true;
+    try {
+        int hciResult = system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1");
+        methods.hciconfig = (hciResult == 0);
+        
+        if (methods.hciconfig) {
+            Logger::info("Successfully enabled advertising via hciconfig");
+            return true;
+        }
+    } catch (...) {
+        Logger::warn("hciconfig method failed with exception");
     }
     
     // Method 3: Try setting adapter properties directly via D-Bus
@@ -647,12 +655,16 @@ bool BlueZUtils::tryEnableAdvertising(
     
     // Method 4: Direct HCI commands as last resort
     Logger::debug("Method 4: Enabling advertising via direct HCI commands");
-    int directResult = system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1");
-    methods.direct = (directResult == 0);
-    
-    if (methods.direct) {
-        Logger::info("Successfully enabled advertising via direct HCI commands");
-        return true;
+    try {
+        int directResult = system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1");
+        methods.direct = (directResult == 0);
+        
+        if (methods.direct) {
+            Logger::info("Successfully enabled advertising via direct HCI commands");
+            return true;
+        }
+    } catch (...) {
+        Logger::warn("Direct HCI commands failed with exception");
     }
     
     // Log all failures

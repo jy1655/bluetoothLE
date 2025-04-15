@@ -188,6 +188,7 @@ private:
     bool setupBlueZInterface();
     bool enableAdvertisingFallback();
     static void registerShutdownHandler(Server* server);
+
 };
 
 } // namespace ggk

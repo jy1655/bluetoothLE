@@ -1,4 +1,3 @@
-// DBusObject.h
 #pragma once
 
 #include "DBusTypes.h"
@@ -8,126 +7,173 @@
 #include <string>
 #include <functional>
 #include <mutex>
+#include <vector>
+#include <memory>
 
 namespace ggk {
 
 /**
- * @brief D-Bus 객체 기본 클래스
+ * @brief Base class for D-Bus objects
  * 
- * D-Bus 인터페이스, 메서드, 속성을 관리하고 D-Bus 시스템에 객체를 등록하는
- * 기본 클래스입니다.
+ * This class manages D-Bus object registration, interfaces, methods, and properties
  */
 class DBusObject {
 public:
     /**
-     * @brief 생성자
+     * @brief Constructor
      * 
-     * @param connection D-Bus 연결
-     * @param path 객체 경로
+     * @param connection D-Bus connection
+     * @param path Object path
      */
     DBusObject(DBusConnection& connection, const DBusObjectPath& path);
     
     /**
-     * @brief 소멸자
+     * @brief Destructor
      * 
-     * 등록된 객체를 자동으로 등록 해제합니다.
+     * Automatically unregisters the object
      */
     virtual ~DBusObject();
     
     /**
-     * @brief 인터페이스 추가
+     * @brief Add interface
      * 
-     * @param interface 인터페이스 이름
-     * @param properties 속성 목록
-     * @return 성공 여부
+     * @param interface Interface name
+     * @param properties Properties for this interface
+     * @return success
      */
-    bool addInterface(const std::string& interface, const std::vector<DBusProperty>& properties = {});
+    bool addInterface(const std::string& interface, 
+                     const std::vector<DBusProperty>& properties = {});
     
     /**
-     * @brief 메서드 추가
+     * @brief Add method to interface
      * 
-     * @param interface 인터페이스 이름
-     * @param method 메서드 이름
-     * @param handler 메서드 핸들러
-     * @return 성공 여부
+     * @param interface Interface name
+     * @param method Method name
+     * @param handler Method handler function
+     * @return success
      */
-    bool addMethod(const std::string& interface, const std::string& method, DBusConnection::MethodHandler handler);
-    bool addMethodWithSignature(const std::string& interface, const std::string& method, DBusConnection::MethodHandler handler, const std::string& inSignature = "", const std::string& outSignature = "");
-
-    /**
-     * @brief 속성 변경 시그널 발생
-     * 
-     * @param interface 인터페이스 이름
-     * @param name 속성 이름
-     * @param value 변경된 값
-     * @return 성공 여부
-     */
-    bool emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value);
+    bool addMethod(const std::string& interface, 
+                  const std::string& method, 
+                  DBusConnection::MethodHandler handler);
     
     /**
-     * @brief 시그널 발생
+     * @brief Add method with signature
      * 
-     * @param interface 인터페이스 이름
-     * @param name 시그널 이름
-     * @param parameters 시그널 매개변수 (기본값: null)
-     * @return 성공 여부
+     * @param interface Interface name
+     * @param method Method name
+     * @param handler Method handler function
+     * @param inSignature Input signature
+     * @param outSignature Output signature
+     * @return success
      */
-    bool emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters = makeNullGVariantPtr());
+    bool addMethodWithSignature(
+        const std::string& interface, 
+        const std::string& method, 
+        DBusConnection::MethodHandler handler,
+        const std::string& inSignature = "", 
+        const std::string& outSignature = "");
     
     /**
-     * @brief D-Bus에 객체 등록
+     * @brief Emit property changed signal
      * 
-     * @return 성공 여부
+     * @param interface Interface name
+     * @param name Property name
+     * @param value New value
+     * @return success
+     */
+    bool emitPropertyChanged(
+        const std::string& interface, 
+        const std::string& name, 
+        GVariantPtr value);
+    
+    /**
+     * @brief Emit signal
+     * 
+     * @param interface Interface name
+     * @param name Signal name
+     * @param parameters Signal parameters (nullptr for no parameters)
+     * @return success
+     */
+    bool emitSignal(
+        const std::string& interface, 
+        const std::string& name, 
+        GVariantPtr parameters = makeNullGVariantPtr());
+    
+    /**
+     * @brief Register object with D-Bus
+     * 
+     * @return success
      */
     bool registerObject();
     
     /**
-     * @brief D-Bus에서 객체 등록 해제
+     * @brief Unregister object from D-Bus
      * 
-     * @return 성공 여부
+     * @return success
      */
     bool unregisterObject();
     
     /**
-     * @brief 객체 경로 가져오기
+     * @brief Get object path
      * 
-     * @return 객체 경로
+     * @return object path
      */
     const DBusObjectPath& getPath() const { return path; }
     
     /**
-     * @brief D-Bus 연결 가져오기
+     * @brief Get D-Bus connection
      * 
-     * @return D-Bus 연결
+     * @return D-Bus connection
      */
     DBusConnection& getConnection() const { return connection; }
     
     /**
-     * @brief 등록 상태 확인
+     * @brief Check if registered
      * 
-     * @return 등록되었는지 여부
+     * @return true if registered with D-Bus
      */
     bool isRegistered() const { return registered; }
     
+    /**
+     * @brief Handle Introspect method call
+     * 
+     * @param call Method call information
+     */
+    void handleIntrospect(const DBusMethodCall& call);
+    
 protected:
     /**
-     * @brief 인트로스펙션 XML 생성
+     * @brief Generate introspection XML
      * 
-     * D-Bus 인트로스펙션을 위한 XML 문서를 생성합니다.
-     * 
-     * @return 인트로스펙션 XML
+     * @return XML string
      */
     std::string generateIntrospectionXml() const;
     
-private:
-    DBusConnection& connection;       ///< D-Bus 연결
-    DBusObjectPath path;              ///< 객체 경로
-    bool registered;                  ///< 등록 상태
-    mutable std::mutex mutex;         ///< 동기화 뮤텍스
+    /**
+     * @brief Check if object has interface
+     * 
+     * @param interface Interface name
+     * @return true if interface exists on this object
+     */
+    bool hasInterface(const std::string& interface) const;
     
-    // 인터페이스 관리
-    std::map<std::string, std::vector<DBusProperty>> interfaces;                            ///< 인터페이스 -> 속성 맵
-    std::map<std::string, std::map<std::string, DBusConnection::MethodHandler>> methodHandlers;  ///< 인터페이스 -> 메서드 -> 핸들러 맵
+    /**
+     * @brief Add standard interfaces to this object
+     * 
+     * Adds Introspectable and Properties interfaces
+     */
+    void addStandardInterfaces();
+
+private:
+    DBusConnection& connection;              ///< D-Bus connection
+    DBusObjectPath path;                     ///< Object path
+    bool registered;                         ///< Registration state
+    mutable std::mutex mutex;                ///< Synchronization mutex
+    
+    // Interface management
+    std::map<std::string, std::vector<DBusProperty>> interfaces; ///< Interface properties
+    std::map<std::string, std::map<std::string, DBusConnection::MethodHandler>> methodHandlers; ///< Method handlers
+    std::map<std::string, std::map<std::string, std::pair<std::string, std::string>>> methodSignatures; ///< Method signatures
 };
 
 } // namespace ggk
