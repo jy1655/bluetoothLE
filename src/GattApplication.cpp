@@ -9,21 +9,10 @@
 
 namespace ggk {
 
-GattApplication::GattApplication(DBusConnection& connection, const DBusObjectPath& path)
+    GattApplication::GattApplication(DBusConnection& connection, const DBusObjectPath& path)
     : DBusObject(connection, path),
       registered(false),
       standardServicesAdded(false) {
-    
-    // 필수 인터페이스 미리 추가
-    if (!addInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE, {})) {
-        Logger::error("Failed to add ObjectManager interface during initialization");
-    }
-    
-    // GetManagedObjects 메서드 추가
-    if (!addMethod(BlueZConstants::OBJECT_MANAGER_INTERFACE, "GetManagedObjects", 
-                  [this](const DBusMethodCall& call) { handleGetManagedObjects(call); })) {
-        Logger::error("Failed to add GetManagedObjects method during initialization");
-    }
     
     Logger::info("Created GATT application at path: " + path.toString());
 }
@@ -356,62 +345,223 @@ void GattApplication::handleGetManagedObjects(const DBusMethodCall& call) {
     Logger::info("BlueZ requested GetManagedObjects");
     
     try {
-        // 1. 객체 딕셔너리 빌더 초기화
+        // GVariant 객체 딕셔너리 생성
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{oa{sa{sv}}}"));
         
-        // 2. 애플리케이션 객체 (ObjectManager 인터페이스)
+        // 1. 애플리케이션 객체 추가 (ObjectManager 인터페이스)
         {
             GVariantBuilder interfaces_builder;
             g_variant_builder_init(&interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
             
+            // 객체 관리자 인터페이스 (빈 속성으로)
             GVariantBuilder props_builder;
             g_variant_builder_init(&props_builder, G_VARIANT_TYPE("a{sv}"));
             
             g_variant_builder_add(&interfaces_builder, "{sa{sv}}",
-                                 BlueZConstants::OBJECT_MANAGER_INTERFACE.c_str(),
-                                 &props_builder);
+                                BlueZConstants::OBJECT_MANAGER_INTERFACE.c_str(),
+                                &props_builder);
             
             g_variant_builder_add(&builder, "{oa{sa{sv}}}",
-                                 getPath().c_str(),
-                                 &interfaces_builder);
+                                getPath().c_str(),
+                                &interfaces_builder);
         }
         
-        // 3. 서비스 객체
+        // 2. 서비스 객체들 추가
         std::lock_guard<std::mutex> lock(servicesMutex);
         for (const auto& service : services) {
             if (!service) continue;
             
+            // 이 서비스의 모든 인터페이스-속성 맵 구성
             GVariantBuilder interfaces_builder;
             g_variant_builder_init(&interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
             
-            GVariantBuilder props_builder;
-            g_variant_builder_init(&props_builder, G_VARIANT_TYPE("a{sv}"));
-            
-            // UUID 속성 추가
-            g_variant_builder_add(&props_builder, "{sv}", 
-                                 "UUID", 
-                                 g_variant_new_string(service->getUuid().toBlueZFormat().c_str()));
-            
-            // Primary 속성 추가
-            g_variant_builder_add(&props_builder, "{sv}", 
-                                 "Primary", 
-                                 g_variant_new_boolean(service->isPrimary()));
-            
-            g_variant_builder_add(&interfaces_builder, "{sa{sv}}",
-                                 BlueZConstants::GATT_SERVICE_INTERFACE.c_str(),
-                                 &props_builder);
+            // GattService1 인터페이스 추가
+            {
+                GVariantBuilder props_builder;
+                g_variant_builder_init(&props_builder, G_VARIANT_TYPE("a{sv}"));
+                
+                // UUID 속성
+                GVariantPtr uuid_variant = Utils::gvariantPtrFromString(service->getUuid().toBlueZFormat());
+                g_variant_builder_add(&props_builder, "{sv}", 
+                                    "UUID", 
+                                    uuid_variant.get());
+                
+                // Primary 속성
+                GVariantPtr primary_variant = Utils::gvariantPtrFromBoolean(service->isPrimary());
+                g_variant_builder_add(&props_builder, "{sv}", 
+                                    "Primary", 
+                                    primary_variant.get());
+                
+                // 서비스 경로에 있는 특성들의 객체 경로 목록
+                GVariantBuilder char_paths_builder;
+                g_variant_builder_init(&char_paths_builder, G_VARIANT_TYPE("ao"));
+                
+                for (const auto& charPair : service->getCharacteristics()) {
+                    if (charPair.second) {
+                        g_variant_builder_add(&char_paths_builder, "o", 
+                                            charPair.second->getPath().c_str());
+                    }
+                }
+                
+                GVariant* char_paths = g_variant_builder_end(&char_paths_builder);
+                g_variant_builder_add(&props_builder, "{sv}", "Characteristics", char_paths);
+                
+                g_variant_builder_add(&interfaces_builder, "{sa{sv}}",
+                                    BlueZConstants::GATT_SERVICE_INTERFACE.c_str(),
+                                    &props_builder);
+            }
             
             g_variant_builder_add(&builder, "{oa{sa{sv}}}",
-                                 service->getPath().c_str(),
-                                 &interfaces_builder);
+                                service->getPath().c_str(),
+                                &interfaces_builder);
+                                
+            // 3. 이 서비스에 속한 모든 특성들 추가
+            for (const auto& charPair : service->getCharacteristics()) {
+                auto characteristic = charPair.second;
+                if (!characteristic) continue;
+                
+                GVariantBuilder char_interfaces_builder;
+                g_variant_builder_init(&char_interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
+                
+                // GattCharacteristic1 인터페이스 추가
+                {
+                    GVariantBuilder char_props_builder;
+                    g_variant_builder_init(&char_props_builder, G_VARIANT_TYPE("a{sv}"));
+                    
+                    // UUID 속성
+                    GVariantPtr char_uuid_variant = Utils::gvariantPtrFromString(
+                        characteristic->getUuid().toBlueZFormat());
+                    g_variant_builder_add(&char_props_builder, "{sv}", 
+                                        "UUID", 
+                                        char_uuid_variant.get());
+                    
+                    // Service 속성 (서비스 경로)
+                    GVariantPtr service_path_variant = Utils::gvariantPtrFromObject(
+                        service->getPath());
+                    g_variant_builder_add(&char_props_builder, "{sv}", 
+                                        "Service", 
+                                        service_path_variant.get());
+                    
+                    // Flags 속성 (특성 속성 문자열 배열)
+                    GVariantBuilder flags_builder;
+                    g_variant_builder_init(&flags_builder, G_VARIANT_TYPE("as"));
+                    
+                    // 권한에 따라 플래그 추가
+                    uint8_t props = characteristic->getProperties();
+                    if (props & GattProperty::PROP_BROADCAST)
+                        g_variant_builder_add(&flags_builder, "s", "broadcast");
+                    if (props & GattProperty::PROP_READ)
+                        g_variant_builder_add(&flags_builder, "s", "read");
+                    if (props & GattProperty::PROP_WRITE_WITHOUT_RESPONSE)
+                        g_variant_builder_add(&flags_builder, "s", "write-without-response");
+                    if (props & GattProperty::PROP_WRITE)
+                        g_variant_builder_add(&flags_builder, "s", "write");
+                    if (props & GattProperty::PROP_NOTIFY)
+                        g_variant_builder_add(&flags_builder, "s", "notify");
+                    if (props & GattProperty::PROP_INDICATE)
+                        g_variant_builder_add(&flags_builder, "s", "indicate");
+                    if (props & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES)
+                        g_variant_builder_add(&flags_builder, "s", "authenticated-signed-writes");
+                    
+                    GVariant* flags = g_variant_builder_end(&flags_builder);
+                    g_variant_builder_add(&char_props_builder, "{sv}", "Flags", flags);
+                    
+                    // Notifying 속성
+                    GVariantPtr notifying_variant = Utils::gvariantPtrFromBoolean(
+                        characteristic->isNotifying());
+                    g_variant_builder_add(&char_props_builder, "{sv}", 
+                                        "Notifying", 
+                                        notifying_variant.get());
+                    
+                    // 디스크립터가 있는 경우 추가
+                    auto descriptors = characteristic->getDescriptors();
+                    if (!descriptors.empty()) {
+                        GVariantBuilder desc_paths_builder;
+                        g_variant_builder_init(&desc_paths_builder, G_VARIANT_TYPE("ao"));
+                        
+                        for (const auto& descPair : descriptors) {
+                            if (descPair.second) {
+                                g_variant_builder_add(&desc_paths_builder, "o", 
+                                                    descPair.second->getPath().c_str());
+                            }
+                        }
+                        
+                        GVariant* desc_paths = g_variant_builder_end(&desc_paths_builder);
+                        g_variant_builder_add(&char_props_builder, "{sv}", "Descriptors", desc_paths);
+                    }
+                    
+                    g_variant_builder_add(&char_interfaces_builder, "{sa{sv}}",
+                                        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE.c_str(),
+                                        &char_props_builder);
+                }
+                
+                g_variant_builder_add(&builder, "{oa{sa{sv}}}",
+                                    characteristic->getPath().c_str(),
+                                    &char_interfaces_builder);
+                
+                // 4. 이 특성에 속한 모든 디스크립터들 추가
+                for (const auto& descPair : characteristic->getDescriptors()) {
+                    auto descriptor = descPair.second;
+                    if (!descriptor) continue;
+                    
+                    GVariantBuilder desc_interfaces_builder;
+                    g_variant_builder_init(&desc_interfaces_builder, G_VARIANT_TYPE("a{sa{sv}}"));
+                    
+                    // GattDescriptor1 인터페이스 추가
+                    {
+                        GVariantBuilder desc_props_builder;
+                        g_variant_builder_init(&desc_props_builder, G_VARIANT_TYPE("a{sv}"));
+                        
+                        // UUID 속성
+                        GVariantPtr desc_uuid_variant = Utils::gvariantPtrFromString(
+                            descriptor->getUuid().toBlueZFormat());
+                        g_variant_builder_add(&desc_props_builder, "{sv}", 
+                                            "UUID", 
+                                            desc_uuid_variant.get());
+                        
+                        // Characteristic 속성 (특성 경로)
+                        GVariantPtr char_path_variant = Utils::gvariantPtrFromObject(
+                            characteristic->getPath());
+                        g_variant_builder_add(&desc_props_builder, "{sv}", 
+                                            "Characteristic", 
+                                            char_path_variant.get());
+                        
+                        // Flags 속성 (디스크립터 권한 문자열 배열)
+                        GVariantBuilder desc_flags_builder;
+                        g_variant_builder_init(&desc_flags_builder, G_VARIANT_TYPE("as"));
+                        
+                        // 권한에 따라 플래그 추가
+                        uint8_t perms = descriptor->getPermissions();
+                        if (perms & GattPermission::PERM_READ)
+                            g_variant_builder_add(&desc_flags_builder, "s", "read");
+                        if (perms & GattPermission::PERM_WRITE)
+                            g_variant_builder_add(&desc_flags_builder, "s", "write");
+                        if (perms & GattPermission::PERM_READ_ENCRYPTED)
+                            g_variant_builder_add(&desc_flags_builder, "s", "encrypt-read");
+                        if (perms & GattPermission::PERM_WRITE_ENCRYPTED)
+                            g_variant_builder_add(&desc_flags_builder, "s", "encrypt-write");
+                        
+                        GVariant* desc_flags = g_variant_builder_end(&desc_flags_builder);
+                        g_variant_builder_add(&desc_props_builder, "{sv}", "Flags", desc_flags);
+                        
+                        g_variant_builder_add(&desc_interfaces_builder, "{sa{sv}}",
+                                            BlueZConstants::GATT_DESCRIPTOR_INTERFACE.c_str(),
+                                            &desc_props_builder);
+                    }
+                    
+                    g_variant_builder_add(&builder, "{oa{sa{sv}}}",
+                                        descriptor->getPath().c_str(),
+                                        &desc_interfaces_builder);
+                }
+            }
         }
         
-        // 4. 응답 반환
+        // 최종 딕셔너리로 반환
         GVariant* result = g_variant_builder_end(&builder);
         g_dbus_method_invocation_return_value(call.invocation.get(), result);
         
-        Logger::info("GetManagedObjects response sent successfully");
+        Logger::debug("GetManagedObjects response sent successfully");
     }
     catch (const std::exception& e) {
         Logger::error("Exception in handleGetManagedObjects: " + std::string(e.what()));

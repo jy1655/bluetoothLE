@@ -184,41 +184,113 @@ bool DBusObject::unregisterObject() {
 }
 
 std::string DBusObject::generateIntrospectionXml() const {
-    // 메서드 목록 수집
-    std::vector<std::pair<std::string, std::string>> methods;
-    for (const auto& ifaceMethods : methodHandlers) {
-        for (const auto& method : ifaceMethods.second) {
-            methods.push_back({ifaceMethods.first, method.first});
-        }
-    }
-    
-    // 시그널 목록은 현재 지원하지 않음
-    std::vector<DBusSignal> signals;
-    
-    // 각 인터페이스에 대한 XML 생성
     std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<node>\n";
     
+    // 표준 인터페이스 추가
+    xml += "  <interface name=\"org.freedesktop.DBus.Introspectable\">\n";
+    xml += "    <method name=\"Introspect\">\n";
+    xml += "      <arg name=\"xml_data\" type=\"s\" direction=\"out\"/>\n";
+    xml += "    </method>\n";
+    xml += "  </interface>\n";
+    
+    xml += "  <interface name=\"org.freedesktop.DBus.Properties\">\n";
+    xml += "    <method name=\"Get\">\n";
+    xml += "      <arg name=\"interface_name\" type=\"s\" direction=\"in\"/>\n";
+    xml += "      <arg name=\"property_name\" type=\"s\" direction=\"in\"/>\n";
+    xml += "      <arg name=\"value\" type=\"v\" direction=\"out\"/>\n";
+    xml += "    </method>\n";
+    xml += "    <method name=\"Set\">\n";
+    xml += "      <arg name=\"interface_name\" type=\"s\" direction=\"in\"/>\n";
+    xml += "      <arg name=\"property_name\" type=\"s\" direction=\"in\"/>\n";
+    xml += "      <arg name=\"value\" type=\"v\" direction=\"in\"/>\n";
+    xml += "    </method>\n";
+    xml += "    <method name=\"GetAll\">\n";
+    xml += "      <arg name=\"interface_name\" type=\"s\" direction=\"in\"/>\n";
+    xml += "      <arg name=\"properties\" type=\"a{sv}\" direction=\"out\"/>\n";
+    xml += "    </method>\n";
+    xml += "    <signal name=\"PropertiesChanged\">\n";
+    xml += "      <arg name=\"interface_name\" type=\"s\"/>\n";
+    xml += "      <arg name=\"changed_properties\" type=\"a{sv}\"/>\n";
+    xml += "      <arg name=\"invalidated_properties\" type=\"as\"/>\n";
+    xml += "    </signal>\n";
+    xml += "  </interface>\n";
+    
+    // ObjectManager 인터페이스 추가
+    xml += "  <interface name=\"org.freedesktop.DBus.ObjectManager\">\n";
+    xml += "    <method name=\"GetManagedObjects\">\n";
+    xml += "      <arg name=\"objects\" type=\"a{oa{sa{sv}}}\" direction=\"out\"/>\n";
+    xml += "    </method>\n";
+    xml += "    <signal name=\"InterfacesAdded\">\n";
+    xml += "      <arg name=\"object_path\" type=\"o\"/>\n";
+    xml += "      <arg name=\"interfaces_and_properties\" type=\"a{sa{sv}}\"/>\n";
+    xml += "    </signal>\n";
+    xml += "    <signal name=\"InterfacesRemoved\">\n";
+    xml += "      <arg name=\"object_path\" type=\"o\"/>\n";
+    xml += "      <arg name=\"interfaces\" type=\"as\"/>\n";
+    xml += "    </signal>\n";
+    xml += "  </interface>\n";
+    
+    // 사용자 정의 인터페이스 추가
     for (const auto& iface : interfaces) {
-        // 해당 인터페이스의 메서드 필터링
-        std::vector<DBusMethodCall> ifaceMethods;
-        auto it = methodHandlers.find(iface.first);
-        if (it != methodHandlers.end()) {
-            for (const auto& method : it->second) {
-                DBusMethodCall call;
-                call.interface = iface.first;
-                call.method = method.first;
-                ifaceMethods.push_back(std::move(call));
+        xml += "  <interface name=\"" + iface.first + "\">\n";
+        
+        // 인터페이스의 속성들 추가
+        for (const auto& prop : iface.second) {
+            xml += "    <property name=\"" + prop.name + "\" type=\"" + prop.signature + "\" access=\"";
+            
+            if (prop.readable && prop.writable) {
+                xml += "readwrite";
+            } else if (prop.readable) {
+                xml += "read";
+            } else if (prop.writable) {
+                xml += "write";
+            }
+            
+            if (prop.emitsChangedSignal) {
+                xml += "\">\n";
+                xml += "      <annotation name=\"org.freedesktop.DBus.Property.EmitsChangedSignal\" value=\"true\"/>\n";
+                xml += "    </property>\n";
+            } else {
+                xml += "\"/>\n";
             }
         }
         
-        // 인터페이스 XML 생성
-        xml += DBusXml::createInterface(
-            iface.first,
-            iface.second,
-            ifaceMethods,
-            signals,
-            1  // 들여쓰기 레벨
-        );
+        // 인터페이스의 메서드들 추가
+        auto it = methodHandlers.find(iface.first);
+        if (it != methodHandlers.end()) {
+            for (const auto& method : it->second) {
+                xml += "    <method name=\"" + method.first + "\">\n";
+                
+                // BlueZ 특정 메서드들을 위한 특별한 시그니처 추가
+                if (iface.first == "org.bluez.GattCharacteristic1") {
+                    if (method.first == "ReadValue") {
+                        xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
+                        xml += "      <arg name=\"value\" type=\"ay\" direction=\"out\"/>\n";
+                    } else if (method.first == "WriteValue") {
+                        xml += "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n";
+                        xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
+                    } else if (method.first == "StartNotify" || method.first == "StopNotify") {
+                        // 이 메서드들은 인자가 없음
+                    }
+                } else if (iface.first == "org.bluez.GattDescriptor1") {
+                    if (method.first == "ReadValue") {
+                        xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
+                        xml += "      <arg name=\"value\" type=\"ay\" direction=\"out\"/>\n";
+                    } else if (method.first == "WriteValue") {
+                        xml += "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n";
+                        xml += "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n";
+                    }
+                } else if (iface.first == "org.bluez.LEAdvertisement1") {
+                    if (method.first == "Release") {
+                        // Release 메서드는 인자가 없음
+                    }
+                }
+                
+                xml += "    </method>\n";
+            }
+        }
+        
+        xml += "  </interface>\n";
     }
     
     xml += "</node>";

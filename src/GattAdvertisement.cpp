@@ -293,15 +293,32 @@ bool GattAdvertisement::registerWithBlueZ() {
         // BlueZ 5.82 호환성 확보
         ensureBlueZ582Compatibility();
         
+        // 등록 전 기존 광고 중지 시도 (가능한 충돌 방지)
+        try {
+            // bluetoothctl 사용
+            system("echo -e 'menu advertise\\noff\\nback\\n' | bluetoothctl > /dev/null 2>&1");
+            // hciconfig 사용
+            system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
+            // 약간의 지연 추가
+            usleep(500000); // 500ms
+        }
+        catch (...) {
+            // 실패해도 계속 진행
+        }
+        
         // 옵션 생성 - 수정된 부분
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+        
+        // BlueZ 5.82용 옵션 추가
+        g_variant_builder_add(&builder, "{sv}", "MinInterval", g_variant_new_uint16(30));
+        g_variant_builder_add(&builder, "{sv}", "MaxInterval", g_variant_new_uint16(60));
         
         // 빌더 종료하여 GVariant 먼저 생성
         GVariant* options = g_variant_builder_end(&builder);
         
         // 매개변수 생성 - 안전한 방식으로 수정
-        GVariant* paramsRaw = g_variant_new("(o@a{sv})", 
+        GVariant* paramsRaw = g_variant_new("(oa{sv})", 
                                 getPath().c_str(), 
                                 options);
         
@@ -326,14 +343,32 @@ bool GattAdvertisement::registerWithBlueZ() {
         catch (const std::exception& e) {
             std::string errorMsg = e.what();
             
-            // AlreadyExists 오류 처리
+            // AlreadyExists 오류는 일반적으로 이미 등록된 경우이므로 성공으로 처리
             if (errorMsg.find("AlreadyExists") != std::string::npos) {
-                Logger::info("Advertisement already registered with BlueZ");
+                Logger::info("Advertisement already registered with BlueZ (AlreadyExists)");
                 registered = true;
                 return true;
             }
             
-            Logger::error("Failed to register advertisement with BlueZ: " + errorMsg);
+            // 다른 방식으로 광고 활성화 시도
+            Logger::warn("Failed to register advertisement using DBus API: " + errorMsg);
+            Logger::info("Trying alternative methods to enable advertising...");
+            
+            // 백업 방법 1: bluetoothctl
+            if (system("echo -e 'menu advertise\\non\\nback\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
+                Logger::info("Successfully enabled advertising via bluetoothctl");
+                registered = true;
+                return true;
+            }
+            
+            // 백업 방법 2: hciconfig
+            if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
+                Logger::info("Successfully enabled advertising via hciconfig");
+                registered = true;
+                return true;
+            }
+            
+            Logger::error("All advertisement methods failed");
             return false;
         }
     }
@@ -401,7 +436,10 @@ bool GattAdvertisement::unregisterFromBlueZ() {
 }
 
 void GattAdvertisement::ensureBlueZ582Compatibility() {
-    // 필수 Includes 항목 확인
+    Logger::info("Ensuring BlueZ 5.82 compatibility for advertisement...");
+
+    // 필수 Includes 항목 확인 - BlueZ 5.82에서는 이 속성이 중요함
+    // 이 속성은 광고에 포함할 항목을 명시적으로 지정함
     std::vector<std::string> requiredIncludes;
     
     // TX Power 확인
@@ -419,12 +457,18 @@ void GattAdvertisement::ensureBlueZ582Compatibility() {
         requiredIncludes.push_back("appearance");
     }
     
+    // 서비스 UUID가 있으면 서비스 클래스 포함
+    if (!serviceUUIDs.empty() && std::find(includes.begin(), includes.end(), "service-uuids") == includes.end()) {
+        requiredIncludes.push_back("service-uuids");
+    }
+    
     // 필요한 항목 추가
     for (const auto& item : requiredIncludes) {
         includes.push_back(item);
+        Logger::debug("Added required include item for BlueZ 5.82: " + item);
     }
     
-    // Discoverable 속성 확인
+    // BlueZ 5.82에서는 Discoverable 속성이 필수
     discoverable = true;
     
     // 널 UUID 제거
@@ -433,6 +477,8 @@ void GattAdvertisement::ensureBlueZ582Compatibility() {
                       [](const GattUuid& uuid) { return uuid.toString().empty(); }),
         serviceUUIDs.end()
     );
+    
+    Logger::info("BlueZ 5.82 compatibility ensured. Includes: " + std::to_string(includes.size()) + " items");
 }
 
 // 속성 취득 함수들

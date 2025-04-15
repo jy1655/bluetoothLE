@@ -463,25 +463,124 @@ void DBusConnection::handleMethodCall(
     GDBusMethodInvocation* invocation,
     gpointer userData)
 {
-    // 디버그 로그 추가
-    Logger::debug("D-Bus method call received: " + 
-                 (interfaceName ? std::string(interfaceName) : "(null)") + "." + 
-                 (methodName ? std::string(methodName) : "(null)") + 
-                 " on " + (objectPath ? std::string(objectPath) : "(null)"));
-    
-    HandlerData* data = static_cast<HandlerData*>(userData);
-    
-    if (!data) {
-        Logger::error("Invalid user data in handleMethodCall");
-        g_dbus_method_invocation_return_error_literal(invocation, 
-            G_DBUS_ERROR,
-            G_DBUS_ERROR_FAILED,
-            "Internal error: Invalid handler data");
-        return;
-    }
-    
     try {
-        // 인터페이스 및 메소드 핸들러 찾기
+        Logger::debug("D-Bus method call received: " + 
+                    (interfaceName ? std::string(interfaceName) : "(null)") + "." + 
+                    (methodName ? std::string(methodName) : "(null)") + 
+                    " on " + (objectPath ? std::string(objectPath) : "(null)"));
+        
+        HandlerData* data = static_cast<HandlerData*>(userData);
+        
+        if (!data) {
+            Logger::error("Invalid user data in handleMethodCall");
+            g_dbus_method_invocation_return_error_literal(invocation, 
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_FAILED,
+                "Internal error: Invalid handler data");
+            return;
+        }
+        
+        // Introspect 메서드 처리
+        if (interfaceName && methodName && 
+            std::string(interfaceName) == "org.freedesktop.DBus.Introspectable" &&
+            std::string(methodName) == "Introspect") {
+            
+            Logger::info("Introspect method called for object: " + std::string(objectPath));
+            
+            // DBusObject에서 생성된 XML 문자열을 가져오려면 다소 복잡함
+            // 여기서는 간단한 인트로스펙션 XML을 생성하여 반환
+            std::string xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+                            "<node>\n"
+                            "  <interface name=\"org.freedesktop.DBus.Introspectable\">\n"
+                            "    <method name=\"Introspect\">\n"
+                            "      <arg name=\"xml_data\" type=\"s\" direction=\"out\"/>\n"
+                            "    </method>\n"
+                            "  </interface>\n"
+                            "  <interface name=\"org.freedesktop.DBus.Properties\">\n"
+                            "    <method name=\"Get\">\n"
+                            "      <arg name=\"interface_name\" type=\"s\" direction=\"in\"/>\n"
+                            "      <arg name=\"property_name\" type=\"s\" direction=\"in\"/>\n"
+                            "      <arg name=\"value\" type=\"v\" direction=\"out\"/>\n"
+                            "    </method>\n"
+                            "    <method name=\"GetAll\">\n"
+                            "      <arg name=\"interface_name\" type=\"s\" direction=\"in\"/>\n"
+                            "      <arg name=\"properties\" type=\"a{sv}\" direction=\"out\"/>\n"
+                            "    </method>\n"
+                            "  </interface>\n";
+            
+            // 객체 경로를 기반으로 인터페이스 식별
+            if (strstr(objectPath, "service")) {
+                xml += "  <interface name=\"org.bluez.GattService1\">\n"
+                     "    <property name=\"UUID\" type=\"s\" access=\"read\"/>\n"
+                     "    <property name=\"Primary\" type=\"b\" access=\"read\"/>\n"
+                     "    <property name=\"Characteristics\" type=\"ao\" access=\"read\"/>\n"
+                     "  </interface>\n";
+            }
+            else if (strstr(objectPath, "char")) {
+                xml += "  <interface name=\"org.bluez.GattCharacteristic1\">\n"
+                     "    <property name=\"UUID\" type=\"s\" access=\"read\"/>\n"
+                     "    <property name=\"Service\" type=\"o\" access=\"read\"/>\n"
+                     "    <property name=\"Flags\" type=\"as\" access=\"read\"/>\n"
+                     "    <property name=\"Descriptors\" type=\"ao\" access=\"read\"/>\n"
+                     "    <property name=\"Notifying\" type=\"b\" access=\"read\"/>\n"
+                     "    <method name=\"ReadValue\">\n"
+                     "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n"
+                     "      <arg name=\"value\" type=\"ay\" direction=\"out\"/>\n"
+                     "    </method>\n"
+                     "    <method name=\"WriteValue\">\n"
+                     "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n"
+                     "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n"
+                     "    </method>\n"
+                     "    <method name=\"StartNotify\"/>\n"
+                     "    <method name=\"StopNotify\"/>\n"
+                     "  </interface>\n";
+            }
+            else if (strstr(objectPath, "desc")) {
+                xml += "  <interface name=\"org.bluez.GattDescriptor1\">\n"
+                     "    <property name=\"UUID\" type=\"s\" access=\"read\"/>\n"
+                     "    <property name=\"Characteristic\" type=\"o\" access=\"read\"/>\n"
+                     "    <property name=\"Flags\" type=\"as\" access=\"read\"/>\n"
+                     "    <method name=\"ReadValue\">\n"
+                     "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n"
+                     "      <arg name=\"value\" type=\"ay\" direction=\"out\"/>\n"
+                     "    </method>\n"
+                     "    <method name=\"WriteValue\">\n"
+                     "      <arg name=\"value\" type=\"ay\" direction=\"in\"/>\n"
+                     "      <arg name=\"options\" type=\"a{sv}\" direction=\"in\"/>\n"
+                     "    </method>\n"
+                     "  </interface>\n";
+            }
+            else if (strstr(objectPath, "advertisement")) {
+                xml += "  <interface name=\"org.bluez.LEAdvertisement1\">\n"
+                     "    <property name=\"Type\" type=\"s\" access=\"read\"/>\n"
+                     "    <property name=\"ServiceUUIDs\" type=\"as\" access=\"read\"/>\n"
+                     "    <property name=\"ManufacturerData\" type=\"a{qv}\" access=\"read\"/>\n"
+                     "    <property name=\"ServiceData\" type=\"a{sv}\" access=\"read\"/>\n"
+                     "    <property name=\"Includes\" type=\"as\" access=\"read\"/>\n"
+                     "    <property name=\"LocalName\" type=\"s\" access=\"read\"/>\n"
+                     "    <property name=\"Discoverable\" type=\"b\" access=\"read\"/>\n"
+                     "    <method name=\"Release\"/>\n"
+                     "  </interface>\n";
+            }
+            else {
+                // 루트 객체 또는 알 수 없는 객체의 경우 기본 인터페이스만
+                xml += "  <interface name=\"org.freedesktop.DBus.ObjectManager\">\n"
+                     "    <method name=\"GetManagedObjects\">\n"
+                     "      <arg name=\"objects\" type=\"a{oa{sa{sv}}}\" direction=\"out\"/>\n"
+                     "    </method>\n"
+                     "  </interface>\n";
+            }
+            
+            xml += "</node>";
+            
+            // XML 응답 반환
+            g_dbus_method_invocation_return_value(invocation, 
+                                              g_variant_new("(s)", xml.c_str()));
+            
+            return;
+        }
+        
+        // 일반 메서드 핸들러 호출
         auto ifaceIt = data->methodHandlers.find(interfaceName);
         if (ifaceIt == data->methodHandlers.end()) {
             Logger::warn("Unknown interface called: " + std::string(interfaceName ? interfaceName : "(null)"));
@@ -502,23 +601,7 @@ void DBusConnection::handleMethodCall(
             return;
         }
         
-        // 매개변수 유효성 검사
-        bool parametersValid = true;
-        if (parameters) {
-            const char* type_str = g_variant_get_type_string(parameters);
-            parametersValid = type_str != nullptr;
-        }
-        
-        if (!parametersValid) {
-            Logger::error("Invalid parameters in method call");
-            g_dbus_method_invocation_return_error_literal(invocation, 
-                G_DBUS_ERROR,
-                G_DBUS_ERROR_INVALID_ARGS,
-                "Invalid parameters format");
-            return;
-        }
-        
-        // 메소드 호출 객체 생성 (소유권 이전 주의)
+        // DBusMethodCall 객체 생성
         DBusMethodCall call(
             sender ? sender : "",
             interfaceName ? interfaceName : "",
@@ -527,17 +610,9 @@ void DBusConnection::handleMethodCall(
             invocation ? makeGDBusMethodInvocationPtr(g_object_ref(invocation)) : makeNullGDBusMethodInvocationPtr()
         );
         
-        // ObjectManager.GetManagedObjects는 중요하므로 특별 로그
-        if (interfaceName && methodName && 
-            std::string(interfaceName) == "org.freedesktop.DBus.ObjectManager" &&
-            std::string(methodName) == "GetManagedObjects") {
-            Logger::info("Handling ObjectManager.GetManagedObjects request from: " + 
-                        std::string(sender ? sender : "(unknown)"));
-        }
-
         // 핸들러 호출
         try {
-            Logger::trace("Executing method handler");
+            Logger::trace("Executing method handler for " + std::string(interfaceName) + "." + std::string(methodName));
             methodIt->second(call);
             Logger::trace("Method handler completed");
         } catch (const std::exception& e) {
