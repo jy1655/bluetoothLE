@@ -176,6 +176,12 @@ public:
      */
     std::vector<uint8_t> buildRawAdvertisingData() const;
 
+    void ensureBlueZ582Compatibility();
+    const std::vector<std::string>& getIncludes() const { return includes; }
+    uint16_t getAppearance() const { return appearance; }
+    const std::string& getLocalName() const { return localName; }
+    bool getIncludeTxPower() const { return includeTxPower; }
+
 private:
     // D-Bus property getters
     GVariant* getTypeProperty();

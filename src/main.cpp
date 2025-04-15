@@ -138,38 +138,43 @@ int main(int argc, char** argv) {
     }
     
     // Configure advertisement (optional - defaults are already set in initialize())
-    server.configureAdvertisement(
-        "JetsonBLE",                // 로컬 이름
-        {},                         // 서비스 UUID (빈 배열 = 모든 서비스 사용)
-        0x0059,                     // 제조사 ID (0x0059 = Jetson)
-        {0x01, 0x02, 0x03, 0x04},   // 제조사 데이터
-        true                        // TX Power 포함
-    );
-
-    // 수동으로 128비트 UUID 및 세부 구성이 필요한 경우의 예시
-    // 아래와 같이 advertisement 객체를 직접 구성할 수도 있습니다
-    /*
     auto& adv = server.getAdvertisement();
-    adv.setLocalName("JetsonBLE");
+
+    // 1. 기본 설정
+    adv.setLocalName("JetBLE");
     adv.setDiscoverable(true);
 
-    // BlueZ 5.82 스타일 Includes 배열 설정
-    adv.addInclude("tx-power");
-    adv.addInclude("appearance");
+    // 2. BlueZ 5.82 스타일 Includes 배열 설정 - 가장 중요!
+    // 광고에 포함할 모든 항목을 명시적으로 지정
+    adv.setIncludes({"tx-power", "local-name", "appearance"});
 
-    // 필요시 appearance 코드 설정 (예: 0x0340 = Generic 센서)
+    // 개별 추가도 가능
+    // adv.addInclude("tx-power");
+    // adv.addInclude("local-name");
+    // adv.addInclude("appearance");
+
+    // 3. Appearance 코드 설정 (0x0340 = Generic 센서)
     adv.setAppearance(0x0340);
 
-    // 128비트 UUID 직접 추가
-    adv.addServiceUUID(GattUuid("0193d852-eba5-7d28-9abe-e30a67d39d72"));
+    // 4. 서비스 UUID 직접 추가
+    // Battery Service (16비트 UUID)
+    adv.addServiceUUID(GattUuid::fromShortUuid(0x180F));
+    // 사용자 정의 서비스 (128비트 UUID)
+    adv.addServiceUUID(CUSTOM_SERVICE_UUID);
 
-    // 16비트 UUID도 함께 추가 가능
-    adv.addServiceUUID(GattUuid::fromShortUuid(0x180F)); // Battery Service
-
-    // 제조사 데이터 설정
+    // 5. 제조사 데이터 설정
     std::vector<uint8_t> mfgData = {0x01, 0x02, 0x03, 0x04};
     adv.setManufacturerData(0x0059, mfgData);
-    */
+
+    // 6. 서비스 데이터 설정 (선택적)
+    std::vector<uint8_t> batteryData = {100}; // 100% 배터리
+    adv.setServiceData(BATTERY_SERVICE_UUID, batteryData);
+
+    // 7. TX Power 포함 설정
+    adv.setIncludeTxPower(true);
+
+    // 8. 광고 지속 시간 설정 (0 = 무기한)
+    adv.setDuration(0);
     
     // Set connection callback
     server.setConnectionCallback([](const std::string& deviceAddress) {

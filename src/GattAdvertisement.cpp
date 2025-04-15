@@ -1,4 +1,5 @@
 // src/GattAdvertisement.cpp
+#include "BlueZUtils.h"
 #include "GattAdvertisement.h"
 #include "Logger.h"
 #include "Utils.h"
@@ -244,47 +245,56 @@ void GattAdvertisement::handleRelease(const DBusMethodCall& call) {
 
 bool GattAdvertisement::registerWithBlueZ() {
     try {
-        // 1. Check if already registered
+        Logger::info("Registering GATT advertisement with BlueZ");
+        
+        // 1. 이미 등록되었는지 확인
         if (registered) {
             Logger::info("Advertisement already registered with BlueZ");
             return true;
         }
         
-        // 2. Ensure interfaces are set up with D-Bus
+        // 2. 인터페이스가 설정되었는지 확인
         if (!setupDBusInterfaces()) {
             Logger::error("Failed to setup advertisement D-Bus interfaces");
             return false;
         }
         
-        // 3. Clean up any existing advertisements
+        // 3. 이전 광고 정리
         cleanupExistingAdvertisements();
         
-        // 4. Verify BlueZ service is running
+        // 4. BlueZ 서비스 상태 확인
         int bluezStatus = system("systemctl is-active --quiet bluetooth.service");
         if (bluezStatus != 0) {
-            Logger::error("BlueZ service is not active. Cannot register advertisement.");
+            Logger::error("BlueZ service is not active. Attempting to restart...");
+            system("sudo systemctl restart bluetooth.service");
+            sleep(2);
+            
+            if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+                Logger::error("Failed to restart BlueZ service");
+                return false;
+            }
+            Logger::info("BlueZ service restarted successfully");
+        }
+        
+        // 5. BlueZ 5.82 호환성을 위한 구성 확인
+        
+        // 6. D-Bus API로 등록 시도
+        if (!registerWithDBusApi()) {
+            Logger::warn("Failed to register advertisement via standard D-Bus API, trying alternatives");
+            
+            // 대체 방법으로 시도
+            if (activateAdvertisingFallback()) {
+                Logger::info("Advertisement activated via fallback methods");
+                registered = true;
+                return true;
+            }
+            
+            Logger::error("All advertisement registration methods failed");
             return false;
         }
         
-        // 5. Register with BlueZ using D-Bus API
-        if (registerWithDBusApi()) {
-            Logger::info("Successfully registered advertisement via BlueZ DBus API");
-            registered = true;
-            return activateAdvertising();
-        }
-        
-        // 6. Registration failed, try alternative methods
-        Logger::warn("Failed to register advertisement via standard D-Bus API, trying alternatives");
-        
-        // Use direct HCI commands as fallback
-        if (activateAdvertisingFallback()) {
-            Logger::info("Advertisement activated via fallback methods");
-            registered = true;
-            return true;
-        }
-        
-        Logger::error("All advertisement registration methods failed");
-        return false;
+        Logger::info("Successfully registered advertisement with BlueZ");
+        return true;
     }
     catch (const std::exception& e) {
         Logger::error("Exception in registerWithBlueZ: " + std::string(e.what()));
@@ -314,7 +324,7 @@ bool GattAdvertisement::activateAdvertising() {
 bool GattAdvertisement::activateAdvertisingFallback() {
     Logger::info("Using direct HCI commands for advertising");
     
-    // 1. Build raw advertising data
+    // 1. 원시 광고 데이터 구성
     std::vector<uint8_t> adData = buildRawAdvertisingData();
     
     if (adData.empty()) {
@@ -322,104 +332,165 @@ bool GattAdvertisement::activateAdvertisingFallback() {
         return false;
     }
     
-    // 2. Log the advertising data for debugging
+    // 2. 디버깅용 광고 데이터 출력
     Logger::debug("Raw advertising data: " + Utils::hex(adData.data(), adData.size()));
     
-    // 3. Format HCI command for setting advertising data
-    std::string hciCmd = "sudo hcitool -i hci0 cmd 0x08 0x0008";
-    hciCmd += " " + std::to_string(adData.size());  // Length byte
+    // 3. HCI 어댑터 재설정
+    if (system("sudo hciconfig hci0 reset > /dev/null 2>&1") != 0) {
+        Logger::warn("Failed to reset HCI adapter");
+    }
+    usleep(300000);  // 300ms 대기
     
-    // Add each byte as hex
+    // 4. 광고 데이터 설정을 위한 HCI 명령 구성
+    std::string hciCmd = "sudo hcitool -i hci0 cmd 0x08 0x0008";
+    hciCmd += " " + std::to_string(adData.size());  // 길이 바이트
+    
+    // 각 바이트를 16진수로 추가
     for (uint8_t byte : adData) {
         char hex[4];
         sprintf(hex, " %02X", byte);
         hciCmd += hex;
     }
     
-    // 4. Execute the command to set advertising data
+    // 5. 광고 데이터 설정 명령 실행
     Logger::debug("Executing HCI command: " + hciCmd);
     if (system(hciCmd.c_str()) != 0) {
         Logger::error("Failed to set advertising data with HCI command");
         return false;
     }
     
-    // 5. Enable advertising
+    // 6. 광고 활성화
+    Logger::debug("Enabling advertising with HCI command");
     if (system("sudo hcitool -i hci0 cmd 0x08 0x000A 01") != 0) {
         Logger::error("Failed to enable advertising with HCI command");
         return false;
     }
     
-    // 6. Set non-connectable advertising parameters for better visibility
+    // 7. 광고 매개변수 설정 - 범용 비연결형 광고
     if (system("sudo hcitool -i hci0 cmd 0x08 0x0006 A0 00 A0 00 03 00 00 00 00 00 00 00 00 07 00") != 0) {
         Logger::warn("Failed to set advertising parameters - continuing anyway");
+        // 실패해도 계속 진행
     }
     
-    Logger::info("Advertisement activated via direct HCI commands");
-    return true;
+    // 8. 4가지 방법으로 광고 활성화 시도
+    bool success = false;
+    
+    // 방법 1: bluetoothctl 사용
+    if (system("echo -e 'menu advertise\\non\\nexit\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
+        Logger::info("Advertising enabled via bluetoothctl");
+        success = true;
+    }
+    
+    // 방법 2: hciconfig 사용
+    else if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
+        Logger::info("Advertising enabled via hciconfig");
+        success = true;
+    }
+    
+    // 방법 3: HCI 레벨 명령
+    else if (system("sudo hcitool -i hci0 cmd 0x08 0x000A 01 > /dev/null 2>&1") == 0) {
+        Logger::info("Advertising enabled via direct HCI commands");
+        success = true;
+    }
+    
+    // 방법 4: D-Bus 속성 설정 (discoverable 사용)
+    else {
+        try {
+            // Powered 속성 설정
+            GVariantPtr poweredValue = Utils::gvariantPtrFromBoolean(true);
+            BlueZUtils::setAdapterProperty(
+                getConnection(),
+                "Powered",
+                std::move(poweredValue),
+                BlueZConstants::ADAPTER_PATH
+            );
+            
+            // Discoverable 속성 설정
+            GVariantPtr discValue = Utils::gvariantPtrFromBoolean(true);
+            bool discResult = BlueZUtils::setAdapterProperty(
+                getConnection(),
+                "Discoverable",
+                std::move(discValue),
+                BlueZConstants::ADAPTER_PATH
+            );
+            
+            if (discResult) {
+                Logger::info("Advertising enabled via adapter discoverable property");
+                success = true;
+            }
+        } catch (const std::exception& e) {
+            Logger::error("Exception in D-Bus property method: " + std::string(e.what()));
+        }
+    }
+    
+    // 9. 방법 확인
+    if (success) {
+        Logger::info("Advertising activated successfully via fallback methods");
+    } else {
+        Logger::error("Failed to activate advertising via all fallback methods");
+    }
+    
+    return success;
 }
 
 bool GattAdvertisement::cleanupExistingAdvertisements() {
     Logger::info("Cleaning up any existing advertisements");
     
-    // 1. First try to disable advertising
+    // 1. 먼저 광고 비활성화
     system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
     system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1");
     
-    // 2. Try to remove all advertising instances (0-3)
-    for (int i = 0; i < 4; i++) {
+    // 2. 모든 광고 인스턴스(0-7) 제거 시도
+    for (int i = 0; i < 8; i++) {
         std::string cmd = "echo -e 'remove-advertising " + 
                          std::to_string(i) + "\\n' | bluetoothctl > /dev/null 2>&1";
         system(cmd.c_str());
     }
     
-    // 3. More aggressive cleanup via D-Bus API - get all advertisements and remove them
+    // 3. D-Bus API를 통한 광고 정리
     try {
-        // Get all managed objects
+        // BlueZ의 모든 관리 객체 가져오기
         GVariantPtr result = getConnection().callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(BlueZConstants::ROOT_PATH),
             BlueZConstants::OBJECT_MANAGER_INTERFACE,
             BlueZConstants::GET_MANAGED_OBJECTS,
             makeNullGVariantPtr(),
-            ""
+            "a{oa{sa{sv}}}"  // 예상 반환 형식 (딕셔너리)
         );
         
         if (result) {
-            // BlueZ 5.82 형식 확인 (튜플로 감싸진 딕셔너리)
-            if (g_variant_is_of_type(result.get(), G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
-                Logger::debug("BlueZ 5.82 형식 감지: 튜플에서 딕셔너리 추출");
-                // 튜플에서 딕셔너리 추출
-                GVariant* extracted = g_variant_get_child_value(result.get(), 0);
-                GVariantPtr extractedPtr = makeGVariantPtr(extracted, true);
-                
-                GVariantIter *iter1;
-                g_variant_get(extractedPtr.get(), "a{oa{sa{sv}}}", &iter1);
+            // 결과 타입에 따라 처리
+            if (g_variant_is_of_type(result.get(), G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
+                // 모든 광고 객체 찾기
+                GVariantIter iter1;
+                g_variant_iter_init(&iter1, result.get());
                 
                 const gchar *objPath;
                 GVariant *interfaces;
                 std::vector<std::string> advPaths;
                 
-                // 모든 광고 객체 찾기
-                while (g_variant_iter_loop(iter1, "{&o@a{sa{sv}}}", &objPath, &interfaces)) {
-                    if (g_variant_lookup_value(interfaces, 
-                                               BlueZConstants::LE_ADVERTISEMENT_INTERFACE.c_str(), 
-                                               NULL)) {
+                while (g_variant_iter_next(&iter1, "{&o@a{sa{sv}}}", &objPath, &interfaces)) {
+                    // LEAdvertisement1 인터페이스를 가진 객체 찾기
+                    GVariant* adv_iface = g_variant_lookup_value(interfaces, 
+                                                               BlueZConstants::LE_ADVERTISEMENT_INTERFACE.c_str(), 
+                                                               G_VARIANT_TYPE("a{sv}"));
+                    if (adv_iface) {
                         advPaths.push_back(objPath);
+                        g_variant_unref(adv_iface);
                     }
+                    
+                    g_variant_unref(interfaces);
                 }
                 
-                g_variant_iter_free(iter1);
-                
-                // 찾은 각 광고 등록 해제 시도
+                // 찾은 광고 등록 해제
                 for (const auto& path : advPaths) {
-                    Logger::debug("Attempting to unregister advertisement: " + path);
+                    Logger::debug("Unregistering advertisement: " + path);
                     
                     try {
-                        // 파라미터 빌드
                         GVariant* paramsRaw = g_variant_new("(o)", path.c_str());
                         GVariantPtr params = makeGVariantPtr(paramsRaw, true);
                         
-                        // UnregisterAdvertisement 호출
                         getConnection().callMethod(
                             BlueZConstants::BLUEZ_SERVICE,
                             DBusObjectPath(BlueZConstants::ADAPTER_PATH),
@@ -428,62 +499,21 @@ bool GattAdvertisement::cleanupExistingAdvertisements() {
                             std::move(params)
                         );
                     } catch (...) {
-                        // 실패 무시, 가능한 한 많이 정리
+                        // 실패해도 계속 진행
                     }
                 }
-            } 
-            // 기존 BlueZ 형식 (직접 딕셔너리)
-            else if (g_variant_is_of_type(result.get(), G_VARIANT_TYPE("a{oa{sa{sv}}}"))) {
-                GVariantIter *iter1;
-                g_variant_get(result.get(), "a{oa{sa{sv}}}", &iter1);
-                
-                const gchar *objPath;
-                GVariant *interfaces;
-                std::vector<std::string> advPaths;
-                
-                // 모든 광고 객체 찾기
-                while (g_variant_iter_loop(iter1, "{&o@a{sa{sv}}}", &objPath, &interfaces)) {
-                    if (g_variant_lookup_value(interfaces,
-                                              BlueZConstants::LE_ADVERTISEMENT_INTERFACE.c_str(),
-                                              NULL)) {
-                        advPaths.push_back(objPath);
-                    }
-                }
-                
-                g_variant_iter_free(iter1);
-                
-                // 찾은 각 광고 등록 해제 시도
-                for (const auto& path : advPaths) {
-                    Logger::debug("Attempting to unregister advertisement: " + path);
-                    
-                    try {
-                        // 파라미터 빌드
-                        GVariant* paramsRaw = g_variant_new("(o)", path.c_str());
-                        GVariantPtr params = makeGVariantPtr(paramsRaw, true);
-                        
-                        // UnregisterAdvertisement 호출
-                        getConnection().callMethod(
-                            BlueZConstants::BLUEZ_SERVICE,
-                            DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-                            BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
-                            BlueZConstants::UNREGISTER_ADVERTISEMENT,
-                            std::move(params)
-                        );
-                    } catch (...) {
-                        // 실패 무시, 가능한 한 많이 정리
-                    }
-                }
-            }
-            else {
-                Logger::warn("GetManagedObjects 결과가 예상치 못한 형식: " + 
+            } else {
+                // 예상하지 못한 반환 형식
+                Logger::warn("GetManagedObjects returned unexpected type: " + 
                             std::string(g_variant_get_type_string(result.get())));
             }
         }
-    } catch (...) {
-        // Ignore any errors in the cleanup process
+    } catch (const std::exception& e) {
+        Logger::warn("Failed to clean up advertisements via D-Bus API: " + std::string(e.what()));
+        // 계속 진행
     }
     
-    // Wait a moment for cleanup to take effect
+    // 4. HCI 세션 초기화를 위한 대기
     usleep(500000);  // 500ms
     
     return true;
@@ -568,24 +598,36 @@ bool GattAdvertisement::unregisterFromBlueZ() {
 }
 
 bool GattAdvertisement::registerWithDBusApi() {
-    // Try up to 3 times, with increasing wait time
+    // 여러 번 시도, 증가하는 대기 시간
     bool success = false;
     std::string errorMsg;
     
     for (int retryCount = 0; retryCount < MAX_REGISTRATION_RETRIES; retryCount++) {
         try {
-            // Create empty options dictionary using Utils helper function
-            GVariantPtr emptyOptions = Utils::createEmptyDictionaryPtr();
+            // 1. 빈 옵션 딕셔너리 생성
+            GVariantBuilder builder;
+            g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
             
-            // Create tuple parameter
-            GVariant* paramsRaw = g_variant_new("(o@a{sv})", 
+            // BlueZ 5.82 호환성을 위한 옵션
+            // (필요한 경우 여기에 특별 옵션 추가)
+            
+            GVariant* options = g_variant_builder_end(&builder);
+            
+            // 2. 매개변수 튜플 생성
+            GVariant* paramsRaw = g_variant_new("(oa{sv})", 
                                         getPath().c_str(), 
-                                        emptyOptions.get());
+                                        options);
             
-            // Manage parameter with makeGVariantPtr pattern
+            // 3. 호출용 매개변수 래핑
             GVariantPtr params = makeGVariantPtr(paramsRaw, true);
             
-            // Call BlueZ
+            // 4. 매개변수 로그 (디버깅용)
+            char* debug_str = g_variant_print(params.get(), TRUE);
+            Logger::debug("RegisterAdvertisement parameters: " + std::string(debug_str));
+            g_free(debug_str);
+            
+            // 5. BlueZ 메소드 호출
+            Logger::info("Calling RegisterAdvertisement with path: " + getPath().toString());
             GVariantPtr result = getConnection().callMethod(
                 BlueZConstants::BLUEZ_SERVICE,
                 DBusObjectPath(BlueZConstants::ADAPTER_PATH),
@@ -593,34 +635,35 @@ bool GattAdvertisement::registerWithDBusApi() {
                 BlueZConstants::REGISTER_ADVERTISEMENT,
                 std::move(params),
                 "",
-                5000
+                5000  // 5초 타임아웃
             );
             
-            // If call succeeds
+            // 6. 성공!
             registered = true;
             return true;
         }
         catch (const std::exception& e) {
             errorMsg = e.what();
             
+            // 7. 특별한 오류 처리
             if (errorMsg.find("Maximum advertisements reached") != std::string::npos) {
                 Logger::error("Maximum advertisements reached. Attempting to clean up...");
                 
-                // Try to clean up advertisements
+                // 광고 정리 시도
                 cleanupExistingAdvertisements();
                 
-                // Try restarting BlueZ on last attempt
+                // 마지막 시도에서 BlueZ 재시작
                 if (retryCount == MAX_REGISTRATION_RETRIES - 1) {
                     Logger::info("Trying to restart BlueZ to clear advertisements...");
                     system("sudo systemctl restart bluetooth.service");
-                    sleep(2);  // Wait for restart
+                    sleep(2);  // 재시작 대기
                 }
             } else {
-                Logger::error("DBus method failed: " + errorMsg);
+                Logger::error("D-Bus method failed: " + errorMsg);
             }
             
-            // Wait before retry
-            int waitTime = BASE_RETRY_WAIT_MS * (1 << retryCount);  // Exponential backoff
+            // 8. 재시도 전 대기
+            int waitTime = BASE_RETRY_WAIT_MS * (1 << retryCount);  // 지수적 백오프
             Logger::info("Retry " + std::to_string(retryCount + 1) + 
                         " of " + std::to_string(MAX_REGISTRATION_RETRIES) + 
                         " in " + std::to_string(waitTime / 1000.0) + " seconds");
@@ -632,6 +675,7 @@ bool GattAdvertisement::registerWithDBusApi() {
                  std::to_string(MAX_REGISTRATION_RETRIES) + " attempts. Last error: " + errorMsg);
     return false;
 }
+
 
 GVariant* GattAdvertisement::getTypeProperty() {
     try {
@@ -1083,5 +1127,69 @@ GVariant* GattAdvertisement::getIncludesProperty() {
         return nullptr;
     }
 }
+
+void GattAdvertisement::ensureBlueZ582Compatibility() {
+    // 1. Includes 배열 확인
+    bool hasTxPower = false;
+    bool hasLocalName = false;
+    bool hasAppearance = false;
+    
+    for (const auto& item : includes) {
+        if (item == "tx-power") hasTxPower = true;
+        else if (item == "local-name") hasLocalName = true;
+        else if (item == "appearance") hasAppearance = true;
+    }
+    
+    // 2. TxPower 포함 설정
+    if (includeTxPower && !hasTxPower) {
+        includes.push_back("tx-power");
+        Logger::debug("Added tx-power to Includes array for BlueZ 5.82 compatibility");
+    }
+    
+    // 3. LocalName 포함 설정
+    if (!localName.empty() && !hasLocalName) {
+        includes.push_back("local-name");
+        Logger::debug("Added local-name to Includes array for BlueZ 5.82 compatibility");
+    }
+    
+    // 4. Appearance 포함 설정
+    if (appearance != 0 && !hasAppearance) {
+        includes.push_back("appearance");
+        Logger::debug("Added appearance to Includes array for BlueZ 5.82 compatibility");
+    }
+    
+    // 5. 모든 서비스 UUID가 올바른 형식인지 확인
+    std::vector<GattUuid> validUuids;
+    for (const auto& uuid : serviceUUIDs) {
+        if (!uuid.toString().empty()) {
+            validUuids.push_back(uuid);
+        } else {
+            Logger::warn("Skipping invalid service UUID in advertisement");
+        }
+    }
+    
+    if (validUuids.size() != serviceUUIDs.size()) {
+        serviceUUIDs = validUuids;
+    }
+    
+    // 6. 광고 상태 로그
+    Logger::debug("Advertisement configuration for BlueZ 5.82:");
+    Logger::debug("- Type: " + std::string(type == AdvertisementType::PERIPHERAL ? "peripheral" : "broadcast"));
+    Logger::debug("- LocalName: " + localName);
+    Logger::debug("- ServiceUUIDs: " + std::to_string(serviceUUIDs.size()) + " UUIDs");
+    
+    std::string includesStr = "- Includes: ";
+    for (const auto& item : includes) {
+        includesStr += item + ", ";
+    }
+    if (!includes.empty()) {
+        includesStr.pop_back();  // 마지막 콤마 제거
+        includesStr.pop_back();
+    }
+    Logger::debug(includesStr);
+}
+
+
+
 
 } // namespace ggk

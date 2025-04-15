@@ -149,6 +149,8 @@ private:
     // 인터페이스 관리
     std::map<std::string, std::vector<DBusProperty>> interfaces;                            ///< 인터페이스 -> 속성 맵
     std::map<std::string, std::map<std::string, DBusConnection::MethodHandler>> methodHandlers;  ///< 인터페이스 -> 메서드 -> 핸들러 맵
+    std::map<std::string, std::map<std::string, std::pair<std::vector<DBusArgument>, std::vector<DBusArgument>>>> methodSignatures;
+
 };
 
 } // namespace ggk

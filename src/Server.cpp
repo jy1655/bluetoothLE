@@ -75,34 +75,41 @@ bool Server::initialize(const std::string& name) {
     deviceName = name;
     Logger::info("Initializing BLE Server with name: " + deviceName);
     
-    // Setup D-Bus name and connection
+    // 1. D-Bus 이름 초기화
     if (!DBusName::getInstance().initialize("com.example.ble")) {
         Logger::error("Failed to initialize D-Bus name");
         return false;
     }
     
-    // Create GATT application
+    // 2. GATT 애플리케이션 생성 (ObjectManager 인터페이스는 생성자에서 추가됨)
     application = std::make_unique<GattApplication>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath("/com/example/ble")
     );
     
-    // Create advertisement
+    // 3. 광고 객체 생성
     advertisement = std::make_unique<GattAdvertisement>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath("/com/example/ble/advertisement")
     );
     
-    // Set default advertisement properties
+    // 4. 기본 광고 속성 설정
     advertisement->setLocalName(deviceName);
     advertisement->setIncludeTxPower(true);
+    advertisement->setDiscoverable(true);
     
-    // Initialize ConnectionManager
+    // 5. BlueZ 5.82 호환성을 위한 Includes 배열 설정
+    std::vector<std::string> includes;
+    includes.push_back("tx-power");
+    includes.push_back("local-name");
+    advertisement->setIncludes(includes);
+    
+    // 6. ConnectionManager 초기화
     if (!ConnectionManager::getInstance().initialize(DBusName::getInstance().getConnection())) {
         Logger::warn("Failed to initialize ConnectionManager, connection events may not be detected");
-        // Not critical for initialization - continue anyway
+        // 중요하지 않으므로 계속 진행
     } else {
-        // Set connection event callbacks
+        // 연결 이벤트 콜백 설정
         ConnectionManager::getInstance().setOnConnectionCallback(
             [this](const std::string& deviceAddress) {
                 this->handleConnectionEvent(deviceAddress);
@@ -113,15 +120,10 @@ bool Server::initialize(const std::string& name) {
                 this->handleDisconnectionEvent(deviceAddress);
             });
         
-        ConnectionManager::getInstance().setOnPropertyChangedCallback(
-            [this](const std::string& interface, const std::string& property, GVariantPtr value) {
-                this->handlePropertyChangeEvent(interface, property, std::move(value));
-            });
-            
         Logger::info("ConnectionManager initialized successfully");
     }
     
-    // Setup signal handlers
+    // 7. 시그널 핸들러 설정
     setupSignalHandlers();
     
     initialized = true;
@@ -130,13 +132,13 @@ bool Server::initialize(const std::string& name) {
 }
 
 bool Server::start(bool secureMode) {
-    // Check if already running
+    // 이미 실행 중인지 확인
     if (running) {
         Logger::warn("Server already running");
         return true;
     }
     
-    // Check if initialized
+    // 초기화 여부 확인
     if (!initialized) {
         Logger::error("Cannot start: Server not initialized");
         return false;
@@ -144,61 +146,53 @@ bool Server::start(bool secureMode) {
     
     Logger::info("Starting BLE Server...");
     
-    // Check BlueZ service
+    // 1. BlueZ 서비스 확인 및 재시작
     if (system("systemctl is-active --quiet bluetooth.service") != 0) {
         Logger::warn("BlueZ service not active, attempting restart...");
-        restartBlueZService();
+        if (!restartBlueZService()) {
+            Logger::error("Failed to restart BlueZ service");
+            return false;
+        }
     }
     
-    // Perform BlueZ setup
+    // 2. BlueZ 인터페이스 설정
     if (!setupBlueZInterface()) {
         Logger::error("Failed to setup BlueZ interface");
         return false;
     }
     
-    // Register GATT application with BlueZ
+    // 3. 객체 등록: 애플리케이션 객체 먼저 등록
+    if (!application->setupDBusInterfaces()) {
+        Logger::error("Failed to setup application D-Bus interfaces");
+        return false;
+    }
+    
+    // 4. 모든 서비스, 특성 및 디스크립터 등록
+    if (!application->ensureInterfacesRegistered()) {
+        Logger::error("Failed to register all GATT objects");
+        return false;
+    }
+    
+    // 5. GATT 애플리케이션을 BlueZ에 등록
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");
         return false;
     }
     
-    // Set security mode if requested
-    if (secureMode) {
-        Logger::info("Enabling secure mode...");
-        // Use BlueZUtils to set security properties
-        auto& connection = DBusName::getInstance().getConnection();
-        
-        // Set security properties using D-Bus API
-        GVariantPtr secureValue = Utils::gvariantPtrFromBoolean(true);
-        BlueZUtils::setAdapterProperty(
-            connection,
-            "SecureConnections",
-            std::move(secureValue),
-            BlueZConstants::ADAPTER_PATH
-        );
-        
-        GVariantPtr bondableValue = Utils::gvariantPtrFromBoolean(true);
-        BlueZUtils::setAdapterProperty(
-            connection,
-            "Bondable",
-            std::move(bondableValue),
-            BlueZConstants::ADAPTER_PATH
-        );
-    }
+    // 6. BlueZ 5.82 호환성을 위한 광고 설정
+    advertisement->setupDBusInterfaces();
     
-    // Register advertisement with BlueZ
+    // 7. BlueZ에 광고 등록
     if (!advertisement->registerWithBlueZ()) {
         Logger::warn("Failed to register advertisement with BlueZ, trying alternative methods");
-        
-        // Try alternative methods to enable advertising
-        if (!enableAdvertisingFallback()) {
-            Logger::error("Failed to enable advertising using all methods");
-            // Continue despite advertising failure - some functions will still work
-        }
+        enableAdvertisingFallback();
     }
     
     running = true;
     Logger::info("BLE Server started successfully");
+    
+    // 진단 정보 출력
+    
     return true;
 }
 
@@ -644,6 +638,206 @@ bool Server::resetBluetoothAdapter() {
     
     Logger::info("Bluetooth adapter reset successfully");
     return true;
+}
+
+void Server::updateAdvertisementForBlueZ582() {
+    try {
+        if (!advertisement) {
+            Logger::error("Cannot update advertisement: Advertisement not available");
+            return;
+        }
+        
+        Logger::info("Updating advertisement for BlueZ 5.82 compatibility");
+        
+        // 1. Includes 배열 설정
+        std::vector<std::string> includes;
+        
+        // TX Power 포함
+        if (advertisement->getIncludeTxPower()) {
+            includes.push_back("tx-power");
+        }
+        
+        // 로컬 이름이 있는 경우
+        std::string localName = advertisement->getLocalName();
+        if (!localName.empty()) {
+            includes.push_back("local-name");
+        }
+        
+        // Appearance 값이 설정된 경우
+        if (advertisement->getAppearance() != 0) {
+            includes.push_back("appearance");
+        }
+        
+        // Includes 배열 업데이트
+        advertisement->setIncludes(includes);
+        
+        // 2. Discoverable 속성 확인
+        advertisement->setDiscoverable(true);
+        
+        // 3. ServiceUUIDs 확인 - 애플리케이션의 서비스 UUID 추가
+        auto services = application->getServices();
+        for (const auto& service : services) {
+            advertisement->addServiceUUID(service->getUuid());
+        }
+        
+        Logger::info("Advertisement updated for BlueZ 5.82 compatibility");
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in updateAdvertisementForBlueZ582: " + std::string(e.what()));
+    }
+}
+
+// BlueZ ObjectManager 진단
+bool Server::diagnoseBluezObjectManager() {
+    try {
+        Logger::info("Testing ObjectManager.GetManagedObjects...");
+        
+        // GetManagedObjects 메소드를 직접 호출하여 테스트
+        GVariantPtr result = DBusName::getInstance().getConnection().callMethod(
+            DBusName::getInstance().getBusName(),
+            application->getPath(),
+            "org.freedesktop.DBus.ObjectManager",
+            "GetManagedObjects"
+        );
+        
+        if (!result) {
+            Logger::error("GetManagedObjects test failed: No result returned");
+            
+            // D-Bus 인터페이스 재등록 시도
+            Logger::info("Attempting to re-register ObjectManager interface...");
+            application->ensureInterfacesRegistered();
+            
+            return false;
+        }
+        
+        // 결과 검증
+        const char* type_str = g_variant_get_type_string(result.get());
+        Logger::info("GetManagedObjects test successful, returned type: " + std::string(type_str));
+        
+        // 객체 수 확인
+        gsize n_children = g_variant_n_children(result.get());
+        Logger::info("Managed objects contains " + std::to_string(n_children) + " objects");
+        
+        return true;
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in diagnoseBluezObjectManager: " + std::string(e.what()));
+        
+        // D-Bus 인터페이스 재등록 시도
+        Logger::info("Attempting to re-register ObjectManager interface...");
+        application->ensureInterfacesRegistered();
+        
+        return false;
+    }
+}
+
+// BlueZ 상태 진단
+void Server::diagnoseBluezState() {
+    Logger::info("===== BlueZ Diagnostic Information =====");
+    
+    // 1. BlueZ 버전 확인
+    FILE* pipe = popen("bluetoothd --version 2>&1", "r");
+    if (pipe) {
+        char buffer[128];
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            std::string version(buffer);
+            version.pop_back();  // 줄바꿈 제거
+            Logger::info("BlueZ version: " + version);
+        }
+        pclose(pipe);
+    }
+    
+    // 2. 어댑터 상태 확인
+    Logger::info("Adapter status:");
+    system("hciconfig -a | grep -E 'hci|Type|BD Address|Features|Packet type|Link policy|" 
+           "ACL MTU|Name|Class|Service Classes' | sed 's/^/    /'");
+    
+    // 3. 광고 상태 확인
+    Logger::info("Advertisement status:");
+    system("hcitool -i hci0 cmd 0x08 0x0006 | sed 's/^/    /'");
+    
+    // 4. 연결된 장치 확인
+    Logger::info("Connected devices:");
+    auto devices = getConnectedDevices();
+    if (devices.empty()) {
+        Logger::info("    No devices connected");
+    } else {
+        for (const auto& device : devices) {
+            Logger::info("    " + device);
+        }
+    }
+    
+    // 5. D-Bus 객체 계층 구조 출력
+    Logger::info("D-Bus object hierarchy:");
+    
+    // 애플리케이션 정보
+    Logger::info("    Application: " + application->getPath().toString() + 
+                " (Registered: " + (application->isRegistered() ? "Yes" : "No") + ")");
+    
+    // 서비스 정보
+    auto services = application->getServices();
+    Logger::info("    Services count: " + std::to_string(services.size()));
+    
+    for (const auto& service : services) {
+        Logger::info("        Service: " + service->getUuid().toString() + 
+                    " at " + service->getPath().toString() + 
+                    " (Registered: " + (service->isRegistered() ? "Yes" : "No") + ")");
+        
+        // 특성 정보
+        auto characteristics = service->getCharacteristics();
+        Logger::info("        Characteristics count: " + std::to_string(characteristics.size()));
+    }
+    
+    // 6. 광고 정보
+    if (advertisement) {
+        Logger::info("Advertisement information:");
+        Logger::info("    Path: " + advertisement->getPath().toString());
+        Logger::info("    Registered: " + std::string(advertisement->isRegistered() ? "Yes" : "No"));
+        Logger::info("    Local Name: " + advertisement->getLocalName());
+        
+        std::string includesStr = "    Includes: [";
+        auto includes = advertisement->getIncludes();
+        for (const auto& item : includes) {
+            includesStr += item + ", ";
+        }
+        if (!includes.empty()) {
+            includesStr.pop_back();
+            includesStr.pop_back();
+        }
+        includesStr += "]";
+        Logger::info(includesStr);
+    }
+    
+    Logger::info("===== End of BlueZ Diagnostic Information =====");
+}
+
+// 광고 속성 접근자 추가 (헤더에도 추가 필요)
+std::vector<std::string> Server::getAdvertisementIncludes() {
+    if (advertisement) {
+        return advertisement->getIncludes();
+    }
+    return {};
+}
+
+uint16_t Server::getAdvertisementAppearance() {
+    if (advertisement) {
+        return advertisement->getAppearance();
+    }
+    return 0;
+}
+
+bool Server::getAdvertisementIncludeTxPower() {
+    if (advertisement) {
+        return advertisement->getIncludeTxPower();
+    }
+    return false;
+}
+
+std::string Server::getAdvertisementLocalName() {
+    if (advertisement) {
+        return advertisement->getLocalName();
+    }
+    return "";
 }
 
 } // namespace ggk

@@ -33,8 +33,14 @@ sudo dbus-monitor --system "interface=org.bluez.GattManager1"
 sudo dbus-monitor --system "interface=org.freedesktop.DBus.ObjectManager"
 ```
 
-Ping 테스트(모든 DBus 서비스에 기본 제공되는 Ping-Pong 테스트. 이를 호출했을 때 즉시 빈 응답이 오면 서비스와 통신이 되는 것)
+
 ```bash
+# 단순 GetAll Test
+sudo gdbus call --system --dest com.example.ble --object-path /com/example/ble/advertisement --method org.freedesktop.DBus.Properties.GetAll "org.bluez.LEAdvertisement1"
+
+sudo gdbus call --system --dest com.example.ble --object-path /com/example/ble/gatt --method org.freedesktop.DBus.ObjectManager.GetManagedObjects
+
+# Ping 테스트(모든 DBus 서비스에 기본 제공되는 Ping-Pong 테스트. 이를 호출했을 때 즉시 빈 응답이 오면 서비스와 통신이 되는 것)
 dbus-send --system --print-reply --dest=com.example.ble /com/example org.freedesktop.DBus.Peer.Ping
 ```
 

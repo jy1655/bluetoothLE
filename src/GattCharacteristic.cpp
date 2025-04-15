@@ -329,14 +329,16 @@ bool GattCharacteristic::setupDBusInterfaces() {
     }
     
     // Add method handlers
-    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "ReadValue", 
-                  [this](const DBusMethodCall& call) { handleReadValue(call); })) {
+    if (!addMethodWithSignature(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "ReadValue", 
+                  [this](const DBusMethodCall& call) { handleReadValue(call); },
+                  "a{sv}", "ay")) {  // a{sv} 입력(옵션 딕셔너리), ay 출력(바이트 배열)
         Logger::error("Failed to add ReadValue method");
         return false;
     }
     
-    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "WriteValue", 
-                  [this](const DBusMethodCall& call) { handleWriteValue(call); })) {
+    if (!addMethodWithSignature(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "WriteValue", 
+                  [this](const DBusMethodCall& call) { handleWriteValue(call); },
+                  "aya{sv}", "")) {  // aya{sv} 입력(값과 옵션 딕셔너리), 빈 출력
         Logger::error("Failed to add WriteValue method");
         return false;
     }
@@ -372,12 +374,23 @@ void GattCharacteristic::handleReadValue(const DBusMethodCall& call) {
     Logger::debug("ReadValue called for characteristic: " + uuid.toString());
     
     try {
-        // Options parameter handling
-        // In a real implementation, handle options like offset
+        // 옵션 파라미터 처리 (offset 등)
+        // BlueZ 5.82에서는 a{sv} 형태로 옵션이 전달됨
+        uint16_t offset = 0;
+        if (call.parameters) {
+            Logger::debug("ReadValue parameters received: " + std::string(g_variant_get_type_string(call.parameters.get())));
+            // 옵션에서 offset 추출 예시
+            GVariant* offsetVar = g_variant_lookup_value(call.parameters.get(), "offset", G_VARIANT_TYPE_UINT16);
+            if (offsetVar) {
+                offset = g_variant_get_uint16(offsetVar);
+                g_variant_unref(offsetVar);
+                Logger::debug("Read offset: " + std::to_string(offset));
+            }
+        }
         
         std::vector<uint8_t> returnValue;
         
-        // Use callback if available
+        // 콜백 사용
         {
             std::lock_guard<std::mutex> callbackLock(callbackMutex);
             if (readCallback) {
@@ -394,13 +407,18 @@ void GattCharacteristic::handleReadValue(const DBusMethodCall& call) {
                     return;
                 }
             } else {
-                // Use stored value if no callback
+                // 저장된 값 사용
                 std::lock_guard<std::mutex> valueLock(valueMutex);
                 returnValue = value;
             }
         }
         
-        // Create response using makeGVariantPtr pattern
+        // offset 적용 (있는 경우)
+        if (offset > 0 && offset < returnValue.size()) {
+            returnValue.erase(returnValue.begin(), returnValue.begin() + offset);
+        }
+        
+        // 응답 생성
         GVariantPtr resultVariant = Utils::gvariantPtrFromByteArray(returnValue.data(), returnValue.size());
         
         if (!resultVariant) {
@@ -414,7 +432,7 @@ void GattCharacteristic::handleReadValue(const DBusMethodCall& call) {
             return;
         }
         
-        // Return the response
+        // 응답 반환
         g_dbus_method_invocation_return_value(call.invocation.get(), resultVariant.get());
         
     } catch (const std::exception& e) {
@@ -436,11 +454,9 @@ void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
     
     Logger::debug("WriteValue called for characteristic: " + uuid.toString());
     
-    // Check parameters
+    // 파라미터 확인
     if (!call.parameters) {
         Logger::error("Missing parameters for WriteValue");
-        
-        // Return error
         g_dbus_method_invocation_return_error_literal(
             call.invocation.get(),
             G_DBUS_ERROR,
@@ -450,12 +466,53 @@ void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
         return;
     }
     
-    // Extract byte array parameter
+    // BlueZ 5.82에서는 WriteValue(ay options) 형태로 호출됨
+    // 첫 번째는 바이트 배열, 두 번째는 옵션 딕셔너리
     try {
-        std::string byteString = Utils::stringFromGVariantByteArray(call.parameters.get());
-        std::vector<uint8_t> newValue(byteString.begin(), byteString.end());
+        Logger::debug("WriteValue parameters type: " + std::string(g_variant_get_type_string(call.parameters.get())));
         
-        // Use callback if available
+        // 바이트 배열과 옵션 추출
+        GVariant* value_variant = nullptr;
+        GVariant* options_variant = nullptr;
+        
+        // 튜플에서 값과 옵션 추출
+        if (g_variant_is_of_type(call.parameters.get(), G_VARIANT_TYPE("(aya{sv})"))) {
+            value_variant = g_variant_get_child_value(call.parameters.get(), 0);
+            options_variant = g_variant_get_child_value(call.parameters.get(), 1);
+        }
+        // 단일 값만 전달된 경우 (이전 버전 호환)
+        else if (g_variant_is_of_type(call.parameters.get(), G_VARIANT_TYPE("ay"))) {
+            value_variant = g_variant_ref(call.parameters.get());
+        }
+        
+        if (!value_variant) {
+            Logger::error("Cannot extract value from WriteValue parameters");
+            g_dbus_method_invocation_return_error_literal(
+                call.invocation.get(),
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_INVALID_ARGS,
+                "Cannot extract value"
+            );
+            return;
+        }
+        
+        // 옵션 처리 (예: offset)
+        uint16_t offset = 0;
+        if (options_variant) {
+            GVariant* offsetVar = g_variant_lookup_value(options_variant, "offset", G_VARIANT_TYPE_UINT16);
+            if (offsetVar) {
+                offset = g_variant_get_uint16(offsetVar);
+                g_variant_unref(offsetVar);
+                Logger::debug("Write offset: " + std::to_string(offset));
+            }
+            g_variant_unref(options_variant);
+        }
+        
+        // 바이트 배열로 변환
+        std::vector<uint8_t> newValue = Utils::variantToByteArray(value_variant);
+        g_variant_unref(value_variant);
+        
+        // 콜백 사용
         bool success = true;
         {
             std::lock_guard<std::mutex> callbackLock(callbackMutex);
@@ -476,13 +533,24 @@ void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
         }
         
         if (success) {
-            // Successfully processed
-            setValue(newValue);
+            // 처리 성공 - offset 적용해서 값 설정
+            if (offset > 0) {
+                std::lock_guard<std::mutex> valueLock(valueMutex);
+                // 필요시 기존 값 확장
+                if (offset >= value.size()) {
+                    value.resize(offset + newValue.size(), 0);
+                }
+                // offset 위치에 새 값 복사
+                std::copy(newValue.begin(), newValue.end(), value.begin() + offset);
+            } else {
+                // 그냥 전체 값 설정
+                setValue(newValue);
+            }
             
-            // Return empty response
+            // 빈 응답
             g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
         } else {
-            // Callback returned failure
+            // 콜백 실패
             g_dbus_method_invocation_return_error_literal(
                 call.invocation.get(),
                 G_DBUS_ERROR,
@@ -492,7 +560,6 @@ void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
         }
     } catch (const std::exception& e) {
         Logger::error("Failed to parse WriteValue parameters: " + std::string(e.what()));
-        
         g_dbus_method_invocation_return_error_literal(
             call.invocation.get(),
             G_DBUS_ERROR,

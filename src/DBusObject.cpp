@@ -68,7 +68,7 @@ bool DBusObject::addMethodWithSignature(const std::string& interface, const std:
         return false;
     }
     
-    // 인터페이스가 존재하지 않으면 자동 추가
+    // 기존 코드와 동일: 인터페이스 추가 & 핸들러 설정
     auto ifaceIt = interfaces.find(interface);
     if (ifaceIt == interfaces.end()) {
         interfaces[interface] = {};
@@ -76,12 +76,32 @@ bool DBusObject::addMethodWithSignature(const std::string& interface, const std:
     
     methodHandlers[interface][method] = handler;
     
-    // 추가로 시그니처 정보 저장 (DBusXml 클래스가 해당 정보를 사용할 수 있도록)
-    // 이 부분은 코드베이스에 따라 구현이 달라질 수 있습니다.
-    // 간단한 예시를 들자면:
+    // 시그니처 정보 추가
+    std::vector<DBusArgument> inArgs;
+    std::vector<DBusArgument> outArgs;
     
-    // XML 파일을 사용하는 코드베이스인 경우 시그니처 정보를 적절히 전달
-    // 또는 메서드 메타데이터를 저장하는 맵 추가
+    // 입력 인자 시그니처가 있으면 추가
+    if (!inSignature.empty()) {
+        inArgs.push_back(DBusArgument(
+            inSignature,         // 시그니처
+            "options",           // 인자 이름 (일반적인 이름)
+            "in",                // 방향
+            "Method options"     // 설명
+        ));
+    }
+    
+    // 출력 인자 시그니처가 있으면 추가
+    if (!outSignature.empty()) {
+        outArgs.push_back(DBusArgument(
+            outSignature,        // 시그니처
+            "value",             // 인자 이름 (일반적인 이름)
+            "out",               // 방향
+            "Return value"       // 설명
+        ));
+    }
+    
+    // 인자 정보 저장
+    methodSignatures[interface][method] = std::make_pair(inArgs, outArgs);
     
     Logger::debug("Added method with signature: " + interface + "." + method + 
                 " (in: " + inSignature + ", out: " + outSignature + ") " + 

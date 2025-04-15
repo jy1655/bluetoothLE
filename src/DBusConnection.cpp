@@ -91,33 +91,33 @@ GVariantPtr DBusConnection::callMethod(
         return makeNullGVariantPtr();
     }
     
-    // Retry configuration
+    // 재시도 설정
     const int MAX_RETRIES = 3;
-    const int RETRY_DELAY_MS = 500;  // 0.5 second retry interval
+    const int RETRY_DELAY_MS = 500;  // 0.5초 재시도 간격
     GError* error = nullptr;
     GVariantType* replyType = nullptr;
     
-    // Use RAII for cleaning up GVariantType if needed
+    // RAII로 GVariantType 정리
     std::unique_ptr<GVariantType, void(*)(GVariantType*)> replyTypeGuard(nullptr, 
         [](GVariantType* p) { if (p) g_variant_type_free(p); });
     
     try {
-        // Validate reply signature if provided
+        // 응답 시그니처 검증
         if (!replySignature.empty()) {
             if (!g_variant_type_string_is_valid(replySignature.c_str())) {
                 Logger::error("Invalid reply signature: " + replySignature);
                 return makeNullGVariantPtr();
             }
             replyType = g_variant_type_new(replySignature.c_str());
-            replyTypeGuard.reset(replyType);  // Ensure cleanup
+            replyTypeGuard.reset(replyType);  // 정리 보장
         }
         
-        // Log the method call
+        // 메소드 호출 로그
         Logger::debug("Calling D-Bus method: " + destination + 
             " " + path.toString() + " " + 
             interface + "." + method);
         
-        // Implement retry loop
+        // 재시도 루프 구현
         GVariant* result = nullptr;
         bool success = false;
         std::string lastErrorMessage;
@@ -126,16 +126,16 @@ GVariantPtr DBusConnection::callMethod(
             if (attempt > 0) {
                 Logger::info("Retrying D-Bus call (attempt " + std::to_string(attempt+1) + 
                            " of " + std::to_string(MAX_RETRIES) + "): " + interface + "." + method);
-                // Reset error
+                // 오류 초기화
                 if (error) {
                     g_error_free(error);
                     error = nullptr;
                 }
-                // Delay before retry
+                // 재시도 전 대기
                 usleep(RETRY_DELAY_MS * 1000);
             }
             
-            // Call the method
+            // 메소드 호출
             result = g_dbus_connection_call_sync(
                 connection.get(),
                 destination.c_str(),
@@ -145,41 +145,41 @@ GVariantPtr DBusConnection::callMethod(
                 parameters ? parameters.get() : nullptr,
                 replyType,
                 G_DBUS_CALL_FLAGS_NONE,
-                timeoutMs > 0 ? timeoutMs : 30000,  // Default 30 second timeout
+                timeoutMs > 0 ? timeoutMs : 30000,  // 기본 30초 타임아웃
                 nullptr,
                 &error
             );
             
-            // End loop if successful
+            // 성공 시 루프 종료
             if (result) {
                 success = true;
                 break;
             }
             
-            // Analyze error (don't retry certain errors)
+            // 오류 분석 (특정 오류는 재시도하지 않음)
             if (error) {
                 lastErrorMessage = error->message ? error->message : "Unknown error";
                 
-                // Don't retry specific errors (e.g., non-existent service/method)
+                // 특정 오류는 재시도하지 않음
                 if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
                     g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) ||
                     g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT) ||
                     g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_INTERFACE)) {
                     
                     Logger::error("D-Bus method call failed with non-retriable error: " + lastErrorMessage);
-                    break;  // Stop retrying
+                    break;  // 재시도 중단
                 }
                 
                 Logger::warn("D-Bus method call failed (will retry): " + lastErrorMessage);
             }
         }
         
-        // Check for final error
+        // 최종 오류 확인
         if (!success && error) {
             std::string errorMessage = error->message ? error->message : "Unknown error";
             Logger::error("D-Bus method call failed: " + errorMessage);
             
-            // Categorize common errors for better handling
+            // 공통 오류 분류
             if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN)) {
                 Logger::error("D-Bus service not available: " + destination);
             } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD)) {
@@ -194,15 +194,15 @@ GVariantPtr DBusConnection::callMethod(
             return makeNullGVariantPtr();
         }
         
-        // Return the result (if any)
+        // 결과 반환 (있는 경우)
         if (result) {
-            // Case 1: 이미 알고 있는 타입이 딕셔너리인데 튜플을 받은 경우
+            // 특별 케이스: BlueZ 5.82는 튜플로 응답을 감싸기도 함
             if (replyType && 
                 g_variant_type_equal(replyType, G_VARIANT_TYPE("a{oa{sa{sv}}}")) && 
                 g_variant_is_of_type(result, G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
                     
                 Logger::debug("Detected tuple-wrapped dictionary from BlueZ 5.82+ (with type)");
-                // Extract the dictionary from the tuple
+                // 튜플에서 딕셔너리 추출
                 GVariant* extracted = g_variant_get_child_value(result, 0);
                 g_variant_unref(result);
                 
@@ -210,12 +210,12 @@ GVariantPtr DBusConnection::callMethod(
                     return makeGVariantPtr(extracted, true);
                 }
             }
-            // Case 2: replyType이 없지만 GetManagedObjects 결과 포맷인 경우
+            // 특별 케이스: replyType 없이 GetManagedObjects 결과 형식
             else if (!replyType && 
                     g_variant_is_of_type(result, G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
                 
                 Logger::debug("Detected tuple-wrapped dictionary from BlueZ 5.82+ (no expected type)");
-                // Extract the dictionary from the tuple
+                // 튜플에서 딕셔너리 추출
                 GVariant* extracted = g_variant_get_child_value(result, 0);
                 g_variant_unref(result);
                 
@@ -224,7 +224,7 @@ GVariantPtr DBusConnection::callMethod(
                 }
             }
             
-            // Normal case - return the result as-is
+            // 일반 케이스 - 결과 그대로 반환
             return makeGVariantPtr(result, true);
         }
         
@@ -488,46 +488,106 @@ void DBusConnection::handleMethodCall(
     GDBusMethodInvocation* invocation,
     gpointer userData)
 {
+    // 디버그 로그 추가
+    Logger::debug("D-Bus method call received: " + 
+                 (interfaceName ? std::string(interfaceName) : "(null)") + "." + 
+                 (methodName ? std::string(methodName) : "(null)") + 
+                 " on " + (objectPath ? std::string(objectPath) : "(null)"));
+    
     HandlerData* data = static_cast<HandlerData*>(userData);
     
-    // 인터페이스 및 메서드 핸들러 찾기
-    auto ifaceIt = data->methodHandlers.find(interfaceName);
-    if (ifaceIt == data->methodHandlers.end()) {
-        g_dbus_method_invocation_return_error(invocation, 
-            g_quark_from_static_string(DBusError::ERROR_UNKNOWN_INTERFACE),
-            0, "Unknown interface: %s", interfaceName);
+    if (!data) {
+        Logger::error("Invalid user data in handleMethodCall");
+        g_dbus_method_invocation_return_error_literal(invocation, 
+            G_DBUS_ERROR,
+            G_DBUS_ERROR_FAILED,
+            "Internal error: Invalid handler data");
         return;
     }
     
-    auto methodIt = ifaceIt->second.find(methodName);
-    if (methodIt == ifaceIt->second.end()) {
-        g_dbus_method_invocation_return_error(invocation, 
-            g_quark_from_static_string(DBusError::ERROR_UNKNOWN_METHOD),
-            0, "Unknown method: %s.%s", interfaceName, methodName);
-        return;
-    }
-    
-    // 메서드 호출 처리
-    DBusMethodCall call(
-        sender ? sender : "",
-        interfaceName ? interfaceName : "",
-        methodName ? methodName : "",
-        parameters ? makeGVariantPtr(parameters, false) : makeNullGVariantPtr(),
-        invocation ? makeGDBusMethodInvocationPtr(g_object_ref(invocation)) : makeNullGDBusMethodInvocationPtr()
-    );
-
     try {
-        methodIt->second(call);
+        // 인터페이스 및 메소드 핸들러 찾기
+        auto ifaceIt = data->methodHandlers.find(interfaceName);
+        if (ifaceIt == data->methodHandlers.end()) {
+            Logger::warn("Unknown interface called: " + std::string(interfaceName ? interfaceName : "(null)"));
+            g_dbus_method_invocation_return_error_literal(invocation, 
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_UNKNOWN_INTERFACE,
+                "Unknown interface");
+            return;
+        }
+        
+        auto methodIt = ifaceIt->second.find(methodName);
+        if (methodIt == ifaceIt->second.end()) {
+            Logger::warn("Unknown method called: " + std::string(methodName ? methodName : "(null)"));
+            g_dbus_method_invocation_return_error_literal(invocation, 
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_UNKNOWN_METHOD,
+                "Unknown method");
+            return;
+        }
+        
+        // 매개변수 유효성 검사
+        bool parametersValid = true;
+        if (parameters) {
+            const char* type_str = g_variant_get_type_string(parameters);
+            parametersValid = type_str != nullptr;
+        }
+        
+        if (!parametersValid) {
+            Logger::error("Invalid parameters in method call");
+            g_dbus_method_invocation_return_error_literal(invocation, 
+                G_DBUS_ERROR,
+                G_DBUS_ERROR_INVALID_ARGS,
+                "Invalid parameters format");
+            return;
+        }
+        
+        // 메소드 호출 객체 생성 (소유권 이전 주의)
+        DBusMethodCall call(
+            sender ? sender : "",
+            interfaceName ? interfaceName : "",
+            methodName ? methodName : "",
+            parameters ? makeGVariantPtr(g_variant_ref(parameters), true) : makeNullGVariantPtr(),
+            invocation ? makeGDBusMethodInvocationPtr(g_object_ref(invocation)) : makeNullGDBusMethodInvocationPtr()
+        );
+        
+        // ObjectManager.GetManagedObjects는 중요하므로 특별 로그
+        if (interfaceName && methodName && 
+            std::string(interfaceName) == "org.freedesktop.DBus.ObjectManager" &&
+            std::string(methodName) == "GetManagedObjects") {
+            Logger::info("Handling ObjectManager.GetManagedObjects request from: " + 
+                        std::string(sender ? sender : "(unknown)"));
+        }
+
+        // 핸들러 호출
+        try {
+            Logger::trace("Executing method handler");
+            methodIt->second(call);
+            Logger::trace("Method handler completed");
+        } catch (const std::exception& e) {
+            Logger::error("Exception in method handler: " + std::string(e.what()));
+            
+            // 핸들러에서 응답하지 않은 경우에만 오류 반환
+            if (invocation && !g_dbus_method_invocation_get_connection(invocation)) {
+                g_dbus_method_invocation_return_error_literal(invocation, 
+                    G_DBUS_ERROR,
+                    G_DBUS_ERROR_FAILED,
+                    e.what());
+            }
+        }
     } catch (const std::exception& e) {
-        Logger::error("Exception in D-Bus method handler: " + std::string(e.what()));
-        g_dbus_method_invocation_return_error(invocation, 
-            g_quark_from_static_string(DBusError::ERROR_FAILED),
-            0, "Internal error: %s", e.what());
+        Logger::error("Exception in handleMethodCall: " + std::string(e.what()));
+        g_dbus_method_invocation_return_error_literal(invocation, 
+            G_DBUS_ERROR,
+            G_DBUS_ERROR_FAILED,
+            e.what());
     } catch (...) {
-        Logger::error("Unknown exception in D-Bus method handler");
-        g_dbus_method_invocation_return_error(invocation, 
-            g_quark_from_static_string(DBusError::ERROR_FAILED),
-            0, "Unknown internal error");
+        Logger::error("Unknown exception in handleMethodCall");
+        g_dbus_method_invocation_return_error_literal(invocation, 
+            G_DBUS_ERROR,
+            G_DBUS_ERROR_FAILED,
+            "Unknown internal error");
     }
 }
 

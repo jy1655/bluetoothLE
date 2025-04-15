@@ -186,6 +186,18 @@ public:
      * @return true if the device is connected, false otherwise
      */
     bool isDeviceConnected(const std::string& deviceAddress) const;
+
+    bool diagnoseBluezObjectManager();
+    void diagnoseBluezState();
+    
+    // BlueZ 5.82 호환성 메소드
+    void updateAdvertisementForBlueZ582();
+    void diagnosticSummary();
+    // 광고 속성 접근자
+    std::vector<std::string> getAdvertisementIncludes();
+    std::string getAdvertisementLocalName();
+    uint16_t getAdvertisementAppearance();
+    bool getAdvertisementIncludeTxPower();
     
 private:
     // Core BLE components
