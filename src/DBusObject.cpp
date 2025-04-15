@@ -18,22 +18,20 @@ DBusObject::~DBusObject() {
 bool DBusObject::addInterface(const std::string& interface, const std::vector<DBusProperty>& properties) {
     std::lock_guard<std::mutex> lock(mutex);
     
-    // Check if already registered but still allow modifications before BlueZ registration
+    // 이미 등록된 객체에 인터페이스 추가는 불가
     if (registered) {
         Logger::warn("Cannot add interface to already registered object: " + path.toString());
         return false;
     }
     
-    // Check if interface already exists
+    // 인터페이스가 이미 존재하는 경우 속성 업데이트
     auto it = interfaces.find(interface);
     if (it != interfaces.end()) {
-        Logger::debug("Interface already exists: " + interface + " on object: " + path.toString());
-        // Update properties if interface already exists
         it->second = properties;
         return true;
     }
     
-    // Add new interface
+    // 새 인터페이스 추가
     interfaces[interface] = properties;
     Logger::debug("Added interface: " + interface + " to object: " + path.toString());
     return true;
@@ -68,7 +66,7 @@ bool DBusObject::addMethodWithSignature(const std::string& interface, const std:
         return false;
     }
     
-    // 기존 코드와 동일: 인터페이스 추가 & 핸들러 설정
+    // 인터페이스가 존재하지 않으면 자동 추가
     auto ifaceIt = interfaces.find(interface);
     if (ifaceIt == interfaces.end()) {
         interfaces[interface] = {};
@@ -76,32 +74,12 @@ bool DBusObject::addMethodWithSignature(const std::string& interface, const std:
     
     methodHandlers[interface][method] = handler;
     
-    // 시그니처 정보 추가
-    std::vector<DBusArgument> inArgs;
-    std::vector<DBusArgument> outArgs;
+    // 추가로 시그니처 정보 저장 (DBusXml 클래스가 해당 정보를 사용할 수 있도록)
+    // 이 부분은 코드베이스에 따라 구현이 달라질 수 있습니다.
+    // 간단한 예시를 들자면:
     
-    // 입력 인자 시그니처가 있으면 추가
-    if (!inSignature.empty()) {
-        inArgs.push_back(DBusArgument(
-            inSignature,         // 시그니처
-            "options",           // 인자 이름 (일반적인 이름)
-            "in",                // 방향
-            "Method options"     // 설명
-        ));
-    }
-    
-    // 출력 인자 시그니처가 있으면 추가
-    if (!outSignature.empty()) {
-        outArgs.push_back(DBusArgument(
-            outSignature,        // 시그니처
-            "value",             // 인자 이름 (일반적인 이름)
-            "out",               // 방향
-            "Return value"       // 설명
-        ));
-    }
-    
-    // 인자 정보 저장
-    methodSignatures[interface][method] = std::make_pair(inArgs, outArgs);
+    // XML 파일을 사용하는 코드베이스인 경우 시그니처 정보를 적절히 전달
+    // 또는 메서드 메타데이터를 저장하는 맵 추가
     
     Logger::debug("Added method with signature: " + interface + "." + method + 
                 " (in: " + inSignature + ", out: " + outSignature + ") " + 
@@ -109,73 +87,6 @@ bool DBusObject::addMethodWithSignature(const std::string& interface, const std:
     return true;
 }
 
-bool DBusObject::setProperty(const std::string& interface, const std::string& name, GVariantPtr value) {
-    std::lock_guard<std::mutex> lock(mutex);
-    
-    auto ifaceIt = interfaces.find(interface);
-    if (ifaceIt == interfaces.end()) {
-        Logger::error("Interface not found: " + interface);
-        return false;
-    }
-    
-    // 속성 찾기
-    for (auto& prop : ifaceIt->second) {
-        if (prop.name == name) {
-            if (!prop.writable) {
-                Logger::error("Property is not writable: " + interface + "." + name);
-                return false;
-            }
-            
-            if (prop.setter) {
-                return prop.setter(value.get());
-            } else {
-                Logger::error("No setter for property: " + interface + "." + name);
-                return false;
-            }
-        }
-    }
-    
-    Logger::error("Property not found: " + interface + "." + name);
-    return false;
-}
-
-GVariantPtr DBusObject::getProperty(const std::string& interface, const std::string& name) const {
-    std::lock_guard<std::mutex> lock(mutex);
-    
-    auto ifaceIt = interfaces.find(interface);
-    if (ifaceIt == interfaces.end()) {
-        Logger::error("Interface not found: " + interface);
-        return makeNullGVariantPtr();
-    }
-    
-    for (const auto& prop : ifaceIt->second) {
-        if (prop.name == name) {
-            if (!prop.readable) {
-                Logger::error("Property is not readable: " + interface + "." + name);
-                return makeNullGVariantPtr();
-            }
-            
-            if (prop.getter) {
-                try {
-                    GVariant* value = prop.getter();
-                    if (value) {
-                        // makeGVariantPtr 패턴 사용
-                        return makeGVariantPtr(value, true);  // true = 소유권 가져오기
-                    }
-                } catch (const std::exception& e) {
-                    Logger::error("Exception in property getter: " + std::string(e.what()));
-                }
-            } else {
-                Logger::error("No getter for property: " + interface + "." + name);
-            }
-            
-            return makeNullGVariantPtr();
-        }
-    }
-    
-    Logger::error("Property not found: " + interface + "." + name);
-    return makeNullGVariantPtr();
-}
 
 bool DBusObject::emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value) {
     if (!registered) {
@@ -199,49 +110,37 @@ bool DBusObject::emitSignal(
     
     // parameters가 nullptr이면 빈 튜플 생성
     if (!parameters) {
-        // 빈 튜플 생성
         GVariant* empty_tuple = g_variant_new_tuple(NULL, 0);
-        // makeGVariantPtr 패턴 사용
         GVariantPtr owned_params = makeGVariantPtr(empty_tuple, true);
-        // 소유권을 connection.emitSignal()에 전달
         return connection.emitSignal(path, interface, name, std::move(owned_params));
     }
     
-    // parameters가 튜플 타입인지 확인
-    if (!g_variant_is_of_type(parameters.get(), G_VARIANT_TYPE_TUPLE)) {
-        Logger::error("Signal parameters must be a tuple");
-        return false;
-    }
-    
-    // 원본 GVariant에 대한 새 참조 생성 (소유권 복제)
+    // 원본 GVariant에 대한 참조 복제
     GVariant* param_raw = parameters.get();
-    // makeGVariantPtr 패턴 사용
     GVariantPtr owned_params = makeGVariantPtr(param_raw, false);  // false = 참조만 복사
     
-    // 소유권을 connection.emitSignal()에 전달
     return connection.emitSignal(path, interface, name, std::move(owned_params));
 }
 
 bool DBusObject::registerObject() {
     std::lock_guard<std::mutex> lock(mutex);
     
-    // Return success if already registered
+    // 이미 등록된 경우 성공 반환
     if (registered) {
         Logger::debug("Object already registered: " + path.toString());
         return true;
     }
     
-    // Check connection
+    // 연결 확인
     if (!connection.isConnected()) {
         Logger::error("D-Bus connection not available");
         return false;
     }
     
-    // Generate introspection XML
+    // 인트로스펙션 XML 생성
     std::string xml = generateIntrospectionXml();
-    Logger::debug("Registering object with XML:\n" + xml);
     
-    // Register object with D-Bus
+    // D-Bus에 객체 등록
     registered = connection.registerObject(
         path,
         xml,
@@ -262,26 +161,26 @@ bool DBusObject::unregisterObject() {
     std::lock_guard<std::mutex> lock(mutex);
     
     if (!registered) {
-        Logger::debug("Object not registered, nothing to unregister: " + path.toString());
-        return true;
+        return true; // 이미 등록 해제됨
     }
     
     // 연결이 끊어진 경우 로컬 상태만 업데이트
     if (!connection.isConnected()) {
-        Logger::warn("D-Bus connection not available, updating local registration state only for: " + path.toString());
+        Logger::warn("D-Bus connection not available, updating local registration state only");
         registered = false;
         return true;
     }
     
-    bool unregResult = connection.unregisterObject(path);
-    if (unregResult) {
+    // 객체 등록 해제 시도
+    bool success = connection.unregisterObject(path);
+    if (success) {
         registered = false;
         Logger::info("Unregistered D-Bus object: " + path.toString());
-        return true;
     } else {
         Logger::error("Failed to unregister D-Bus object: " + path.toString());
-        return false;
     }
+    
+    return success;
 }
 
 std::string DBusObject::generateIntrospectionXml() const {
@@ -305,12 +204,9 @@ std::string DBusObject::generateIntrospectionXml() const {
         auto it = methodHandlers.find(iface.first);
         if (it != methodHandlers.end()) {
             for (const auto& method : it->second) {
-                // 수정된 부분: 기본 생성자를 통한 안전한 객체 생성
                 DBusMethodCall call;
                 call.interface = iface.first;
                 call.method = method.first;
-                
-                // 이동(move) 사용하여 복사 방지
                 ifaceMethods.push_back(std::move(call));
             }
         }

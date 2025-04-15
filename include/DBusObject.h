@@ -15,12 +15,9 @@ namespace ggk {
  * @brief D-Bus 객체 기본 클래스
  * 
  * D-Bus 인터페이스, 메서드, 속성을 관리하고 D-Bus 시스템에 객체를 등록하는
- * 기본 클래스입니다. 대부분의 D-Bus 객체(GattService, GattCharacteristic 등)는
- * 이 클래스를 상속합니다.
+ * 기본 클래스입니다.
  */
 class DBusObject {
-    friend class DBusObjectTest;
-
 public:
     /**
      * @brief 생성자
@@ -56,25 +53,7 @@ public:
      */
     bool addMethod(const std::string& interface, const std::string& method, DBusConnection::MethodHandler handler);
     bool addMethodWithSignature(const std::string& interface, const std::string& method, DBusConnection::MethodHandler handler, const std::string& inSignature = "", const std::string& outSignature = "");
-    /**
-     * @brief 속성 설정
-     * 
-     * @param interface 인터페이스 이름
-     * @param name 속성 이름
-     * @param value 설정할 값
-     * @return 성공 여부
-     */
-     bool setProperty(const std::string& interface, const std::string& name, GVariantPtr value);
-    
-    /**
-     * @brief 속성 획득
-     * 
-     * @param interface 인터페이스 이름
-     * @param name 속성 이름
-     * @return 속성 값 (없거나 실패 시 null)
-     */
-     GVariantPtr getProperty(const std::string& interface, const std::string& name) const;
-    
+
     /**
      * @brief 속성 변경 시그널 발생
      * 
@@ -83,7 +62,7 @@ public:
      * @param value 변경된 값
      * @return 성공 여부
      */
-     bool emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value);
+    bool emitPropertyChanged(const std::string& interface, const std::string& name, GVariantPtr value);
     
     /**
      * @brief 시그널 발생
@@ -93,7 +72,7 @@ public:
      * @param parameters 시그널 매개변수 (기본값: null)
      * @return 성공 여부
      */
-     bool emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters = makeNullGVariantPtr());
+    bool emitSignal(const std::string& interface, const std::string& name, GVariantPtr parameters = makeNullGVariantPtr());
     
     /**
      * @brief D-Bus에 객체 등록
@@ -149,8 +128,6 @@ private:
     // 인터페이스 관리
     std::map<std::string, std::vector<DBusProperty>> interfaces;                            ///< 인터페이스 -> 속성 맵
     std::map<std::string, std::map<std::string, DBusConnection::MethodHandler>> methodHandlers;  ///< 인터페이스 -> 메서드 -> 핸들러 맵
-    std::map<std::string, std::map<std::string, std::pair<std::vector<DBusArgument>, std::vector<DBusArgument>>>> methodSignatures;
-
 };
 
 } // namespace ggk

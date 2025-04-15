@@ -12,12 +12,12 @@
 namespace ggk {
 
 /**
- * @brief Class for BLE advertising management
+ * @brief BLE 광고 관리 클래스
  */
 class GattAdvertisement : public DBusObject {
 public:
     /**
-     * @brief Advertisement type enum
+     * @brief 광고 타입 열거형
      */
     enum class AdvertisementType {
         BROADCAST,
@@ -25,11 +25,11 @@ public:
     };
     
     /**
-     * @brief Constructor
+     * @brief 생성자
      * 
-     * @param connection D-Bus connection
-     * @param path Object path
-     * @param type Advertisement type
+     * @param connection D-Bus 연결
+     * @param path 객체 경로
+     * @param type 광고 타입 (기본값: PERIPHERAL)
      */
     GattAdvertisement(
         DBusConnection& connection,
@@ -38,152 +38,142 @@ public:
     );
 
     /**
-     * @brief Constructor using DBusName singleton
+     * @brief DBusName 싱글톤을 사용하는 생성자
      * 
-     * @param path Object path
+     * @param path 객체 경로
      */
     GattAdvertisement(const DBusObjectPath& path);
     
     /**
-     * @brief Destructor
+     * @brief 소멸자
      */
     virtual ~GattAdvertisement() = default;
     
     /**
-     * @brief Add service UUID
+     * @brief 서비스 UUID 추가
      * 
-     * @param uuid Service UUID
+     * @param uuid 서비스 UUID
      */
     void addServiceUUID(const GattUuid& uuid);
     
     /**
-     * @brief Add multiple service UUIDs
+     * @brief 여러 서비스 UUID 추가
      * 
-     * @param uuids List of service UUIDs
+     * @param uuids 서비스 UUID 목록
      */
     void addServiceUUIDs(const std::vector<GattUuid>& uuids);
     
     /**
-     * @brief Set manufacturer data
+     * @brief 제조사 데이터 설정
      * 
-     * @param manufacturerId Manufacturer ID
-     * @param data Manufacturer-specific data
+     * @param manufacturerId 제조사 ID
+     * @param data 제조사별 데이터
      */
     void setManufacturerData(uint16_t manufacturerId, const std::vector<uint8_t>& data);
     
     /**
-     * @brief Set service data
+     * @brief 서비스 데이터 설정
      * 
-     * @param serviceUuid Service UUID
-     * @param data Service-specific data
+     * @param serviceUuid 서비스 UUID
+     * @param data 서비스별 데이터
      */
     void setServiceData(const GattUuid& serviceUuid, const std::vector<uint8_t>& data);
     
     /**
-     * @brief Set local name
+     * @brief 로컬 이름 설정
      * 
-     * @param name Local name to advertise
+     * @param name 로컬 이름
      */
     void setLocalName(const std::string& name);
     
     /**
-     * @brief Set appearance
+     * @brief 조회 가능 여부 설정
      * 
-     * @param appearance Appearance value
-     */
-    void setAppearance(uint16_t appearance);
-    
-    /**
-     * @brief Set advertisement duration
-     * 
-     * @param duration Duration in seconds
-     */
-    void setDuration(uint16_t duration);
-    
-    /**
-     * @brief Set TX power inclusion
-     * 
-     * @param include Whether to include TX power
-     * @deprecated Use addInclude("tx-power") instead for BlueZ 5.82+
-     */
-    void setIncludeTxPower(bool include);
-
-    /**
-     * @brief Set whether the advertisement is discoverable
-     * 
-     * @param discoverable Whether the advertisement is discoverable
+     * @param discoverable 조회 가능 여부
      */
     void setDiscoverable(bool discoverable);
     
     /**
-     * @brief Add an item to Includes array (BlueZ 5.82+)
+     * @brief 외관 코드 설정
      * 
-     * @param item Item to include in advertisement ("tx-power", "appearance", "local-name")
+     * @param appearance 외관 코드
+     */
+    void setAppearance(uint16_t appearance);
+    
+    /**
+     * @brief 광고 지속 시간 설정
+     * 
+     * @param duration 지속 시간(초)
+     */
+    void setDuration(uint16_t duration);
+    
+    /**
+     * @brief TX 파워 포함 여부 설정
+     * 
+     * @param include TX 파워 포함 여부
+     */
+    void setIncludeTxPower(bool include);
+
+    /**
+     * @brief 광고에 포함할 항목 추가 (BlueZ 5.82+)
+     * 
+     * @param item 포함할 항목 ("tx-power", "appearance", "local-name")
      */
     void addInclude(const std::string& item);
     
     /**
-     * @brief Set the Includes array (BlueZ 5.82+)
+     * @brief 포함할 항목 목록 설정 (BlueZ 5.82+)
      * 
-     * @param items List of items to include in advertisement
+     * @param items 포함할 항목 목록
      */
     void setIncludes(const std::vector<std::string>& items);
     
     /**
-     * @brief Register with BlueZ
+     * @brief BlueZ에 광고 등록
      * 
-     * @return Success status
+     * @return 성공 여부
      */
     bool registerWithBlueZ();
     
     /**
-     * @brief Unregister from BlueZ
+     * @brief BlueZ에서 광고 등록 해제
      * 
-     * @return Success status
+     * @return 성공 여부
      */
     bool unregisterFromBlueZ();
     
     /**
-     * @brief Check if registered
+     * @brief BlueZ 등록 상태 확인
      */
-    bool isRegistered() const { return registered; }
+    bool isRegisteredWithBlueZ() const { return registered; }
 
     /**
-     * @brief Setup D-Bus interfaces
+     * @brief D-Bus 인터페이스 설정
      * 
-     * @return Success status
+     * @return 성공 여부
      */
     bool setupDBusInterfaces();
     
     /**
-     * @brief Handle Release method call
+     * @brief Release 메서드 처리
      * 
-     * @param call Method call info
+     * @param call 메서드 호출 정보
      */
     void handleRelease(const DBusMethodCall& call);
     
     /**
-     * @brief Get advertisement state as string
-     * 
-     * @return Debug string
+     * @brief BlueZ 5.82 호환성 확보
      */
-    std::string getAdvertisementStateString() const;
-    
-    /**
-     * @brief Build raw advertising data
-     * 
-     * @return Binary advertising data
-     */
-    std::vector<uint8_t> buildRawAdvertisingData() const;
-
     void ensureBlueZ582Compatibility();
+    
+    // 속성 접근자
     const std::vector<std::string>& getIncludes() const { return includes; }
     uint16_t getAppearance() const { return appearance; }
     const std::string& getLocalName() const { return localName; }
     bool getIncludeTxPower() const { return includeTxPower; }
 
 private:
-    // D-Bus property getters
+    // D-Bus 속성 취득 함수
     GVariant* getTypeProperty();
     GVariant* getServiceUUIDsProperty();
     GVariant* getManufacturerDataProperty();
@@ -195,13 +185,7 @@ private:
     GVariant* getDiscoverableProperty();
     GVariant* getIncludesProperty();
     
-    // Helper methods
-    bool registerWithDBusApi();
-    bool cleanupExistingAdvertisements();
-    bool activateAdvertising();
-    bool activateAdvertisingFallback();
-    
-    // Properties
+    // 속성
     AdvertisementType type;
     std::vector<GattUuid> serviceUUIDs;
     std::map<uint16_t, std::vector<uint8_t>> manufacturerData;
@@ -212,11 +196,7 @@ private:
     bool includeTxPower;
     bool discoverable;
     std::vector<std::string> includes;
-    bool registered;
-    
-    // Retry constants
-    static constexpr int MAX_REGISTRATION_RETRIES = 3;
-    static constexpr int BASE_RETRY_WAIT_MS = 1000;
+    bool registered;  // BlueZ 등록 상태
 };
 
 } // namespace ggk

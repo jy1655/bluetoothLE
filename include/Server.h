@@ -16,92 +16,70 @@
 namespace ggk {
 
 /**
- * @brief Main BLE peripheral server class that manages the entire BLE stack
+ * @brief BLE 주변장치 서버 클래스
  * 
- * The Server class is responsible for:
- * - Initializing the BLE hardware via BlueZ D-Bus API
- * - Managing GATT services (via GattApplication)
- * - Handling BLE advertisements (via GattAdvertisement)
- * - Maintaining the event loop for BLE events
- * - Managing device connections via ConnectionManager
+ * BlueZ를 통해 BLE 주변장치를 구현하는 서버 클래스입니다.
+ * GATT 서비스, 특성, 광고를 관리합니다.
  */
 class Server {
 public:
     /**
-     * @brief Constructor
-     * 
-     * Creates a Server instance with default configuration
+     * @brief 생성자
      */
     Server();
     
     /**
-     * @brief Destructor
-     * 
-     * Ensures proper cleanup of BLE resources
+     * @brief 소멸자
      */
     ~Server();
     
     /**
-     * @brief Initializes the BLE stack
+     * @brief BLE 스택 초기화
      * 
-     * Sets up BlueZ, D-Bus connection, GATT application,
-     * advertisement objects, and ConnectionManager
-     * 
-     * @param deviceName The name to advertise for this BLE peripheral
-     * @return true if initialization was successful, false otherwise
+     * @param deviceName 장치 이름
+     * @return 초기화 성공 여부
      */
     bool initialize(const std::string& deviceName = "BLEDevice");
     
     /**
-     * @brief Starts the BLE peripheral
+     * @brief BLE 서버 시작
      * 
-     * Enables the BLE controller, starts advertising, and registers the
-     * GATT application with BlueZ
-     * 
-     * @param secureMode Whether to enable secure connections and pairing
-     * @return true if the server started successfully, false otherwise
+     * @param secureMode 보안 연결 사용 여부
+     * @return 시작 성공 여부
      */
     bool start(bool secureMode = false);
     
     /**
-     * @brief Stops the BLE peripheral
-     * 
-     * Stops advertising, unregisters from BlueZ, and disables the BLE controller
+     * @brief BLE 서버 중지
      */
     void stop();
     
     /**
-     * @brief Adds a GATT service to the server
+     * @brief 서비스 추가
      * 
-     * Note: Services can only be added before the server is started.
-     * All services, characteristics, and descriptors must be fully
-     * configured before starting the server.
-     * 
-     * @param service Pointer to the service to add
-     * @return true if the service was added successfully, false otherwise
+     * @param service 추가할 서비스
+     * @return 추가 성공 여부
      */
     bool addService(GattServicePtr service);
     
     /**
-     * @brief Creates a new GATT service
+     * @brief 서비스 생성
      * 
-     * Helper method to create a new service with the appropriate connection and path
-     * 
-     * @param uuid UUID of the service
-     * @param isPrimary Whether this is a primary service
-     * @return Shared pointer to the created service
+     * @param uuid 서비스 UUID
+     * @param isPrimary 주 서비스 여부
+     * @return 생성된 서비스
      */
     GattServicePtr createService(const GattUuid& uuid, bool isPrimary = true);
     
     /**
-     * @brief Configures the advertisement settings
+     * @brief 광고 설정
      * 
-     * @param name Local name to advertise (if empty, uses device name)
-     * @param serviceUuids List of service UUIDs to include in advertisement
-     * @param manufacturerId Manufacturer ID for advertisement data (0 for none)
-     * @param manufacturerData Data to include with manufacturer ID
-     * @param includeTxPower Whether to include TX power in advertisement
-     * @param timeout Advertisement timeout in seconds (0 for no timeout)
+     * @param name 광고할 이름
+     * @param serviceUuids 광고할 서비스 UUID 목록
+     * @param manufacturerId 제조사 ID
+     * @param manufacturerData 제조사 데이터
+     * @param includeTxPower TX 파워 포함 여부
+     * @param timeout 광고 제한 시간(초)
      */
     void configureAdvertisement(
         const std::string& name = "",
@@ -113,49 +91,47 @@ public:
     );
     
     /**
-     * @brief Runs the BLE event loop
-     * 
-     * This method blocks until stop() is called
+     * @brief 이벤트 루프 실행 (차단)
      */
     void run();
     
     /**
-     * @brief Non-blocking version that runs the event loop in a separate thread
+     * @brief 이벤트 루프 비동기 실행
      */
     void startAsync();
     
     /**
-     * @brief Checks if the server is currently running
+     * @brief 실행 상태 확인
      * 
-     * @return true if the server is running, false otherwise
+     * @return 실행 중 여부
      */
     bool isRunning() const { return running; }
     
     /**
-     * @brief Gets the GATT application
+     * @brief GATT 애플리케이션 가져오기
      * 
-     * @return Reference to the GATT application
+     * @return GATT 애플리케이션 참조
      */
     GattApplication& getApplication() { return *application; }
     
     /**
-     * @brief Gets the GATT advertisement
+     * @brief 광고 가져오기
      * 
-     * @return Reference to the GATT advertisement
+     * @return 광고 참조
      */
     GattAdvertisement& getAdvertisement() { return *advertisement; }
     
     /**
-     * @brief Gets the device name
+     * @brief 장치 이름 가져오기
      * 
-     * @return Current device name
+     * @return 장치 이름
      */
     const std::string& getDeviceName() const { return deviceName; }
     
     /**
-     * @brief Sets a callback function to be called on client connection
+     * @brief 연결 콜백 설정
      * 
-     * @param callback Function to call when a client connects
+     * @param callback 연결 시 호출할 함수
      */
     void setConnectionCallback(std::function<void(const std::string&)> callback) {
         std::lock_guard<std::mutex> lock(callbacksMutex);
@@ -163,9 +139,9 @@ public:
     }
     
     /**
-     * @brief Sets a callback function to be called on client disconnection
+     * @brief 연결 해제 콜백 설정
      * 
-     * @param callback Function to call when a client disconnects
+     * @param callback 연결 해제 시 호출할 함수
      */
     void setDisconnectionCallback(std::function<void(const std::string&)> callback) {
         std::lock_guard<std::mutex> lock(callbacksMutex);
@@ -173,99 +149,45 @@ public:
     }
     
     /**
-     * @brief Gets the list of currently connected devices
+     * @brief 연결된 장치 목록 가져오기
      * 
-     * @return Vector of device addresses
+     * @return 연결된 장치 주소 목록
      */
     std::vector<std::string> getConnectedDevices() const;
     
     /**
-     * @brief Checks if a specific device is connected
+     * @brief 장치 연결 상태 확인
      * 
-     * @param deviceAddress The Bluetooth address to check
-     * @return true if the device is connected, false otherwise
+     * @param deviceAddress 확인할 장치 주소
+     * @return 연결 상태
      */
     bool isDeviceConnected(const std::string& deviceAddress) const;
 
-    bool diagnoseBluezObjectManager();
-    void diagnoseBluezState();
-    
-    // BlueZ 5.82 호환성 메소드
-    void updateAdvertisementForBlueZ582();
-    void diagnosticSummary();
-    // 광고 속성 접근자
-    std::vector<std::string> getAdvertisementIncludes();
-    std::string getAdvertisementLocalName();
-    uint16_t getAdvertisementAppearance();
-    bool getAdvertisementIncludeTxPower();
-    
 private:
-    // Core BLE components
+    // BLE 구성 요소
     std::unique_ptr<GattApplication> application;
     std::unique_ptr<GattAdvertisement> advertisement;
     
-    // State management
+    // 상태 관리
     std::atomic<bool> running;
     std::atomic<bool> initialized;
     std::thread eventThread;
     std::string deviceName;
-    
-    // Advertisement settings
     uint16_t advTimeout;
     
-    // Callback functions
+    // 콜백 함수
     std::function<void(const std::string&)> connectionCallback;
     std::function<void(const std::string&)> disconnectionCallback;
     mutable std::mutex callbacksMutex;
     
-    // Internal methods
+    // 내부 메서드
     void eventLoop();
     void setupSignalHandlers();
     void handleConnectionEvent(const std::string& deviceAddress);
     void handleDisconnectionEvent(const std::string& deviceAddress);
-    void handlePropertyChangeEvent(const std::string& interface, 
-                                  const std::string& property, 
-                                  GVariantPtr value);
-    
-    /**
-     * @brief Sets up the BlueZ interface for BLE operation
-     * 
-     * Resets and configures the Bluetooth adapter with proper settings
-     * 
-     * @return true if setup was successful, false otherwise
-     */
     bool setupBlueZInterface();
-    
-    /**
-     * @brief Fallback methods for enabling advertising
-     * 
-     * If the standard BlueZ D-Bus API fails, tries alternative
-     * methods like hciconfig, bluetoothctl, and direct HCI commands
-     * 
-     * @return true if any advertising method succeeded, false otherwise
-     */
     bool enableAdvertisingFallback();
-    
-    /**
-     * @brief Static method to register for safe shutdown
-     * 
-     * @param server Pointer to the server instance to shut down
-     */
     static void registerShutdownHandler(Server* server);
-
-    /**
-     * @brief Restart BlueZ service
-     * 
-     * @return true if successful, false otherwise
-     */
-    bool restartBlueZService();
-    
-    /**
-     * @brief Reset Bluetooth adapter
-     * 
-     * @return true if successful, false otherwise
-     */
-    bool resetBluetoothAdapter();
 };
 
 } // namespace ggk
