@@ -6,6 +6,7 @@
 #include "Utils.h"
 #include "BlueZConstants.h"
 #include <unistd.h>
+#include <numeric>
 
 namespace ggk {
 
@@ -157,142 +158,214 @@ std::vector<GattServicePtr> GattApplication::getServices() const {
 }
 
 bool GattApplication::ensureInterfacesRegistered() {
-    // 1. 애플리케이션이 등록되었는지 확인
+    Logger::info("Ensuring all GATT interfaces are properly registered");
+    
+    // 1. Make sure application itself is registered first
     if (!isRegistered()) {
         if (!setupDBusInterfaces()) {
-            Logger::error("Failed to register application object");
+            Logger::error("Failed to register application object with D-Bus");
             return false;
         }
     }
     
-    // 2. 이제 서비스, 특성, 디스크립터를 순서대로 등록
-    bool success = true;
+    // 2. Register all objects in a controlled order to ensure proper hierarchy
+    bool allSuccessful = true;
+    std::vector<GattServicePtr> servicesToRegister;
+    std::map<GattServicePtr, std::vector<GattCharacteristicPtr>> characteristicsToRegister;
+    std::map<GattCharacteristicPtr, std::vector<GattDescriptorPtr>> descriptorsToRegister;
     
-    // 서비스 등록
-    for (auto& service : services) {
-        if (!service->isRegistered()) {
-            if (!service->setupDBusInterfaces()) {
-                Logger::error("Failed to register service: " + service->getUuid().toString());
-                success = false;
+    // First collect all objects that need registration
+    {
+        std::lock_guard<std::mutex> lock(servicesMutex);
+        
+        for (auto& service : services) {
+            if (!service->isRegistered()) {
+                servicesToRegister.push_back(service);
             }
-        }
-    }
-    
-    // 특성 등록
-    for (auto& service : services) {
-        auto characteristics = service->getCharacteristics();
-        for (const auto& pair : characteristics) {
-            auto& characteristic = pair.second;
-            if (characteristic && !characteristic->isRegistered()) {
-                if (!characteristic->setupDBusInterfaces()) {
-                    Logger::error("Failed to register characteristic: " + characteristic->getUuid().toString());
-                    success = false;
-                }
-            }
-        }
-    }
-    
-    // 디스크립터 등록
-    for (auto& service : services) {
-        auto characteristics = service->getCharacteristics();
-        for (const auto& charPair : characteristics) {
-            auto& characteristic = charPair.second;
-            if (!characteristic) continue;
             
-            auto descriptors = characteristic->getDescriptors();
-            for (const auto& descPair : descriptors) {
-                auto& descriptor = descPair.second;
-                if (descriptor && !descriptor->isRegistered()) {
-                    if (!descriptor->setupDBusInterfaces()) {
-                        Logger::error("Failed to register descriptor: " + descriptor->getUuid().toString());
-                        success = false;
+            auto characteristics = service->getCharacteristics();
+            std::vector<GattCharacteristicPtr> serviceCharacteristics;
+            
+            for (const auto& charPair : characteristics) {
+                auto& characteristic = charPair.second;
+                if (characteristic && !characteristic->isRegistered()) {
+                    serviceCharacteristics.push_back(characteristic);
+                    
+                    auto descriptors = characteristic->getDescriptors();
+                    std::vector<GattDescriptorPtr> charDescriptors;
+                    
+                    for (const auto& descPair : descriptors) {
+                        auto& descriptor = descPair.second;
+                        if (descriptor && !descriptor->isRegistered()) {
+                            charDescriptors.push_back(descriptor);
+                        }
+                    }
+                    
+                    if (!charDescriptors.empty()) {
+                        descriptorsToRegister[characteristic] = charDescriptors;
                     }
                 }
             }
+            
+            if (!serviceCharacteristics.empty()) {
+                characteristicsToRegister[service] = serviceCharacteristics;
+            }
         }
     }
     
-    Logger::info("Interface registration complete, success: " + std::string(success ? "true" : "false"));
-    return success;
+    // Now register everything in the correct order
+    
+    // 1. Register services
+    for (auto& service : servicesToRegister) {
+        if (!service->setupDBusInterfaces()) {
+            Logger::error("Failed to register service: " + service->getUuid().toString());
+            allSuccessful = false;
+        }
+    }
+    
+    // Add small delay to allow D-Bus to process
+    if (!servicesToRegister.empty()) {
+        usleep(100000);  // 100ms
+    }
+    
+    // 2. Register characteristics for each service
+    for (const auto& servicePair : characteristicsToRegister) {
+        auto service = servicePair.first;
+        for (auto& characteristic : servicePair.second) {
+            if (!characteristic->setupDBusInterfaces()) {
+                Logger::error("Failed to register characteristic: " + 
+                             characteristic->getUuid().toString() + 
+                             " for service: " + service->getUuid().toString());
+                allSuccessful = false;
+            }
+        }
+    }
+    
+    // Add small delay to allow D-Bus to process
+    if (!characteristicsToRegister.empty()) {
+        usleep(100000);  // 100ms
+    }
+    
+    // 3. Register descriptors for each characteristic
+    for (const auto& charPair : descriptorsToRegister) {
+        auto characteristic = charPair.first;
+        for (auto& descriptor : charPair.second) {
+            if (!descriptor->setupDBusInterfaces()) {
+                Logger::error("Failed to register descriptor: " + 
+                             descriptor->getUuid().toString() + 
+                             " for characteristic: " + characteristic->getUuid().toString());
+                allSuccessful = false;
+            }
+        }
+    }
+    
+    // Count total registered objects
+    int totalChars = 0;
+    for (const auto& pair : characteristicsToRegister) {
+        totalChars += pair.second.size();
+    }
+    
+    int totalDescs = 0;
+    for (const auto& pair : descriptorsToRegister) {
+        totalDescs += pair.second.size();
+    }
+    
+    // Log registration stats
+    Logger::info("Interface registration complete: " +
+                std::to_string(servicesToRegister.size()) + " services, " +
+                std::to_string(totalChars) + " characteristics, " +
+                std::to_string(totalDescs) + " descriptors" +
+                ", success: " + (allSuccessful ? "true" : "false"));
+    
+    // Validate object hierarchy if all registrations succeeded
+    if (allSuccessful) {
+        validateObjectHierarchy();
+    }
+    
+    return allSuccessful;
 }
 
 bool GattApplication::registerWithBlueZ() {
     try {
         Logger::info("Registering GATT application with BlueZ");
         
-        // Step 1: Ensure all objects are registered with D-Bus first
+        // 1. First ensure all objects are properly registered with D-Bus
         if (!ensureInterfacesRegistered()) {
-            Logger::error("Failed to register application objects with D-Bus");
+            Logger::error("Failed to register GATT objects with D-Bus");
             return false;
         }
         
-        // Step 2: Validate object hierarchy for BlueZ compatibility
-        if (!validateObjectHierarchy()) {
-            Logger::warn("Object hierarchy validation issues detected");
-            // Log details but continue - this is a warning, not a fatal error
-            logObjectHierarchy();
-        }
-        
-        // Step 3: Check if already registered
+        // 2. Check if already registered with BlueZ
         if (registered) {
             Logger::info("Application already registered with BlueZ");
             return true;
         }
         
-        // Step 4: Check BlueZ service status
-        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-            Logger::error("BlueZ service is not active. Attempting to restart...");
-            system("sudo systemctl restart bluetooth.service");
-            sleep(2);
-            
-            if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-                Logger::error("Failed to restart BlueZ service");
-                return false;
-            }
-            Logger::info("BlueZ service restarted successfully");
-        }
-        
-        // Step 5: Register with BlueZ using D-Bus API
-        Logger::info("Sending RegisterApplication request to BlueZ");
-        
-        // Create options dictionary using makeGVariantPtr pattern
+        // 3. Create options dictionary for registration
         GVariantBuilder builder;
         g_variant_builder_init(&builder, G_VARIANT_TYPE("a{sv}"));
+        
+        // Force registration of all objects (including those without characteristics)
         g_variant_builder_add(&builder, "{sv}", "RegisterAll", g_variant_new_boolean(true));
         
         // Build parameters tuple
         GVariant* paramsRaw = g_variant_new("(oa{sv})", getPath().c_str(), &builder);
         GVariantPtr params = makeGVariantPtr(paramsRaw, true);
         
-        // Send request to BlueZ with proper error handling
-        try {
-            getConnection().callMethod(
-                BlueZConstants::BLUEZ_SERVICE,
-                DBusObjectPath(BlueZConstants::ADAPTER_PATH),
-                BlueZConstants::GATT_MANAGER_INTERFACE,
-                BlueZConstants::REGISTER_APPLICATION,
-                std::move(params),
-                "",
-                10000  // 10 second timeout
-            );
-            
-            registered = true;
-            Logger::info("Successfully registered application with BlueZ");
-            return true;
-        } catch (const std::exception& e) {
-            std::string error = e.what();
-            Logger::error("Failed to register application with BlueZ: " + error);
-            
-            // Check for common errors
-            if (error.find("AlreadyExists") != std::string::npos) {
-                Logger::info("Application already registered, attempting to unregister first");
-                unregisterFromBlueZ();
-                // Retry registration
-                return registerWithBlueZ();
+        // 4. Register with BlueZ with retries
+        const int MAX_RETRIES = 3;
+        bool success = false;
+        std::string lastError;
+        
+        for (int attempt = 0; attempt < MAX_RETRIES && !success; attempt++) {
+            if (attempt > 0) {
+                Logger::info("Retrying BlueZ registration (attempt " + 
+                            std::to_string(attempt + 1) + " of " + std::to_string(MAX_RETRIES) + ")");
+                usleep(1000000);  // 1 second between retries
             }
             
+            try {
+                // Send RegisterApplication request
+                GVariantPtr result = getConnection().callMethod(
+                    BlueZConstants::BLUEZ_SERVICE,
+                    DBusObjectPath(BlueZConstants::ADAPTER_PATH),
+                    BlueZConstants::GATT_MANAGER_INTERFACE,
+                    BlueZConstants::REGISTER_APPLICATION,
+                    params ? makeGVariantPtr(g_variant_ref(params.get()), true) : makeNullGVariantPtr(),
+                    "",
+                    10000  // 10 second timeout
+                );
+                
+                success = true;
+                registered = true;
+                Logger::info("Successfully registered GATT application with BlueZ");
+                break;
+            } catch (const std::exception& e) {
+                lastError = e.what();
+                
+                // Check for "AlreadyExists" error - try to unregister first
+                if (lastError.find("AlreadyExists") != std::string::npos) {
+                    Logger::info("Application already registered with BlueZ, attempting to unregister first");
+                    
+                    try {
+                        unregisterFromBlueZ();
+                        // Continue with the next retry
+                    } catch (...) {
+                        Logger::warn("Error during unregister operation, continuing with retry");
+                    }
+                } else {
+                    Logger::error("Failed to register with BlueZ: " + lastError);
+                }
+            }
+        }
+        
+        if (!success) {
+            Logger::error("Failed to register application with BlueZ after " + 
+                         std::to_string(MAX_RETRIES) + " attempts. Last error: " + lastError);
             return false;
         }
+        
+        return true;
     } catch (const std::exception& e) {
         Logger::error("Exception in registerWithBlueZ: " + std::string(e.what()));
         return false;

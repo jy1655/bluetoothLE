@@ -75,41 +75,39 @@ bool Server::initialize(const std::string& name) {
     deviceName = name;
     Logger::info("Initializing BLE Server with name: " + deviceName);
     
-    // 1. D-Bus 이름 초기화
+    // 1. Initialize D-Bus name
     if (!DBusName::getInstance().initialize("com.example.ble")) {
         Logger::error("Failed to initialize D-Bus name");
         return false;
     }
     
-    // 2. GATT 애플리케이션 생성 (ObjectManager 인터페이스는 생성자에서 추가됨)
+    // 2. Create GATT application
     application = std::make_unique<GattApplication>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath("/com/example/ble")
     );
     
-    // 3. 광고 객체 생성
+    // 3. Create advertisement object
     advertisement = std::make_unique<GattAdvertisement>(
         DBusName::getInstance().getConnection(),
         DBusObjectPath("/com/example/ble/advertisement")
     );
     
-    // 4. 기본 광고 속성 설정
+    // 4. Set basic advertisement properties
     advertisement->setLocalName(deviceName);
     advertisement->setIncludeTxPower(true);
     advertisement->setDiscoverable(true);
     
-    // 5. BlueZ 5.82 호환성을 위한 Includes 배열 설정
-    std::vector<std::string> includes;
-    includes.push_back("tx-power");
-    includes.push_back("local-name");
+    // 5. Set BlueZ 5.82 Includes array
+    std::vector<std::string> includes = {"tx-power", "local-name"};
     advertisement->setIncludes(includes);
     
-    // 6. ConnectionManager 초기화
+    // 6. Initialize ConnectionManager
     if (!ConnectionManager::getInstance().initialize(DBusName::getInstance().getConnection())) {
         Logger::warn("Failed to initialize ConnectionManager, connection events may not be detected");
-        // 중요하지 않으므로 계속 진행
+        // Continue anyway, not critical
     } else {
-        // 연결 이벤트 콜백 설정
+        // Set up connection event callbacks
         ConnectionManager::getInstance().setOnConnectionCallback(
             [this](const std::string& deviceAddress) {
                 this->handleConnectionEvent(deviceAddress);
@@ -123,7 +121,7 @@ bool Server::initialize(const std::string& name) {
         Logger::info("ConnectionManager initialized successfully");
     }
     
-    // 7. 시그널 핸들러 설정
+    // 7. Set up signal handlers
     setupSignalHandlers();
     
     initialized = true;
@@ -132,13 +130,13 @@ bool Server::initialize(const std::string& name) {
 }
 
 bool Server::start(bool secureMode) {
-    // 이미 실행 중인지 확인
+    // Check if already running
     if (running) {
         Logger::warn("Server already running");
         return true;
     }
     
-    // 초기화 여부 확인
+    // Check initialization
     if (!initialized) {
         Logger::error("Cannot start: Server not initialized");
         return false;
@@ -146,7 +144,7 @@ bool Server::start(bool secureMode) {
     
     Logger::info("Starting BLE Server...");
     
-    // 1. BlueZ 서비스 확인 및 재시작
+    // 1. Check BlueZ service status
     if (system("systemctl is-active --quiet bluetooth.service") != 0) {
         Logger::warn("BlueZ service not active, attempting restart...");
         if (!restartBlueZService()) {
@@ -155,34 +153,40 @@ bool Server::start(bool secureMode) {
         }
     }
     
-    // 2. BlueZ 인터페이스 설정
+    // 2. Set up BlueZ interface
     if (!setupBlueZInterface()) {
         Logger::error("Failed to setup BlueZ interface");
         return false;
     }
     
-    // 3. 객체 등록: 애플리케이션 객체 먼저 등록
+    // 3. Register application with D-Bus first (object hierarchy)
     if (!application->setupDBusInterfaces()) {
         Logger::error("Failed to setup application D-Bus interfaces");
         return false;
     }
     
-    // 4. 모든 서비스, 특성 및 디스크립터 등록
+    // 4. Ensure all services, characteristics and descriptors are registered
     if (!application->ensureInterfacesRegistered()) {
         Logger::error("Failed to register all GATT objects");
         return false;
     }
     
-    // 5. GATT 애플리케이션을 BlueZ에 등록
+    // 5. Register GATT application with BlueZ
     if (!application->registerWithBlueZ()) {
         Logger::error("Failed to register GATT application with BlueZ");
         return false;
     }
     
-    // 6. BlueZ 5.82 호환성을 위한 광고 설정
-    advertisement->setupDBusInterfaces();
+    advertisement->ensureBlueZ582Compatibility();
+
+    // THEN set up interfaces (which registers the object)
+    if (!advertisement->isRegistered()) {
+        if (!advertisement->setupDBusInterfaces()) {
+            Logger::error("Failed to setup advertisement D-Bus interfaces");
+            // Continue anyway - advertising is not critical
+        }
+    }
     
-    // 7. BlueZ에 광고 등록
     if (!advertisement->registerWithBlueZ()) {
         Logger::warn("Failed to register advertisement with BlueZ, trying alternative methods");
         enableAdvertisingFallback();
@@ -190,8 +194,6 @@ bool Server::start(bool secureMode) {
     
     running = true;
     Logger::info("BLE Server started successfully");
-    
-    // 진단 정보 출력
     
     return true;
 }
@@ -325,6 +327,7 @@ GattServicePtr Server::createService(const GattUuid& uuid, bool isPrimary) {
     return service;
 }
 
+// Fix for the configureAdvertisement method's log message
 void Server::configureAdvertisement(
     const std::string& name,
     const std::vector<GattUuid>& serviceUuids,
@@ -338,65 +341,71 @@ void Server::configureAdvertisement(
         return;
     }
     
-    // BlueZ 5.82 형식의 Includes 배열 설정
+    Logger::info("Configuring BLE advertisement");
+    
+    // 1. Configure Includes array for BlueZ 5.82 compatibility
     std::vector<std::string> includes;
     
-    // TX Power를 Includes에 추가 (BlueZ 5.82 스타일)
-    if (includeTxPower) {
-        includes.push_back("tx-power");
+    // Always include these in the Includes array
+    includes.push_back("tx-power");
+    includes.push_back("local-name");
+    
+    // Add appearance to includes if it will be set
+    uint16_t adAppearance = advertisement->getAppearance();
+    if (adAppearance != 0) {
+        includes.push_back("appearance");
     }
     
-    // 이전 호환성을 위해 이전 방식(IncludeTxPower)도 설정
-    advertisement->setIncludeTxPower(includeTxPower);
-    
-    // Includes 배열 설정
+    // Set the includes array
     advertisement->setIncludes(includes);
     
-    // Discoverable 설정 (일반적으로 항상 true로 설정)
+    // 2. Set the compatibility property directly as well
+    advertisement->setIncludeTxPower(includeTxPower);
+    
+    // 3. Always set discoverable to true for maximum compatibility
     advertisement->setDiscoverable(true);
     
-    // 로컬 이름 설정 (제공된 경우, 아니면 장치 이름 사용)
+    // 4. Set local name
     if (!name.empty()) {
         advertisement->setLocalName(name);
-        // BlueZ 5.82 스타일: local-name을 Includes에 추가하지 않음 (직접 설정하므로)
     } else {
         advertisement->setLocalName(deviceName);
-        // BlueZ 5.82 스타일: local-name을 Includes에 추가하지 않음 (직접 설정하므로)
     }
     
-    // 서비스 UUID 추가
+    // 5. Set service UUIDs
     if (!serviceUuids.empty()) {
         advertisement->addServiceUUIDs(serviceUuids);
     } else {
-        // 애플리케이션의 모든 서비스 UUID 추가
+        // Add all service UUIDs from the application
         for (const auto& service : application->getServices()) {
             advertisement->addServiceUUID(service->getUuid());
         }
     }
     
-    // 제조사 데이터 설정 (제공된 경우)
+    // 6. Set manufacturer data if provided
     if (manufacturerId != 0 && !manufacturerData.empty()) {
         advertisement->setManufacturerData(manufacturerId, manufacturerData);
     }
     
-    // 광고 지속 시간 설정
+    // 7. Set duration/timeout
     if (timeout > 0) {
         advertisement->setDuration(timeout);
     }
     
-    // 타임아웃을 디스커버러블 모드에도 저장
+    // Store timeout for discoverable mode
     advTimeout = timeout;
     
-    // 디버그 정보 출력
-    Logger::info("Advertisement configured with service UUIDs:");
-    for (const auto& service : application->getServices()) {
-        Logger::info("  - " + service->getUuid().toString());
-    }
+    // Log configuration summary - Fixed string concatenation with proper SSTR macro
+    std::string logMsg = "Advertisement configured: Name='";
+    logMsg += advertisement->getLocalName();
+    logMsg += "', ServiceUUIDs=";
+    logMsg += std::to_string(serviceUuids.size() + application->getServices().size());
+    logMsg += ", TxPower=";
+    logMsg += (includeTxPower ? "Yes" : "No");
+    logMsg += ", Discoverable=Yes, Duration=";
+    logMsg += std::to_string(timeout) + "s";
     
-    Logger::info("Advertisement configuration complete");
-    
-    // 디버그용: 광고 상태 문자열 출력
-    Logger::debug(advertisement->getAdvertisementStateString());
+    Logger::info(logMsg);
 }
 
 void Server::run() {
@@ -549,33 +558,40 @@ bool Server::setupBlueZInterface() {
     // Get D-Bus connection
     DBusConnection& connection = DBusName::getInstance().getConnection();
     
-    // Check if adapter exists
-    std::string adapterPath = BlueZConstants::ADAPTER_PATH;
-    
-    // Reset adapter if needed
-    if (!BlueZUtils::resetAdapter(connection, adapterPath)) {
-        Logger::error("Failed to reset BlueZ adapter");
+    try {
+        // 1. Reset adapter to clean state
+        if (!BlueZUtils::resetAdapter(connection, BlueZConstants::ADAPTER_PATH)) {
+            Logger::error("Failed to reset BlueZ adapter");
+            return false;
+        }
+        
+        // 2. Set adapter name
+        if (!BlueZUtils::setAdapterName(connection, deviceName, BlueZConstants::ADAPTER_PATH)) {
+            Logger::warn("Failed to set adapter name, continuing anyway");
+        }
+        
+        // 3. Set adapter discoverable
+        if (!BlueZUtils::setAdapterDiscoverable(connection, true, advTimeout, BlueZConstants::ADAPTER_PATH)) {
+            Logger::warn("Failed to set adapter as discoverable, continuing anyway");
+        }
+        
+        // 4. Ensure adapter is powered
+        bool isPowered = BlueZUtils::isAdapterPowered(connection, BlueZConstants::ADAPTER_PATH);
+        if (!isPowered) {
+            Logger::error("Failed to power on adapter");
+            return false;
+        }
+        
+        // 5. Give BlueZ time to process changes
+        usleep(500000);  // 500ms pause
+        
+        Logger::info("BlueZ interface setup complete");
+        return true;
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in setupBlueZInterface: " + std::string(e.what()));
         return false;
     }
-    
-    // Set adapter name
-    if (!BlueZUtils::setAdapterName(connection, deviceName, adapterPath)) {
-        Logger::warn("Failed to set adapter name, continuing anyway");
-    }
-    
-    // Set adapter discoverable
-    if (!BlueZUtils::setAdapterDiscoverable(connection, true, advTimeout, adapterPath)) {
-        Logger::warn("Failed to set adapter as discoverable, continuing anyway");
-    }
-    
-    // Set adapter powered
-    if (!BlueZUtils::setAdapterPower(connection, true, adapterPath)) {
-        Logger::error("Failed to power on adapter");
-        return false;
-    }
-    
-    Logger::info("BlueZ interface setup complete");
-    return true;
 }
 
 bool Server::enableAdvertisingFallback() {

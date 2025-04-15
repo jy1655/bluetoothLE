@@ -87,153 +87,128 @@ GVariantPtr DBusConnection::callMethod(
     int timeoutMs)
 {
     if (!isConnected()) {
-        Logger::error("Cannot call method: not connected to D-Bus");
+        Logger::error("D-Bus method call failed: Connection not established");
         return makeNullGVariantPtr();
     }
     
-    // 재시도 설정
+    // Constants for retry mechanism
     const int MAX_RETRIES = 3;
-    const int RETRY_DELAY_MS = 500;  // 0.5초 재시도 간격
-    GError* error = nullptr;
+    const int RETRY_DELAY_MS = 500;
+    
+    // For logging purposes
+    std::string callInfo = destination + ":" + path.toString() + " " + interface + "." + method;
+    
+    // Log the call being made
+    Logger::debug("Calling D-Bus method: " + callInfo);
+    
+    // Prepare reply type if signature provided
     GVariantType* replyType = nullptr;
+    if (!replySignature.empty()) {
+        if (!g_variant_type_string_is_valid(replySignature.c_str())) {
+            Logger::error("D-Bus method call (" + callInfo + ") failed: Invalid reply signature: " + replySignature);
+            return makeNullGVariantPtr();
+        }
+        replyType = g_variant_type_new(replySignature.c_str());
+    }
     
-    // RAII로 GVariantType 정리
-    std::unique_ptr<GVariantType, void(*)(GVariantType*)> replyTypeGuard(nullptr, 
-        [](GVariantType* p) { if (p) g_variant_type_free(p); });
+    // Main retry loop
+    GError* error = nullptr;
+    std::string lastErrorMessage;
+    GVariant* result = nullptr;
     
-    try {
-        // 응답 시그니처 검증
-        if (!replySignature.empty()) {
-            if (!g_variant_type_string_is_valid(replySignature.c_str())) {
-                Logger::error("Invalid reply signature: " + replySignature);
-                return makeNullGVariantPtr();
-            }
-            replyType = g_variant_type_new(replySignature.c_str());
-            replyTypeGuard.reset(replyType);  // 정리 보장
+    for (int attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        // Clear previous error if any
+        if (error) {
+            g_error_free(error);
+            error = nullptr;
         }
         
-        // 메소드 호출 로그
-        Logger::debug("Calling D-Bus method: " + destination + 
-            " " + path.toString() + " " + 
-            interface + "." + method);
+        // Add retry info to logs
+        if (attempt > 0) {
+            Logger::info("Retrying D-Bus call (" + std::to_string(attempt+1) + "/" + 
+                        std::to_string(MAX_RETRIES) + "): " + callInfo);
+            usleep(RETRY_DELAY_MS * 1000);
+        }
         
-        // 재시도 루프 구현
-        GVariant* result = nullptr;
-        bool success = false;
-        std::string lastErrorMessage;
+        // Make the actual D-Bus call
+        result = g_dbus_connection_call_sync(
+            connection.get(),
+            destination.c_str(),
+            path.c_str(),
+            interface.c_str(),
+            method.c_str(),
+            parameters ? parameters.get() : nullptr,
+            replyType,
+            G_DBUS_CALL_FLAGS_NONE,
+            timeoutMs > 0 ? timeoutMs : 30000,  // Default to 30 seconds
+            nullptr,
+            &error
+        );
         
-        for (int attempt = 0; attempt < MAX_RETRIES && !success; attempt++) {
-            if (attempt > 0) {
-                Logger::info("Retrying D-Bus call (attempt " + std::to_string(attempt+1) + 
-                           " of " + std::to_string(MAX_RETRIES) + "): " + interface + "." + method);
-                // 오류 초기화
-                if (error) {
-                    g_error_free(error);
-                    error = nullptr;
-                }
-                // 재시도 전 대기
-                usleep(RETRY_DELAY_MS * 1000);
-            }
+        // If successful, break the retry loop
+        if (result) {
+            break;
+        }
+        
+        // Handle specific errors
+        if (error) {
+            lastErrorMessage = error->message ? error->message : "Unknown error";
             
-            // 메소드 호출
-            result = g_dbus_connection_call_sync(
-                connection.get(),
-                destination.c_str(),
-                path.c_str(),
-                interface.c_str(),
-                method.c_str(),
-                parameters ? parameters.get() : nullptr,
-                replyType,
-                G_DBUS_CALL_FLAGS_NONE,
-                timeoutMs > 0 ? timeoutMs : 30000,  // 기본 30초 타임아웃
-                nullptr,
-                &error
-            );
-            
-            // 성공 시 루프 종료
-            if (result) {
-                success = true;
+            // These errors won't be fixed by retrying
+            if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
+                g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) ||
+                g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT) ||
+                g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_INTERFACE)) {
+                
+                Logger::error("D-Bus method call (" + callInfo + ") failed: " + lastErrorMessage);
                 break;
             }
             
-            // 오류 분석 (특정 오류는 재시도하지 않음)
-            if (error) {
-                lastErrorMessage = error->message ? error->message : "Unknown error";
-                
-                // 특정 오류는 재시도하지 않음
-                if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN) ||
-                    g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD) ||
-                    g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT) ||
-                    g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_INTERFACE)) {
-                    
-                    Logger::error("D-Bus method call failed with non-retriable error: " + lastErrorMessage);
-                    break;  // 재시도 중단
-                }
-                
-                Logger::warn("D-Bus method call failed (will retry): " + lastErrorMessage);
-            }
+            // Temporary errors might resolve with retry
+            Logger::warn("D-Bus method call (" + callInfo + ") failed (retrying): " + lastErrorMessage);
+        } else {
+            Logger::warn("D-Bus method call (" + callInfo + ") failed with no error details");
         }
-        
-        // 최종 오류 확인
-        if (!success && error) {
-            std::string errorMessage = error->message ? error->message : "Unknown error";
-            Logger::error("D-Bus method call failed: " + errorMessage);
+    }
+    
+    // Clean up GVariantType if we created one
+    if (replyType) {
+        g_variant_type_free(replyType);
+    }
+    
+    // Handle final error state
+    if (!result) {
+        if (error) {
+            Logger::error("D-Bus method call (" + callInfo + ") failed: " + lastErrorMessage);
             
-            // 공통 오류 분류
+            // Provide more context for specific errors
             if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_SERVICE_UNKNOWN)) {
-                Logger::error("D-Bus service not available: " + destination);
+                Logger::error("D-Bus service '" + destination + "' not available");
             } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_METHOD)) {
-                Logger::error("Unknown method: " + method + " on interface " + interface);
+                Logger::error("Unknown method '" + method + "' on interface '" + interface + "'");
             } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_UNKNOWN_OBJECT)) {
-                Logger::error("Unknown object: " + path.toString());
+                Logger::error("Unknown object path: " + path.toString());
             } else if (g_error_matches(error, G_DBUS_ERROR, G_DBUS_ERROR_TIMEOUT)) {
                 Logger::error("D-Bus call timed out after " + std::to_string(timeoutMs) + "ms");
             }
             
             g_error_free(error);
-            return makeNullGVariantPtr();
         }
-        
-        // 결과 반환 (있는 경우)
-        if (result) {
-            // 특별 케이스: BlueZ 5.82는 튜플로 응답을 감싸기도 함
-            if (replyType && 
-                g_variant_type_equal(replyType, G_VARIANT_TYPE("a{oa{sa{sv}}}")) && 
-                g_variant_is_of_type(result, G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
-                    
-                Logger::debug("Detected tuple-wrapped dictionary from BlueZ 5.82+ (with type)");
-                // 튜플에서 딕셔너리 추출
-                GVariant* extracted = g_variant_get_child_value(result, 0);
-                g_variant_unref(result);
-                
-                if (extracted) {
-                    return makeGVariantPtr(extracted, true);
-                }
-            }
-            // 특별 케이스: replyType 없이 GetManagedObjects 결과 형식
-            else if (!replyType && 
-                    g_variant_is_of_type(result, G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
-                
-                Logger::debug("Detected tuple-wrapped dictionary from BlueZ 5.82+ (no expected type)");
-                // 튜플에서 딕셔너리 추출
-                GVariant* extracted = g_variant_get_child_value(result, 0);
-                g_variant_unref(result);
-                
-                if (extracted) {
-                    return makeGVariantPtr(extracted, true);
-                }
-            }
-            
-            // 일반 케이스 - 결과 그대로 반환
-            return makeGVariantPtr(result, true);
-        }
-        
-        return makeNullGVariantPtr();
-    } catch (const std::exception& e) {
-        Logger::error("Exception in D-Bus method call: " + std::string(e.what()));
-        if (error) g_error_free(error);
         return makeNullGVariantPtr();
     }
+    
+    // Successfully obtained a result
+    Logger::debug("D-Bus method call (" + callInfo + ") successful");
+    
+    // Handle special BlueZ 5.82 response format
+    if (result && g_variant_is_of_type(result, G_VARIANT_TYPE("(a{oa{sa{sv}}})"))) {
+        Logger::debug("Unpacking tuple-wrapped dictionary response (BlueZ 5.82+ format)");
+        GVariant* inner = g_variant_get_child_value(result, 0);
+        g_variant_unref(result);
+        return makeGVariantPtr(inner, true);
+    }
+    
+    return makeGVariantPtr(result, true);
 }
 
 bool DBusConnection::emitSignal(

@@ -18,22 +18,22 @@ DBusObject::~DBusObject() {
 bool DBusObject::addInterface(const std::string& interface, const std::vector<DBusProperty>& properties) {
     std::lock_guard<std::mutex> lock(mutex);
     
+    // Check if already registered but still allow modifications before BlueZ registration
     if (registered) {
         Logger::warn("Cannot add interface to already registered object: " + path.toString());
         return false;
     }
     
-    // 인터페이스가 이미 존재하는지 확인
+    // Check if interface already exists
     auto it = interfaces.find(interface);
     if (it != interfaces.end()) {
-        Logger::warn("Interface already exists: " + interface + " on object: " + path.toString());
-        // 인터페이스가 이미 존재하는 경우, 속성을 병합하거나 교체할 수 있음
-        // 여기서는 간단히 새 속성으로 교체
+        Logger::debug("Interface already exists: " + interface + " on object: " + path.toString());
+        // Update properties if interface already exists
         it->second = properties;
-        Logger::debug("Updated properties for interface: " + interface + " on object: " + path.toString());
         return true;
     }
     
+    // Add new interface
     interfaces[interface] = properties;
     Logger::debug("Added interface: " + interface + " to object: " + path.toString());
     return true;
@@ -225,21 +225,23 @@ bool DBusObject::emitSignal(
 bool DBusObject::registerObject() {
     std::lock_guard<std::mutex> lock(mutex);
     
+    // Return success if already registered
     if (registered) {
         Logger::debug("Object already registered: " + path.toString());
         return true;
     }
     
+    // Check connection
     if (!connection.isConnected()) {
         Logger::error("D-Bus connection not available");
         return false;
     }
     
-    // 인트로스펙션 XML 생성
+    // Generate introspection XML
     std::string xml = generateIntrospectionXml();
     Logger::debug("Registering object with XML:\n" + xml);
     
-    // 객체 등록
+    // Register object with D-Bus
     registered = connection.registerObject(
         path,
         xml,

@@ -89,86 +89,95 @@ void GattAdvertisement::setIncludeTxPower(bool include) {
 }
 
 bool GattAdvertisement::setupDBusInterfaces() {
-    // 이미 등록되었는지 확인
+    // Check if already registered
     if (isRegistered()) {
-        Logger::warn("Advertisement already registered with D-Bus");
+        Logger::debug("Advertisement already registered with D-Bus");
         return true;
     }
     
     Logger::info("Setting up D-Bus interfaces for advertisement: " + getPath().toString());
     
-    // 속성 정의
-    std::vector<DBusProperty> properties = {
-        {
-            "Type",
-            "s",
-            true,
-            false,
-            false,
-            [this]() { return getTypeProperty(); },
-            nullptr
-        },
-        {
-            "ServiceUUIDs",
-            "as",
-            true,
-            false,
-            false,
-            [this]() { return getServiceUUIDsProperty(); },
-            nullptr
-        },
-        {
-            "ManufacturerData",
-            "a{qv}",
-            true,
-            false,
-            false,
-            [this]() { return getManufacturerDataProperty(); },
-            nullptr
-        },
-        {
-            "ServiceData",
-            "a{sv}",
-            true,
-            false,
-            false,
-            [this]() { return getServiceDataProperty(); },
-            nullptr
-        },
-        {
-            "Discoverable",
-            "b",
-            true,
-            false,
-            false,
-            [this]() { return getDiscoverableProperty(); },
-            nullptr
-        },
-        {
-            "Includes",
-            "as",
-            true,
-            false,
-            false,
-            [this]() { return getIncludesProperty(); },
-            nullptr
-        }
-    };
+    // Define all properties at once, including conditional ones
+    std::vector<DBusProperty> properties;
     
-    // 이전 버전 호환성을 위한 속성 추가
-    if (includeTxPower) {
-        properties.push_back({
-            "IncludeTxPower",
-            "b",
-            true,
-            false,
-            false,
-            [this]() { return getIncludeTxPowerProperty(); },
-            nullptr
-        });
-    }
+    // Always include Type property
+    properties.push_back({
+        "Type",
+        "s",
+        true,
+        false,
+        false,
+        [this]() { return getTypeProperty(); },
+        nullptr
+    });
     
-    // 선택적 속성 추가
+    // Always include ServiceUUIDs property
+    properties.push_back({
+        "ServiceUUIDs",
+        "as",
+        true,
+        false,
+        false,
+        [this]() { return getServiceUUIDsProperty(); },
+        nullptr
+    });
+    
+    // Always include ManufacturerData property
+    properties.push_back({
+        "ManufacturerData",
+        "a{qv}",
+        true,
+        false,
+        false,
+        [this]() { return getManufacturerDataProperty(); },
+        nullptr
+    });
+    
+    // Always include ServiceData property
+    properties.push_back({
+        "ServiceData",
+        "a{sv}",
+        true,
+        false,
+        false,
+        [this]() { return getServiceDataProperty(); },
+        nullptr
+    });
+    
+    // Always include Discoverable property (BlueZ 5.82+)
+    properties.push_back({
+        "Discoverable",
+        "b",
+        true,
+        false,
+        false,
+        [this]() { return getDiscoverableProperty(); },
+        nullptr
+    });
+    
+    // Always include Includes property (BlueZ 5.82+)
+    properties.push_back({
+        "Includes",
+        "as",
+        true,
+        false,
+        false,
+        [this]() { return getIncludesProperty(); },
+        nullptr
+    });
+    
+    // Add IncludeTxPower property for backward compatibility
+    properties.push_back({
+        "IncludeTxPower",
+        "b",
+        true,
+        false,
+        false,
+        [this]() { return getIncludeTxPowerProperty(); },
+        nullptr
+    });
+    
+    // Conditional properties
     if (!localName.empty()) {
         properties.push_back({
             "LocalName",
@@ -204,21 +213,21 @@ bool GattAdvertisement::setupDBusInterfaces() {
             nullptr
         });
     }
-
-    // 인터페이스 추가
+    
+    // Add interface with all properties
     if (!addInterface(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, properties)) {
         Logger::error("Failed to add LEAdvertisement interface");
         return false;
     }
     
-    // Release 메서드 추가
+    // Add Release method
     if (!addMethod(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, "Release", 
                   [this](const DBusMethodCall& call) { handleRelease(call); })) {
         Logger::error("Failed to add Release method");
         return false;
     }
     
-    // 객체 등록
+    // Register object
     if (!registerObject()) {
         Logger::error("Failed to register advertisement object");
         return false;
@@ -247,42 +256,37 @@ bool GattAdvertisement::registerWithBlueZ() {
     try {
         Logger::info("Registering GATT advertisement with BlueZ");
         
-        // 1. 이미 등록되었는지 확인
+        // 1. Check if already registered
         if (registered) {
             Logger::info("Advertisement already registered with BlueZ");
             return true;
         }
         
-        // 2. 인터페이스가 설정되었는지 확인
-        if (!setupDBusInterfaces()) {
-            Logger::error("Failed to setup advertisement D-Bus interfaces");
+        // 2. Setup D-Bus interfaces if not already done
+        if (!isRegistered()) {
+            if (!setupDBusInterfaces()) {
+                Logger::error("Failed to setup advertisement D-Bus interfaces");
+                return false;
+            }
+        }
+        
+        // 3. Ensure BlueZ 5.82 compatibility
+        ensureBlueZ582Compatibility();
+        
+        // 4. Clean up existing advertisements to avoid conflicts
+        cleanupExistingAdvertisements();
+        
+        // 5. Check BlueZ service status
+        if (system("systemctl is-active --quiet bluetooth.service") != 0) {
+            Logger::error("BlueZ service is not active");
             return false;
         }
         
-        // 3. 이전 광고 정리
-        cleanupExistingAdvertisements();
-        
-        // 4. BlueZ 서비스 상태 확인
-        int bluezStatus = system("systemctl is-active --quiet bluetooth.service");
-        if (bluezStatus != 0) {
-            Logger::error("BlueZ service is not active. Attempting to restart...");
-            system("sudo systemctl restart bluetooth.service");
-            sleep(2);
-            
-            if (system("systemctl is-active --quiet bluetooth.service") != 0) {
-                Logger::error("Failed to restart BlueZ service");
-                return false;
-            }
-            Logger::info("BlueZ service restarted successfully");
-        }
-        
-        // 5. BlueZ 5.82 호환성을 위한 구성 확인
-        
-        // 6. D-Bus API로 등록 시도
+        // 6. Try registering with D-Bus API
         if (!registerWithDBusApi()) {
             Logger::warn("Failed to register advertisement via standard D-Bus API, trying alternatives");
             
-            // 대체 방법으로 시도
+            // Try alternative methods
             if (activateAdvertisingFallback()) {
                 Logger::info("Advertisement activated via fallback methods");
                 registered = true;
@@ -1129,67 +1133,98 @@ GVariant* GattAdvertisement::getIncludesProperty() {
 }
 
 void GattAdvertisement::ensureBlueZ582Compatibility() {
-    // 1. Includes 배열 확인
-    bool hasTxPower = false;
-    bool hasLocalName = false;
-    bool hasAppearance = false;
+    // Track whether we're making any changes
+    bool madeChanges = false;
     
-    for (const auto& item : includes) {
-        if (item == "tx-power") hasTxPower = true;
-        else if (item == "local-name") hasLocalName = true;
-        else if (item == "appearance") hasAppearance = true;
-    }
+    // 1. Check Includes array for required elements
+    std::vector<std::string> requiredIncludes;
     
-    // 2. TxPower 포함 설정
-    if (includeTxPower && !hasTxPower) {
-        includes.push_back("tx-power");
-        Logger::debug("Added tx-power to Includes array for BlueZ 5.82 compatibility");
-    }
+    // Map current includes to a vector for comparison
+    std::vector<std::string> currentIncludesList = includes;
     
-    // 3. LocalName 포함 설정
-    if (!localName.empty() && !hasLocalName) {
-        includes.push_back("local-name");
-        Logger::debug("Added local-name to Includes array for BlueZ 5.82 compatibility");
-    }
-    
-    // 4. Appearance 포함 설정
-    if (appearance != 0 && !hasAppearance) {
-        includes.push_back("appearance");
-        Logger::debug("Added appearance to Includes array for BlueZ 5.82 compatibility");
-    }
-    
-    // 5. 모든 서비스 UUID가 올바른 형식인지 확인
-    std::vector<GattUuid> validUuids;
-    for (const auto& uuid : serviceUUIDs) {
-        if (!uuid.toString().empty()) {
-            validUuids.push_back(uuid);
-        } else {
-            Logger::warn("Skipping invalid service UUID in advertisement");
+    // Check TX Power
+    if (includeTxPower) {
+        bool hasTxPower = false;
+        for (const auto& include : currentIncludesList) {
+            if (include == "tx-power") {
+                hasTxPower = true;
+                break;
+            }
+        }
+        
+        if (!hasTxPower) {
+            requiredIncludes.push_back("tx-power");
+            madeChanges = true;
         }
     }
     
-    if (validUuids.size() != serviceUUIDs.size()) {
-        serviceUUIDs = validUuids;
+    // Check LocalName
+    if (!localName.empty()) {
+        bool hasLocalName = false;
+        for (const auto& include : currentIncludesList) {
+            if (include == "local-name") {
+                hasLocalName = true;
+                break;
+            }
+        }
+        
+        if (!hasLocalName) {
+            requiredIncludes.push_back("local-name");
+            madeChanges = true;
+        }
     }
     
-    // 6. 광고 상태 로그
-    Logger::debug("Advertisement configuration for BlueZ 5.82:");
-    Logger::debug("- Type: " + std::string(type == AdvertisementType::PERIPHERAL ? "peripheral" : "broadcast"));
-    Logger::debug("- LocalName: " + localName);
-    Logger::debug("- ServiceUUIDs: " + std::to_string(serviceUUIDs.size()) + " UUIDs");
+    // Check Appearance
+    if (appearance != 0) {
+        bool hasAppearance = false;
+        for (const auto& include : currentIncludesList) {
+            if (include == "appearance") {
+                hasAppearance = true;
+                break;
+            }
+        }
+        
+        if (!hasAppearance) {
+            requiredIncludes.push_back("appearance");
+            madeChanges = true;
+        }
+    }
     
-    std::string includesStr = "- Includes: ";
-    for (const auto& item : includes) {
-        includesStr += item + ", ";
+    // Apply changes if needed
+    if (madeChanges) {
+        // Add new includes to existing list
+        for (const auto& include : requiredIncludes) {
+            includes.push_back(include);
+        }
+        
+        // Build a debug string with all includes
+        std::string includesStr = "";
+        for (size_t i = 0; i < includes.size(); i++) {
+            if (i > 0) includesStr += ", ";
+            includesStr += includes[i];
+        }
+        
+        Logger::debug("Updated includes array for BlueZ 5.82 compatibility: [" + includesStr + "]");
     }
-    if (!includes.empty()) {
-        includesStr.pop_back();  // 마지막 콤마 제거
-        includesStr.pop_back();
+    
+    // 2. Ensure Discoverable is set (usually true)
+    if (!discoverable) {
+        discoverable = true;
+        Logger::debug("Enabled discoverable flag for BlueZ 5.82 compatibility");
     }
-    Logger::debug(includesStr);
+    
+    // 3. Validate service UUIDs
+    for (auto it = serviceUUIDs.begin(); it != serviceUUIDs.end(); ) {
+        if (it->toString().empty()) {
+            Logger::warn("Removing invalid service UUID from advertisement");
+            it = serviceUUIDs.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    
+    Logger::debug("BlueZ 5.82 compatibility ensured for advertisement");
 }
-
-
 
 
 } // namespace ggk

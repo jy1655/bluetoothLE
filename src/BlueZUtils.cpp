@@ -590,46 +590,79 @@ bool BlueZUtils::tryEnableAdvertising(
 {
     Logger::info("Attempting to enable BLE advertising");
     
-    // Method 1: Use bluetoothctl
-    Logger::debug("Trying to enable advertising via bluetoothctl");
-    if (runBluetoothCtlCommands({
+    // Track success for each method
+    struct {
+        bool dbus = false;
+        bool bluetoothctl = false;
+        bool hciconfig = false;
+        bool direct = false;
+    } methods;
+    
+    // Method 1: Try using bluetoothctl (most reliable)
+    Logger::debug("Method 1: Enabling advertising via bluetoothctl");
+    methods.bluetoothctl = runBluetoothCtlCommands({
         "menu advertise",
         "on",
         "back"
-    })) {
+    });
+    
+    if (methods.bluetoothctl) {
         Logger::info("Successfully enabled advertising via bluetoothctl");
         return true;
     }
     
-    // Method 2: Set adapter properties directly
-    Logger::debug("Trying to enable advertising via adapter properties");
+    // Method 2: Try using hciconfig
+    Logger::debug("Method 2: Enabling advertising via hciconfig");
+    int hciResult = system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1");
+    methods.hciconfig = (hciResult == 0);
+    
+    if (methods.hciconfig) {
+        Logger::info("Successfully enabled advertising via hciconfig");
+        return true;
+    }
+    
+    // Method 3: Try setting adapter properties directly via D-Bus
     try {
+        Logger::debug("Method 3: Enabling advertising via D-Bus properties");
+        
         // Make sure adapter is powered
         if (!isAdapterPowered(connection, adapterPath)) {
-            if (!setAdapterPower(connection, true, adapterPath)) {
-                Logger::error("Failed to power on adapter");
-                return false;
-            }
+            GVariantPtr poweredValue = Utils::gvariantPtrFromBoolean(true);
+            setAdapterProperty(connection, "Powered", std::move(poweredValue), adapterPath);
+            usleep(200000);  // 200ms to let it take effect
         }
         
         // Try to enable discoverable (similar to advertising)
-        if (setAdapterDiscoverable(connection, true, 0, adapterPath)) {
-            Logger::info("Successfully enabled discoverable mode");
+        GVariantPtr discValue = Utils::gvariantPtrFromBoolean(true);
+        methods.dbus = setAdapterProperty(connection, "Discoverable", std::move(discValue), adapterPath);
+        
+        if (methods.dbus) {
+            Logger::info("Successfully enabled advertising via D-Bus properties");
             return true;
         }
     }
     catch (const std::exception& e) {
-        Logger::error("Exception when enabling advertising: " + std::string(e.what()));
+        Logger::error("Exception when enabling advertising via D-Bus: " + std::string(e.what()));
     }
     
-    // Try direct HCI commands as a last resort
-    Logger::debug("Trying to enable advertising via direct HCI commands");
-    system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1");
-    system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1");
+    // Method 4: Direct HCI commands as last resort
+    Logger::debug("Method 4: Enabling advertising via direct HCI commands");
+    int directResult = system("sudo hcitool -i hci0 cmd 0x08 0x000a 01 > /dev/null 2>&1");
+    methods.direct = (directResult == 0);
     
-    // No good way to verify if this worked, just assume it did if we got here
-    Logger::info("Attempted to enable advertising via direct HCI commands");
-    return true;
+    if (methods.direct) {
+        Logger::info("Successfully enabled advertising via direct HCI commands");
+        return true;
+    }
+    
+    // Log all failures
+    Logger::error("All advertising methods failed: " +
+                 std::string(methods.bluetoothctl ? "" : "bluetoothctl, ") +
+                 std::string(methods.hciconfig ? "" : "hciconfig, ") +
+                 std::string(methods.dbus ? "" : "D-Bus properties, ") +
+                 std::string(methods.direct ? "" : "direct HCI commands"));
+    
+    return false;
 }
 
 bool BlueZUtils::checkBlueZFeatures(DBusConnection& connection) {
