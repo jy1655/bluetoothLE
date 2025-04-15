@@ -55,7 +55,7 @@ public:
      * @return 성공 여부
      */
     bool addMethod(const std::string& interface, const std::string& method, DBusConnection::MethodHandler handler);
-    
+    bool addMethodWithSignature(const std::string& interface, const std::string& method, DBusConnection::MethodHandler handler, const std::string& inSignature = "", const std::string& outSignature = "");
     /**
      * @brief 속성 설정
      * 

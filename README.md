@@ -33,6 +33,13 @@ sudo dbus-monitor --system "interface=org.bluez.GattManager1"
 sudo dbus-monitor --system "interface=org.freedesktop.DBus.ObjectManager"
 ```
 
+Ping 테스트(모든 DBus 서비스에 기본 제공되는 Ping-Pong 테스트. 이를 호출했을 때 즉시 빈 응답이 오면 서비스와 통신이 되는 것)
+```bash
+dbus-send --system --print-reply --dest=com.example.ble /com/example org.freedesktop.DBus.Peer.Ping
+```
+
+
+
 
 ### Set System Setting (required reboot system)
 

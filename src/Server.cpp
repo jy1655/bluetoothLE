@@ -84,7 +84,7 @@ bool Server::initialize(const std::string& name) {
     // Create GATT application
     application = std::make_unique<GattApplication>(
         DBusName::getInstance().getConnection(),
-        DBusObjectPath("/com/example/ble/gatt")
+        DBusObjectPath("/com/example/ble")
     );
     
     // Create advertisement

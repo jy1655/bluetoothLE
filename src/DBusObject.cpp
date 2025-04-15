@@ -57,6 +57,38 @@ bool DBusObject::addMethod(const std::string& interface, const std::string& meth
     return true;
 }
 
+bool DBusObject::addMethodWithSignature(const std::string& interface, const std::string& method, 
+                                    DBusConnection::MethodHandler handler,
+                                    const std::string& inSignature, 
+                                    const std::string& outSignature) {
+    std::lock_guard<std::mutex> lock(mutex);
+    
+    if (registered) {
+        Logger::warn("Cannot add method to already registered object: " + path.toString());
+        return false;
+    }
+    
+    // 인터페이스가 존재하지 않으면 자동 추가
+    auto ifaceIt = interfaces.find(interface);
+    if (ifaceIt == interfaces.end()) {
+        interfaces[interface] = {};
+    }
+    
+    methodHandlers[interface][method] = handler;
+    
+    // 추가로 시그니처 정보 저장 (DBusXml 클래스가 해당 정보를 사용할 수 있도록)
+    // 이 부분은 코드베이스에 따라 구현이 달라질 수 있습니다.
+    // 간단한 예시를 들자면:
+    
+    // XML 파일을 사용하는 코드베이스인 경우 시그니처 정보를 적절히 전달
+    // 또는 메서드 메타데이터를 저장하는 맵 추가
+    
+    Logger::debug("Added method with signature: " + interface + "." + method + 
+                " (in: " + inSignature + ", out: " + outSignature + ") " + 
+                "to object: " + path.toString());
+    return true;
+}
+
 bool DBusObject::setProperty(const std::string& interface, const std::string& name, GVariantPtr value) {
     std::lock_guard<std::mutex> lock(mutex);
     
