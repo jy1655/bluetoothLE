@@ -2,7 +2,7 @@
 
 #include <atomic>
 #include <string>
-#include "DBusConnection.h"
+#include "DBusInterface.h"
 #include "Logger.h"
 
 namespace ggk {
@@ -35,7 +35,7 @@ public:
      * @return true if initialization was successful
      */
     bool initialize(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const std::string& adapterName = "BluetoothDevice",
         const std::string& adapterPath = "/org/bluez/hci0");
     
@@ -116,11 +116,11 @@ public:
      * 
      * @return Reference to the D-Bus connection
      */
-    DBusConnection& getConnection();
+    std::shared_ptr<IDBusConnection> getConnection();
     
 private:
     // D-Bus connection
-    DBusConnection* connection;
+    std::shared_ptr<IDBusConnection> connection;
     
     // Adapter state
     std::string adapterPath;

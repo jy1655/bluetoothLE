@@ -1,4 +1,3 @@
-// include/GattAdvertisement.h
 #pragma once
 
 #include "DBusObject.h"
@@ -13,6 +12,8 @@ namespace ggk {
 
 /**
  * @brief BLE 광고 관리 클래스
+ * 
+ * BlueZ 5.82 호환 버전의 BLE 광고 관리 클래스입니다.
  */
 class GattAdvertisement : public DBusObject {
 public:
@@ -32,7 +33,7 @@ public:
      * @param type 광고 타입 (기본값: PERIPHERAL)
      */
     GattAdvertisement(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const DBusObjectPath& path,
         AdvertisementType type = AdvertisementType::PERIPHERAL
     );
@@ -117,7 +118,7 @@ public:
     /**
      * @brief 광고에 포함할 항목 추가 (BlueZ 5.82+)
      * 
-     * @param item 포함할 항목 ("tx-power", "appearance", "local-name")
+     * @param item 포함할 항목 ("tx-power", "appearance", "local-name", "service-uuids")
      */
     void addInclude(const std::string& item);
     
@@ -163,6 +164,8 @@ public:
     
     /**
      * @brief BlueZ 5.82 호환성 확보
+     * 
+     * BlueZ 5.82에서 요구하는 필수 속성이 제대로 설정되었는지 확인하고 추가합니다.
      */
     void ensureBlueZ582Compatibility();
     

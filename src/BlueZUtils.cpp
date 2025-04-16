@@ -148,12 +148,12 @@ bool BlueZUtils::restartBlueZService() {
     return true;
 }
 
-std::vector<std::string> BlueZUtils::getAdapters(DBusConnection& connection) {
+std::vector<std::string> BlueZUtils::getAdapters(std::shared_ptr<IDBusConnection> connection) {
     std::vector<std::string> adapters;
     
     try {
         // Call org.freedesktop.DBus.ObjectManager.GetManagedObjects()
-        GVariantPtr result = connection.callMethod(
+        GVariantPtr result = connection->callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(BlueZConstants::ROOT_PATH),
             BlueZConstants::OBJECT_MANAGER_INTERFACE,
@@ -199,7 +199,7 @@ std::vector<std::string> BlueZUtils::getAdapters(DBusConnection& connection) {
     return adapters;
 }
 
-std::string BlueZUtils::getDefaultAdapter(DBusConnection& connection) {
+std::string BlueZUtils::getDefaultAdapter(std::shared_ptr<IDBusConnection> connection) {
     std::vector<std::string> adapters = getAdapters(connection);
     
     if (adapters.empty()) {
@@ -212,7 +212,7 @@ std::string BlueZUtils::getDefaultAdapter(DBusConnection& connection) {
 }
 
 GVariantPtr BlueZUtils::getAdapterProperty(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& property,
     const std::string& adapterPath)
 {
@@ -224,7 +224,7 @@ GVariantPtr BlueZUtils::getAdapterProperty(
         // floating reference를 sink하여 참조 카운트 관리
         GVariantPtr parameters = makeGVariantPtr(g_variant_ref_sink(params), true); 
         
-        GVariantPtr result = connection.callMethod(
+        GVariantPtr result = connection->callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(adapterPath),
             BlueZConstants::PROPERTIES_INTERFACE,
@@ -255,7 +255,7 @@ GVariantPtr BlueZUtils::getAdapterProperty(
 }
 
 bool BlueZUtils::setAdapterProperty(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& property,
     GVariantPtr value,
     const std::string& adapterPath)
@@ -276,7 +276,7 @@ bool BlueZUtils::setAdapterProperty(
         GVariant* params = g_variant_builder_end(&builder);
         GVariantPtr parameters = makeGVariantPtr(params, true);
         
-        GVariantPtr result = connection.callMethod(
+        GVariantPtr result = connection->callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(adapterPath),
             BlueZConstants::PROPERTIES_INTERFACE,
@@ -294,7 +294,7 @@ bool BlueZUtils::setAdapterProperty(
 }
 
 bool BlueZUtils::isAdapterPowered(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& adapterPath)
 {
     GVariantPtr result = getAdapterProperty(connection, 
@@ -309,7 +309,7 @@ bool BlueZUtils::isAdapterPowered(
 }
 
 bool BlueZUtils::setAdapterPower(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     bool powered,
     const std::string& adapterPath)
 {
@@ -338,7 +338,7 @@ bool BlueZUtils::setAdapterPower(
 }
 
 bool BlueZUtils::setAdapterDiscoverable(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     bool discoverable,
     uint16_t timeout,
     const std::string& adapterPath)
@@ -371,9 +371,8 @@ bool BlueZUtils::setAdapterDiscoverable(
     return success;
 }
 
-// src/BlueZUtils.cpp에서 setAdapterName 메소드 교체
 bool BlueZUtils::setAdapterName(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& name,
     const std::string& adapterPath)
 {
@@ -405,7 +404,7 @@ bool BlueZUtils::setAdapterName(
 }
 
 bool BlueZUtils::resetAdapter(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& adapterPath)
 {
     Logger::info("Resetting adapter: " + adapterPath);
@@ -428,7 +427,7 @@ bool BlueZUtils::resetAdapter(
 }
 
 bool BlueZUtils::initializeAdapter(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& name,
     const std::string& adapterPath)
 {
@@ -487,14 +486,14 @@ bool BlueZUtils::runBluetoothCtlCommands(const std::vector<std::string>& command
 }
 
 std::vector<std::string> BlueZUtils::getConnectedDevices(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& adapterPath)
 {
     std::vector<std::string> connectedDevices;
     
     try {
         // Call org.freedesktop.DBus.ObjectManager.GetManagedObjects()
-        GVariantPtr result = connection.callMethod(
+        GVariantPtr result = connection->callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(BlueZConstants::ROOT_PATH),
             BlueZConstants::OBJECT_MANAGER_INTERFACE,
@@ -561,14 +560,14 @@ std::vector<std::string> BlueZUtils::getConnectedDevices(
 }
 
 bool BlueZUtils::isAdvertisingSupported(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& adapterPath)
 {
     try {
         // See if LEAdvertisingManager1 interface exists
         GVariantPtr parameters = Utils::gvariantPtrFromString(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE);
         
-        GVariantPtr result = connection.callMethod(
+        GVariantPtr result = connection->callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(adapterPath),
             BlueZConstants::PROPERTIES_INTERFACE,
@@ -585,7 +584,7 @@ bool BlueZUtils::isAdvertisingSupported(
 }
 
 bool BlueZUtils::tryEnableAdvertising(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const std::string& adapterPath)
 {
     Logger::info("Attempting to enable BLE advertising");
@@ -677,7 +676,7 @@ bool BlueZUtils::tryEnableAdvertising(
     return false;
 }
 
-bool BlueZUtils::checkBlueZFeatures(DBusConnection& connection) {
+bool BlueZUtils::checkBlueZFeatures(std::shared_ptr<IDBusConnection> connection) {
     bool featuresOk = true;
     
     // Get default adapter
@@ -691,7 +690,7 @@ bool BlueZUtils::checkBlueZFeatures(DBusConnection& connection) {
     try {
         GVariantPtr parameters = Utils::gvariantPtrFromString(BlueZConstants::GATT_MANAGER_INTERFACE);
         
-        GVariantPtr result = connection.callMethod(
+        GVariantPtr result = connection->callMethod(
             BlueZConstants::BLUEZ_SERVICE,
             DBusObjectPath(adapter),
             BlueZConstants::PROPERTIES_INTERFACE,

@@ -1,4 +1,3 @@
-// src/GattAdvertisement.cpp
 #include "BlueZUtils.h"
 #include "GattAdvertisement.h"
 #include "Logger.h"
@@ -7,7 +6,7 @@
 namespace ggk {
 
 GattAdvertisement::GattAdvertisement(
-    DBusConnection& connection,
+    std::shared_ptr<IDBusConnection> connection,
     const DBusObjectPath& path,
     AdvertisementType type)
     : DBusObject(connection, path),
@@ -62,6 +61,11 @@ void GattAdvertisement::setServiceData(const GattUuid& serviceUuid, const std::v
 void GattAdvertisement::setLocalName(const std::string& name) {
     localName = name;
     Logger::debug("Set local name: " + name);
+    
+    // BlueZ 5.82 호환성: LocalName을 설정할 때 includes에도 추가
+    if (!name.empty()) {
+        addInclude("local-name");
+    }
 }
 
 void GattAdvertisement::setDiscoverable(bool value) {
@@ -72,6 +76,11 @@ void GattAdvertisement::setDiscoverable(bool value) {
 void GattAdvertisement::setAppearance(uint16_t value) {
     appearance = value;
     Logger::debug("Set appearance: 0x" + Utils::hex(value));
+    
+    // BlueZ 5.82 호환성: Appearance를 설정할 때 includes에도 추가
+    if (value != 0) {
+        addInclude("appearance");
+    }
 }
 
 void GattAdvertisement::setDuration(uint16_t value) {
@@ -82,6 +91,11 @@ void GattAdvertisement::setDuration(uint16_t value) {
 void GattAdvertisement::setIncludeTxPower(bool include) {
     includeTxPower = include;
     Logger::debug("Set include TX power: " + std::string(include ? "true" : "false"));
+    
+    // BlueZ 5.82 호환성: TX Power를 설정할 때 includes에도 추가
+    if (include) {
+        addInclude("tx-power");
+    }
 }
 
 void GattAdvertisement::addInclude(const std::string& item) {
@@ -94,11 +108,6 @@ void GattAdvertisement::addInclude(const std::string& item) {
     
     includes.push_back(item);
     Logger::debug("Added include item: " + item);
-    
-    // 이전 방식과의 호환성을 위한 특수 처리
-    if (item == "tx-power") {
-        includeTxPower = true;
-    }
 }
 
 void GattAdvertisement::setIncludes(const std::vector<std::string>& items) {
@@ -110,7 +119,7 @@ void GattAdvertisement::setIncludes(const std::vector<std::string>& items) {
 }
 
 bool GattAdvertisement::setupDBusInterfaces() {
-    // If already registered, return success
+    // 이미 등록된 경우 성공 반환
     if (isRegistered()) {
         Logger::debug("Advertisement already registered with D-Bus");
         return true;
@@ -118,10 +127,13 @@ bool GattAdvertisement::setupDBusInterfaces() {
     
     Logger::info("Setting up D-Bus interfaces for advertisement: " + getPath().toString());
     
-    // Define all properties at once
+    // BlueZ 5.82 호환성 확보
+    ensureBlueZ582Compatibility();
+    
+    // 모든 속성 한 번에 정의
     std::vector<DBusProperty> properties;
     
-    // Type property (required)
+    // Type 속성 (필수)
     properties.push_back({
         "Type",
         "s",
@@ -132,7 +144,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         nullptr
     });
     
-    // ServiceUUIDs property (required)
+    // ServiceUUIDs 속성 (필수)
     properties.push_back({
         "ServiceUUIDs",
         "as",
@@ -143,7 +155,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         nullptr
     });
     
-    // ManufacturerData property
+    // ManufacturerData 속성
     properties.push_back({
         "ManufacturerData",
         "a{qv}",
@@ -154,7 +166,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         nullptr
     });
     
-    // ServiceData property
+    // ServiceData 속성
     properties.push_back({
         "ServiceData",
         "a{sv}",
@@ -165,7 +177,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         nullptr
     });
     
-    // Discoverable property (BlueZ 5.82+)
+    // Discoverable 속성 (BlueZ 5.82+)
     properties.push_back({
         "Discoverable",
         "b",
@@ -176,7 +188,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         nullptr
     });
     
-    // Includes property (BlueZ 5.82+)
+    // Includes 속성 (BlueZ 5.82+ 필수)
     properties.push_back({
         "Includes",
         "as",
@@ -187,7 +199,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         nullptr
     });
     
-    // TX Power property (for backward compatibility)
+    // TX Power 속성 (이전 버전 호환용)
     properties.push_back({
         "IncludeTxPower",
         "b",
@@ -198,7 +210,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         nullptr
     });
     
-    // Add conditional properties
+    // 조건부 속성 추가
     if (!localName.empty()) {
         properties.push_back({
             "LocalName",
@@ -235,21 +247,21 @@ bool GattAdvertisement::setupDBusInterfaces() {
         });
     }
     
-    // Add LEAdvertisement interface
+    // LEAdvertisement 인터페이스 추가
     if (!addInterface(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, properties)) {
         Logger::error("Failed to add LEAdvertisement interface");
         return false;
     }
     
-    // Add Release method
+    // Release 메서드 추가
     if (!addMethod(BlueZConstants::LE_ADVERTISEMENT_INTERFACE, "Release", 
                   [this](const DBusMethodCall& call) { handleRelease(call); })) {
         Logger::error("Failed to add Release method");
         return false;
     }
     
-    // Register object with D-Bus
-    if (!registerObject()) {
+    // 객체를 D-Bus에 등록
+    if (!finishRegistration()) {
         Logger::error("Failed to register advertisement object");
         return false;
     }
@@ -277,13 +289,13 @@ bool GattAdvertisement::registerWithBlueZ() {
     try {
         Logger::info("Registering GATT advertisement with BlueZ");
         
-        // If already registered, return success
+        // 이미 등록된 경우 성공 반환
         if (registered) {
             Logger::info("Advertisement already registered with BlueZ");
             return true;
         }
         
-        // Setup D-Bus interfaces if not already registered
+        // D-Bus 인터페이스 설정
         if (!isRegistered()) {
             if (!setupDBusInterfaces()) {
                 Logger::error("Failed to setup advertisement D-Bus interfaces");
@@ -291,38 +303,38 @@ bool GattAdvertisement::registerWithBlueZ() {
             }
         }
         
-        // Ensure BlueZ 5.82 compatibility
+        // BlueZ 5.82 호환성 확보
         ensureBlueZ582Compatibility();
         
-        // Stop any existing advertisements
+        // 기존 광고 중지
         try {
-            // Use bluetoothctl to stop advertising
+            // bluetoothctl로 광고 중지
             system("echo -e 'menu advertise\\noff\\nback\\n' | bluetoothctl > /dev/null 2>&1");
-            // Use hciconfig to stop advertising
+            // hciconfig로 광고 중지
             system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
-            // Brief delay
+            // 잠시 대기
             usleep(500000); // 500ms
         }
         catch (...) {
-            // Continue even if these fail
+            // 실패해도 계속 진행
         }
         
-        // Prepare parameters for RegisterAdvertisement call
+        // RegisterAdvertisement 호출 매개변수 준비
         GVariant* params = g_variant_new("(o@a{sv})",
                                        getPath().c_str(),
                                        g_variant_new_array(G_VARIANT_TYPE("{sv}"), NULL, 0));
-        g_variant_ref_sink(params);  // Take ownership
+        g_variant_ref_sink(params);  // 소유권 확보
         
         try {
-            // Call BlueZ
-            getConnection().callMethod(
+            // BlueZ 호출
+            getConnection()->callMethod(
                 BlueZConstants::BLUEZ_SERVICE,
                 DBusObjectPath(BlueZConstants::ADAPTER_PATH),
                 BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
                 BlueZConstants::REGISTER_ADVERTISEMENT,
-                makeGVariantPtr(params, true),  // Transfer ownership
+                makeGVariantPtr(params, true),  // 소유권 이전
                 "",
-                5000  // 5 second timeout
+                5000  // 5초 타임아웃
             );
             
             registered = true;
@@ -332,32 +344,32 @@ bool GattAdvertisement::registerWithBlueZ() {
         catch (const std::exception& e) {
             std::string errorMsg = e.what();
             
-            // AlreadyExists error is success
+            // AlreadyExists 오류는 성공
             if (errorMsg.find("AlreadyExists") != std::string::npos) {
                 Logger::info("Advertisement already registered with BlueZ (AlreadyExists)");
                 registered = true;
                 return true;
             }
             
-            // If standard registration fails, try alternative methods
+            // 표준 등록 실패 시 대체 방법 시도
             Logger::warn("Failed to register advertisement using DBus API: " + errorMsg);
             Logger::info("Trying alternative methods to enable advertising...");
             
-            // Method 1: bluetoothctl
+            // 방법 1: bluetoothctl
             if (system("echo -e 'menu advertise\\non\\nback\\n' | bluetoothctl > /dev/null 2>&1") == 0) {
                 Logger::info("Successfully enabled advertising via bluetoothctl");
                 registered = true;
                 return true;
             }
             
-            // Method 2: hciconfig
+            // 방법 2: hciconfig
             if (system("sudo hciconfig hci0 leadv 3 > /dev/null 2>&1") == 0) {
                 Logger::info("Successfully enabled advertising via hciconfig");
                 registered = true;
                 return true;
             }
             
-            // Method 3: btmgmt
+            // 방법 3: btmgmt
             if (system("sudo btmgmt --index 0 advertising on > /dev/null 2>&1") == 0) {
                 Logger::info("Successfully enabled advertising via btmgmt");
                 registered = true;
@@ -390,7 +402,7 @@ bool GattAdvertisement::unregisterFromBlueZ() {
         
         try {
             // BlueZ 호출
-            getConnection().callMethod(
+            getConnection()->callMethod(
                 BlueZConstants::BLUEZ_SERVICE,
                 DBusObjectPath(BlueZConstants::ADAPTER_PATH),
                 BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE,
@@ -453,7 +465,7 @@ void GattAdvertisement::ensureBlueZ582Compatibility() {
         requiredIncludes.push_back("appearance");
     }
     
-    // 서비스 UUID가 있으면 서비스 클래스 포함
+    // 서비스 UUID 확인
     if (!serviceUUIDs.empty() && std::find(includes.begin(), includes.end(), "service-uuids") == includes.end()) {
         requiredIncludes.push_back("service-uuids");
     }
@@ -563,19 +575,21 @@ GVariant* GattAdvertisement::getDiscoverableProperty() {
 GVariant* GattAdvertisement::getIncludesProperty() {
     std::vector<std::string> allIncludes = includes;
     
-    // TX Power이 켜져있지만 includes에 없으면 추가
+    // 자동 includes 생성 (이미 ensureBlueZ582Compatibility()에서 처리했지만 중복 확인을 위한 안전장치)
     if (includeTxPower && std::find(allIncludes.begin(), allIncludes.end(), "tx-power") == allIncludes.end()) {
         allIncludes.push_back("tx-power");
     }
     
-    // Appearance가 설정되어 있지만 includes에 없으면 추가
     if (appearance != 0 && std::find(allIncludes.begin(), allIncludes.end(), "appearance") == allIncludes.end()) {
         allIncludes.push_back("appearance");
     }
     
-    // LocalName이 설정되어 있지만 includes에 없으면 추가
     if (!localName.empty() && std::find(allIncludes.begin(), allIncludes.end(), "local-name") == allIncludes.end()) {
         allIncludes.push_back("local-name");
+    }
+    
+    if (!serviceUUIDs.empty() && std::find(allIncludes.begin(), allIncludes.end(), "service-uuids") == allIncludes.end()) {
+        allIncludes.push_back("service-uuids");
     }
     
     GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(allIncludes);

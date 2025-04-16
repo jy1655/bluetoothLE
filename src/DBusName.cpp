@@ -1,5 +1,5 @@
 #include "DBusName.h"
-#include "Utils.h"  // Utils 유틸리티 함수 사용을 위해 추가
+#include "Utils.h"
 
 namespace ggk {
 
@@ -12,8 +12,6 @@ DBusName::DBusName()
     : busType(G_BUS_TYPE_SYSTEM), // 실제 하드웨어는 시스템 버스 사용
       initialized(false), 
       busNameAcquired(false) {
-    // 연결 객체는 필요할 때 초기화
-    connection = std::make_unique<DBusConnection>(busType);
 }
 
 DBusName::~DBusName() {
@@ -28,7 +26,7 @@ void DBusName::setBusType(GBusType type) {
     }
     
     busType = type;
-    connection = std::make_unique<DBusConnection>(type);
+    connection = DBusConnectionFactory::createConnection(type);
 }
 #endif
 
@@ -38,6 +36,9 @@ bool DBusName::initialize(const std::string& name) {
     }
     
     busName = name;
+    
+    // 연결 생성
+    connection = DBusConnectionFactory::createConnection(busType);
     
     if (!connection || !connection->connect()) {
         Logger::error("Failed to connect to D-Bus");
@@ -111,15 +112,19 @@ void DBusName::shutdown() {
     if (connection) {
         connection->disconnect();
     }
+    connection = nullptr;
     initialized = false;
 }
 
-DBusConnection& DBusName::getConnection() {
+std::shared_ptr<IDBusConnection> DBusName::getConnection() {
     if (!connection) {
         // 연결이 없으면 생성
-        connection = std::make_unique<DBusConnection>(busType);
+        connection = DBusConnectionFactory::createConnection(busType);
+        if (!connection->isConnected()) {
+            connection->connect();
+        }
     }
-    return *connection;
+    return connection;
 }
 
 } // namespace ggk

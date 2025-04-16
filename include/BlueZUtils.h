@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 #include <tuple>
-#include "DBusConnection.h"
+#include "DBusInterface.h"
 #include "DBusObjectPath.h"
 #include "GattTypes.h"
 #include "DBusTypes.h"
@@ -52,7 +52,7 @@ public:
      * @param connection D-Bus connection to use
      * @return std::vector<std::string> List of adapter paths
      */
-    static std::vector<std::string> getAdapters(DBusConnection& connection);
+    static std::vector<std::string> getAdapters(std::shared_ptr<IDBusConnection> connection);
     
     /**
      * @brief Get default adapter path
@@ -60,7 +60,7 @@ public:
      * @param connection D-Bus connection to use
      * @return std::string Path to default adapter (usually /org/bluez/hci0)
      */
-    static std::string getDefaultAdapter(DBusConnection& connection);
+    static std::string getDefaultAdapter(std::shared_ptr<IDBusConnection> connection);
     
     /**
      * @brief Check if adapter is powered on
@@ -69,7 +69,7 @@ public:
      * @param adapterPath Adapter path (default: /org/bluez/hci0)
      * @return true if adapter is powered on
      */
-    static bool isAdapterPowered(DBusConnection& connection, 
+    static bool isAdapterPowered(std::shared_ptr<IDBusConnection> connection, 
                                 const std::string& adapterPath = "/org/bluez/hci0");
     
     /**
@@ -80,7 +80,7 @@ public:
      * @param adapterPath Adapter path (default: /org/bluez/hci0)
      * @return true if operation was successful
      */
-    static bool setAdapterPower(DBusConnection& connection, 
+    static bool setAdapterPower(std::shared_ptr<IDBusConnection> connection, 
                                bool powered, 
                                const std::string& adapterPath = "/org/bluez/hci0");
     
@@ -93,7 +93,7 @@ public:
      * @param adapterPath Adapter path (default: /org/bluez/hci0)
      * @return true if operation was successful
      */
-    static bool setAdapterDiscoverable(DBusConnection& connection, 
+    static bool setAdapterDiscoverable(std::shared_ptr<IDBusConnection> connection, 
                                       bool discoverable,
                                       uint16_t timeout = 0,
                                       const std::string& adapterPath = "/org/bluez/hci0");
@@ -106,7 +106,7 @@ public:
      * @param adapterPath Adapter path (default: /org/bluez/hci0)
      * @return true if operation was successful
      */
-    static bool setAdapterName(DBusConnection& connection, 
+    static bool setAdapterName(std::shared_ptr<IDBusConnection> connection, 
                               const std::string& name,
                               const std::string& adapterPath = "/org/bluez/hci0");
     
@@ -117,7 +117,7 @@ public:
      * @param adapterPath Adapter path (default: /org/bluez/hci0)
      * @return true if operation was successful
      */
-    static bool resetAdapter(DBusConnection& connection,
+    static bool resetAdapter(std::shared_ptr<IDBusConnection> connection,
                             const std::string& adapterPath = "/org/bluez/hci0");
     
     /**
@@ -128,7 +128,7 @@ public:
      * @param adapterPath Adapter path (default: /org/bluez/hci0)
      * @return true if initialization was successful
      */
-    static bool initializeAdapter(DBusConnection& connection,
+    static bool initializeAdapter(std::shared_ptr<IDBusConnection> connection,
                                  const std::string& name,
                                  const std::string& adapterPath = "/org/bluez/hci0");
     
@@ -158,7 +158,7 @@ public:
      * @return std::vector<std::string> List of connected device paths
      */
     static std::vector<std::string> getConnectedDevices(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const std::string& adapterPath = "/org/bluez/hci0");
         
     /**
@@ -169,7 +169,7 @@ public:
      * @return true if advertising is supported
      */
     static bool isAdvertisingSupported(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const std::string& adapterPath = "/org/bluez/hci0");
         
     /**
@@ -185,7 +185,7 @@ public:
      * @return true if advertising was enabled
      */
     static bool tryEnableAdvertising(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const std::string& adapterPath = "/org/bluez/hci0");
         
     /**
@@ -194,18 +194,18 @@ public:
      * @param connection D-Bus connection to use
      * @return true if all required features are available
      */
-    static bool checkBlueZFeatures(DBusConnection& connection);
+    static bool checkBlueZFeatures(std::shared_ptr<IDBusConnection> connection);
 
 
     // Helper for getting adapter properties
     static GVariantPtr getAdapterProperty(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const std::string& property,
         const std::string& adapterPath = "/org/bluez/hci0");
         
     // Helper for setting adapter properties
     static bool setAdapterProperty(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const std::string& property,
         GVariantPtr value,
         const std::string& adapterPath = "/org/bluez/hci0");

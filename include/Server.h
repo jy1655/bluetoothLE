@@ -1,4 +1,3 @@
-// include/Server.h
 #pragma once
 
 #include "GattApplication.h"
@@ -20,6 +19,7 @@ namespace ggk {
  * 
  * BlueZ를 통해 BLE 주변장치를 구현하는 서버 클래스입니다.
  * GATT 서비스, 특성, 광고를 관리합니다.
+ * BlueZ 5.82와 호환됩니다.
  */
 class Server {
 public:
@@ -188,7 +188,16 @@ private:
     bool setupBlueZInterface();
     bool enableAdvertisingFallback();
     static void registerShutdownHandler(Server* server);
-
+    
+    /**
+     * @brief D-Bus 객체 등록 프로세스
+     * 
+     * 모든 D-Bus 객체(애플리케이션, 서비스, 특성, 설명자, 광고)를
+     * 올바른 순서로 등록합니다.
+     * 
+     * @return 등록 성공 여부
+     */
+    bool registerDBusObjects();
 };
 
 } // namespace ggk

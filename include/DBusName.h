@@ -1,40 +1,88 @@
-// include/DBusName.h
 #pragma once
-#include "DBusConnection.h"
+#include "DBusInterface.h"
 #include "Logger.h"
 #include <string>
 #include <memory>
 
 namespace ggk {
 
+/**
+ * @brief D-Bus 이름 관리 클래스
+ * 
+ * D-Bus 이름 등록 및 연결을 관리하는 싱글톤 클래스입니다.
+ */
 class DBusName {
 public:
+    /**
+     * @brief 싱글톤 인스턴스 획득
+     * 
+     * @return DBusName 싱글톤 인스턴스 참조
+     */
     static DBusName& getInstance();
     
-    // 초기화 - 실제 앱 실행과 테스트에서 모두 호출
+    /**
+     * @brief 초기화 - 실제 앱 실행과 테스트에서 모두 호출
+     * 
+     * @param busName D-Bus 이름 (기본값: "com.example.ble")
+     * @return 초기화 성공 여부
+     */
     bool initialize(const std::string& busName = "com.example.ble");
+    
+    /**
+     * @brief 종료 처리
+     */
     void shutdown();
     
-    // 상태 확인
-    DBusConnection& getConnection();
+    /**
+     * @brief 상태 확인
+     * 
+     * @return D-Bus 연결 객체 참조
+     */
+    std::shared_ptr<IDBusConnection> getConnection();
+    
+    /**
+     * @brief D-Bus 이름 획득
+     * 
+     * @return 등록된 D-Bus 이름
+     */
     const std::string& getBusName() const { return busName; }
-    bool isInitialized() const { return initialized && connection && connection->isConnected(); }
+    
+    /**
+     * @brief 초기화 상태 확인
+     * 
+     * @return 초기화 상태
+     */
+    bool isInitialized() const { 
+        return initialized && connection && connection->isConnected(); 
+    }
+    
+    /**
+     * @brief D-Bus 이름 획득 상태 확인
+     * 
+     * @return D-Bus 이름 획득 상태
+     */
     bool hasBusName() const { return busNameAcquired; }
 
 #ifdef TESTING
-    // 테스트용 메서드
+    /**
+     * @brief 테스트를 위한 초기화 상태 재설정
+     */
     void reset() {
         shutdown();
-        // 인스턴스 상태 초기화
         initialized = false;
         busNameAcquired = false;
     }
     
-    // 버스 타입 설정 (시스템 버스 vs 세션 버스)
+    /**
+     * @brief 버스 타입 설정 (시스템 버스 vs 세션 버스)
+     * 
+     * @param type 버스 타입
+     */
     void setBusType(GBusType type);
 #endif
 
 private:
+    // 싱글톤 구현
     DBusName();
     ~DBusName();
     
@@ -42,7 +90,8 @@ private:
     DBusName(const DBusName&) = delete;
     DBusName& operator=(const DBusName&) = delete;
     
-    std::unique_ptr<DBusConnection> connection;
+    // 상태 변수
+    std::shared_ptr<IDBusConnection> connection;
     GBusType busType;
     std::string busName;
     bool initialized;

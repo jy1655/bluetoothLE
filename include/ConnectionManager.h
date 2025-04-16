@@ -1,7 +1,6 @@
-// include/ConnectionManager.h
 #pragma once
 
-#include "DBusConnection.h"
+#include "DBusInterface.h"
 #include "DBusObjectPath.h"
 #include "BlueZConstants.h"
 #include <map>
@@ -37,7 +36,7 @@ public:
      * @param connection D-Bus connection
      * @return Success status
      */
-    bool initialize(DBusConnection& connection);
+    bool initialize(std::shared_ptr<IDBusConnection> connection);
     
     /**
      * @brief Shutdown manager
@@ -111,7 +110,7 @@ private:
     PropertyChangedCallback onPropertyChangedCallback;
 
     // Signal handling
-    DBusConnection* connection;
+    std::shared_ptr<IDBusConnection> connection;
     std::vector<guint> signalHandlerIds;
     bool initialized;
 };

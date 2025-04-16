@@ -1,4 +1,3 @@
-// include/GattApplication.h
 #pragma once
 
 #include "DBusObject.h"
@@ -12,126 +11,142 @@ namespace ggk {
 /**
  * @brief GATT Application class that manages GATT services for BlueZ
  * 
- * This class is responsible for registering a GATT application with BlueZ,
- * managing GATT services, and handling D-Bus communication for the GATT profile.
+ * BlueZ의 GATT 애플리케이션을 관리하는 클래스로, 여러 GATT 서비스를 등록하고 관리합니다.
+ * BlueZ 5.82와 호환되는 방식으로 D-Bus 등록을 처리합니다.
  */
 class GattApplication : public DBusObject {
 public:
     /**
-     * @brief Constructor
+     * @brief 생성자
      * 
-     * @param connection D-Bus connection
-     * @param path Object path (default: /com/example/gatt)
+     * @param connection D-Bus 연결
+     * @param path 객체 경로 (기본값: /com/example/gatt)
      */
     GattApplication(
-        DBusConnection& connection, 
+        std::shared_ptr<IDBusConnection> connection, 
         const DBusObjectPath& path = DBusObjectPath("/com/example/gatt")
     );
     
     /**
-     * @brief Destructor
+     * @brief 소멸자
      */
     virtual ~GattApplication() = default;
     
     /**
-     * @brief Add a GATT service
+     * @brief GATT 서비스 추가
      * 
-     * @param service Service to add
-     * @return Success status
+     * @param service 추가할 서비스
+     * @return 성공 여부
      */
     bool addService(GattServicePtr service);
     
     /**
-     * @brief Remove a GATT service
+     * @brief GATT 서비스 제거
      * 
-     * @param uuid Service UUID
-     * @return Success status
+     * @param uuid 서비스 UUID
+     * @return 성공 여부
      */
     bool removeService(const GattUuid& uuid);
     
     /**
-     * @brief Find service by UUID
+     * @brief UUID로 서비스 찾기
      * 
-     * @param uuid Service UUID
-     * @return Service pointer (nullptr if not found)
+     * @param uuid 서비스 UUID
+     * @return 서비스 포인터 (없으면 nullptr)
      */
     GattServicePtr getService(const GattUuid& uuid) const;
     
     /**
-     * @brief Register with BlueZ
+     * @brief BlueZ에 등록
      * 
-     * @return Success status
+     * 이 메서드는 모든 서비스, 특성, 설명자를 D-Bus에 등록하고
+     * BlueZ에 GATT 애플리케이션을 등록합니다.
+     * 
+     * @return 성공 여부
      */
     bool registerWithBlueZ();
     
     /**
-     * @brief Unregister from BlueZ
+     * @brief BlueZ에서 등록 해제
      * 
-     * @return Success status
+     * @return 성공 여부
      */
     bool unregisterFromBlueZ();
     
     /**
-     * @brief Check if registered with BlueZ
+     * @brief BlueZ 등록 상태 확인
      */
     bool isRegistered() const { return registered; }
     
     /**
-     * @brief Get all services
+     * @brief 모든 서비스 가져오기
      * 
-     * @return Vector of services
+     * @return 서비스 벡터
      */
     std::vector<GattServicePtr> getServices() const;
     
     /**
-     * @brief Setup D-Bus interfaces
+     * @brief D-Bus 인터페이스 설정
      * 
-     * @return Success status
+     * @return 성공 여부
      */
     bool setupDBusInterfaces();
 
     /**
-     * @brief Ensure all interfaces are registered
+     * @brief 모든 인터페이스 등록 확인
      * 
-     * @return Success status
+     * 애플리케이션의 모든 서비스, 특성, 설명자가 D-Bus에 등록되었는지 확인합니다.
+     * 등록되지 않은 항목이 있으면 등록을 시도합니다.
+     * 
+     * @return 성공 여부
      */
     bool ensureInterfacesRegistered();
     
+    /**
+     * @brief 등록 완료 처리
+     * 
+     * 모든 서비스와 하위 객체의 등록을 완료합니다.
+     * 등록 순서는 애플리케이션 -> 서비스 -> 특성 -> 설명자 순입니다.
+     * 
+     * @return 성공 여부
+     */
+    bool finishAllRegistrations();
+    
 private:
     /**
-     * @brief Handle GetManagedObjects method call
+     * @brief GetManagedObjects 메서드 핸들러
      * 
-     * @param call Method call info
+     * @param call 메서드 호출 정보
      */
     void handleGetManagedObjects(const DBusMethodCall& call);
     
     /**
-     * @brief Create managed objects dictionary
+     * @brief 관리되는 객체 사전 생성
      * 
-     * @return GVariant containing objects dictionary
+     * @return GVariant 형태의 객체 사전
      */
     GVariantPtr createManagedObjectsDict() const;
     
     /**
-     * @brief Register standard services
+     * @brief 표준 서비스 등록
      * 
-     * @return Success status
+     * @return 성공 여부
      */
     bool registerStandardServices();
     
     /**
-     * @brief Validate object hierarchy
+     * @brief 객체 계층 구조 유효성 검사
      * 
-     * @return Validation result
+     * @return 유효성 검사 결과
      */
     bool validateObjectHierarchy() const;
     
     /**
-     * @brief Log object hierarchy for debugging
+     * @brief 디버깅용 객체 계층 구조 로깅
      */
     void logObjectHierarchy() const;
     
-    // Application state
+    // 애플리케이션 상태
     std::vector<GattServicePtr> services;
     mutable std::mutex servicesMutex;
     bool registered;

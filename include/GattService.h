@@ -1,4 +1,3 @@
-// include/GattService.h
 #pragma once
 
 #include "GattTypes.h"
@@ -33,7 +32,7 @@ public:
      * @param isPrimary Whether this is a primary service
      */
     GattService(
-        DBusConnection& connection,
+        std::shared_ptr<IDBusConnection> connection,
         const DBusObjectPath& path,
         const GattUuid& uuid,
         bool isPrimary
