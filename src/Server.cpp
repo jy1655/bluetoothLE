@@ -77,14 +77,14 @@ bool Server::initialize(const std::string& name) {
     
     // 2. GATT 애플리케이션 생성
     application = std::make_unique<GattApplication>(
-        DBusName::getInstance().getConnection(),
-        DBusObjectPath("/com/example/ble")
+        *DBusName::getInstance().getConnection(),
+        "/com/example/ble"
     );
     
     // 3. 광고 객체 생성
     advertisement = std::make_unique<GattAdvertisement>(
-        DBusName::getInstance().getConnection(),
-        DBusObjectPath("/com/example/ble/advertisement")
+        *DBusName::getInstance().getConnection(),
+        "/com/example/ble/advertisement"
     );
     
     // 4. 광고 속성 설정
@@ -124,19 +124,42 @@ bool Server::initialize(const std::string& name) {
 bool Server::registerDBusObjects() {
     Logger::info("Registering D-Bus objects in the correct order...");
     
-    // 1. 애플리케이션 객체 등록 설정
+    // 1. 애플리케이션 객체 구성 및 등록
     if (!application->setupDBusInterfaces()) {
         Logger::error("Failed to setup application D-Bus interfaces");
         return false;
     }
     
-    // 2. 모든 서비스, 특성, 설명자 등록 완료
-    if (!application->finishAllRegistrations()) {
-        Logger::error("Failed to register GATT objects");
-        return false;
+    // 2. 서비스 인터페이스 등록 (전체 서비스 객체 초기화)
+    for (const auto& service : application->getServices()) {
+        if (!service->setupDBusInterfaces()) {
+            Logger::error("Failed to setup service D-Bus interfaces: " + service->getUuid().toString());
+            return false;
+        }
+        
+        // 3. 특성 인터페이스 등록
+        for (const auto& charPair : service->getCharacteristics()) {
+            auto characteristic = charPair.second;
+            if (!characteristic || !characteristic->setupDBusInterfaces()) {
+                Logger::error("Failed to setup characteristic D-Bus interfaces");
+                return false;
+            }
+            
+            // 4. 설명자 인터페이스 등록
+            for (const auto& descPair : characteristic->getDescriptors()) {
+                auto descriptor = descPair.second;
+                if (!descriptor || !descriptor->setupDBusInterfaces()) {
+                    Logger::error("Failed to setup descriptor D-Bus interfaces");
+                    return false;
+                }
+            }
+        }
     }
     
-    // 3. 광고 객체 등록 설정
+    // 5. 모든 객체 등록 완료
+    // (애플리케이션 객체가 이미 등록되어 있으므로 finishAllRegistrations()는 호출하지 않음)
+    
+    // 6. 광고 객체 인터페이스 등록
     if (!advertisement->setupDBusInterfaces()) {
         Logger::error("Failed to setup advertisement D-Bus interfaces");
         return false;
@@ -169,7 +192,7 @@ bool Server::start(bool secureMode) {
     
     // 2. 순서대로 객체 등록
     
-    // 2.1 D-Bus 객체 등록
+    // 2.1 D-Bus 객체 등록 (애플리케이션, 서비스, 특성, 설명자, 광고)
     if (!registerDBusObjects()) {
         Logger::error("Failed to register D-Bus objects");
         return false;
@@ -222,7 +245,7 @@ void Server::stop() {
         // 1. ConnectionManager 중지
         ConnectionManager::getInstance().shutdown();
         
-        // 2. 광고 등록 해제
+        // 2. 광고 등록 해제 (BlueZ 5.82 호환 방식)
         if (advertisement) {
             Logger::info("Unregistering advertisement from BlueZ...");
             advertisement->unregisterFromBlueZ();
@@ -251,7 +274,12 @@ void Server::stop() {
         
         // 6. 어댑터 정리
         Logger::info("Resetting Bluetooth adapter...");
-        system("sudo hciconfig hci0 down > /dev/null 2>&1");
+        auto connection = DBusName::getInstance().getConnection();
+        if (connection) {
+            BlueZUtils::resetAdapter(connection, BlueZConstants::ADAPTER_PATH);
+        } else {
+            system("sudo hciconfig hci0 down > /dev/null 2>&1");
+        }
         
         initialized = false;
         
@@ -299,12 +327,12 @@ GattServicePtr Server::createService(const GattUuid& uuid, bool isPrimary) {
     
     // 경로는 패턴을 사용하여 생성
     std::string serviceNum = "service" + std::to_string(application->getServices().size() + 1);
-    std::string servicePath = application->getPath().toString() + "/" + serviceNum;
+    std::string servicePath = application->getPath() + "/" + serviceNum;
     
     // 서비스 생성
     auto service = std::make_shared<GattService>(
-        DBusName::getInstance().getConnection(),
-        DBusObjectPath(servicePath),
+        *DBusName::getInstance().getConnection(),
+        servicePath,
         uuid,
         isPrimary
     );
@@ -334,19 +362,16 @@ void Server::configureAdvertisement(
     Logger::info("Configuring BLE advertisement");
     
     // 1. BlueZ 5.82 호환성: Includes 배열 설정
-    std::vector<std::string> includes = {"tx-power", "local-name"};
+    std::vector<std::string> includes;
     
-    // Appearance가 설정된 경우 추가
-    if (advertisement->getAppearance() != 0) {
-        includes.push_back("appearance");
+    // 기본 포함 항목
+    if (includeTxPower) {
+        includes.push_back("tx-power");
     }
     
-    // Service UUID가 있으면 추가
-    if (!serviceUuids.empty()) {
-        includes.push_back("service-uuids");
+    if (!name.empty()) {
+        includes.push_back("local-name");
     }
-    
-    advertisement->setIncludes(includes);
     
     // 2. TX Power 설정
     advertisement->setIncludeTxPower(includeTxPower);
@@ -361,22 +386,33 @@ void Server::configureAdvertisement(
     // 4. 서비스 UUID 설정
     if (!serviceUuids.empty()) {
         advertisement->addServiceUUIDs(serviceUuids);
+        includes.push_back("service-uuids");
     } else {
         // 애플리케이션의 모든 서비스 추가
         for (const auto& service : application->getServices()) {
             advertisement->addServiceUUID(service->getUuid());
+        }
+        if (!application->getServices().empty()) {
+            includes.push_back("service-uuids");
         }
     }
     
     // 5. 제조사 데이터 설정
     if (manufacturerId != 0 && !manufacturerData.empty()) {
         advertisement->setManufacturerData(manufacturerId, manufacturerData);
+        includes.push_back("manufacturer-data");
     }
     
     // 6. 타임아웃 설정
     if (timeout > 0) {
         advertisement->setDuration(timeout);
     }
+    
+    // 7. Discoverable 설정 (BlueZ 5.82에서 필수)
+    advertisement->setDiscoverable(true);
+    
+    // 8. Includes 설정 완료
+    advertisement->setIncludes(includes);
     
     // 타임아웃 저장
     advTimeout = timeout;
@@ -585,15 +621,28 @@ bool Server::enableAdvertisingFallback() {
     try {
         auto conn = DBusName::getInstance().getConnection();
         
-        // Discoverable 및 Powered 활성화
-        GVariantPtr discValue = Utils::gvariantPtrFromBoolean(true);
-        GVariantPtr powValue = Utils::gvariantPtrFromBoolean(true);
+        // 어댑터 프록시 생성
+        auto adapterProxy = conn->createProxy(
+            BlueZConstants::BLUEZ_SERVICE,
+            BlueZConstants::ADAPTER_PATH
+        );
         
-        bool setPow = BlueZUtils::setAdapterProperty(conn, "Powered", std::move(powValue), BlueZConstants::ADAPTER_PATH);
-        usleep(100000);  // 100ms
-        bool setDisc = BlueZUtils::setAdapterProperty(conn, "Discoverable", std::move(discValue), BlueZConstants::ADAPTER_PATH);
-        
-        if (setPow && setDisc) {
+        if (adapterProxy) {
+            // Discoverable 및 Powered 활성화
+            adapterProxy->callMethod("Set")
+                .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+                .withArguments(BlueZConstants::ADAPTER_INTERFACE, 
+                              "Discoverable", 
+                              sdbus::Variant(true));
+            
+            usleep(100000);  // 100ms
+            
+            adapterProxy->callMethod("Set")
+                .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+                .withArguments(BlueZConstants::ADAPTER_INTERFACE, 
+                              "Powered", 
+                              sdbus::Variant(true));
+            
             Logger::info("Successfully enabled advertising via D-Bus properties");
             return true;
         }

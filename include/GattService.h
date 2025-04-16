@@ -1,9 +1,9 @@
-// include/GattService.h 수정
+// 4. GattService.h - 수정된 서비스 클래스
 #pragma once
 
-#include "SDBusInterface.h"
+#include "IGattNode.h"
+#include "GattCharacteristic.h"
 #include "SDBusObject.h"
-#include "GattTypes.h"
 #include "BlueZConstants.h"
 #include <map>
 #include <memory>
@@ -11,23 +11,24 @@
 
 namespace ggk {
 
-// 전방 선언
-class GattCharacteristic;
-using GattCharacteristicPtr = std::shared_ptr<GattCharacteristic>;
-
-class GattService {
+/**
+ * @brief GATT 서비스 구현
+ */
+class GattService : public IGattNode {
 public:
-    GattService(SDBusConnection& connection, 
-               const std::string& path,
-               const GattUuid& uuid,
-               bool isPrimary);
+    GattService(
+        SDBusConnection& connection, 
+        const std::string& path,
+        const GattUuid& uuid,
+        bool isPrimary);
     
     virtual ~GattService() = default;
     
-    // 기본 접근자
-    const GattUuid& getUuid() const { return uuid; }
-    bool isPrimary() const { return primary; }
-    const std::string& getPath() const { return object.getPath(); }
+    // IGattNode 구현
+    const GattUuid& getUuid() const override { return uuid; }
+    const std::string& getPath() const override { return object.getPath(); }
+    bool setupDBusInterfaces() override;
+    bool isRegistered() const override { return object.isRegistered(); }
     
     // 특성 관리
     GattCharacteristicPtr createCharacteristic(
@@ -42,10 +43,11 @@ public:
         return characteristics;
     }
     
-    // D-Bus 인터페이스 설정
-    bool setupDBusInterfaces();
+    // 속성 접근자
+    bool isPrimary() const { return primary; }
+    
+    // 추가 메서드
     bool finishRegistration() { return object.registerObject(); }
-    bool isRegistered() const { return object.isRegistered(); }
     
 private:
     // D-Bus 속성 게터

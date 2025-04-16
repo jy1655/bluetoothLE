@@ -148,47 +148,40 @@ bool BlueZUtils::restartBlueZService() {
     return true;
 }
 
-std::vector<std::string> BlueZUtils::getAdapters(std::shared_ptr<IDBusConnection> connection) {
+std::vector<std::string> BlueZUtils::getAdapters(std::shared_ptr<SDBusConnection> connection) {
     std::vector<std::string> adapters;
     
+    if (!connection || !connection->isConnected()) {
+        Logger::error("Cannot get adapters: invalid D-Bus connection");
+        return adapters;
+    }
+    
     try {
-        // Call org.freedesktop.DBus.ObjectManager.GetManagedObjects()
-        GVariantPtr result = connection->callMethod(
+        // Create proxy to ObjectManager interface
+        auto proxy = connection->createProxy(
             BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(BlueZConstants::ROOT_PATH),
-            BlueZConstants::OBJECT_MANAGER_INTERFACE,
-            BlueZConstants::GET_MANAGED_OBJECTS
+            BlueZConstants::ROOT_PATH
         );
         
-        if (!result) {
-            Logger::error("Failed to get managed objects");
+        if (!proxy) {
+            Logger::error("Failed to create ObjectManager proxy");
             return adapters;
         }
+
+        // Extract result - a{oa{sa{sv}}}
+        std::map<sdbus::ObjectPath, 
+                std::map<std::string, 
+                std::map<std::string, sdbus::Variant>>> managedObjects;
         
-        // Parse the result (a{oa{sa{sv}}})
-        GVariantIter iter;
-        g_variant_iter_init(&iter, result.get());
+        // Call GetManagedObjects method
+        proxy->callMethod(BlueZConstants::GET_MANAGED_OBJECTS)
+            .onInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE).storeResultsTo(managedObjects);
         
-        gchar* objectPath;
-        GVariant* interfaces;
         
-        while (g_variant_iter_next(&iter, "{&o@a{sa{sv}}}", &objectPath, &interfaces)) {
-            if (!objectPath || !interfaces) {
-                continue;
-            }
-            
-            GVariantPtr interfacesPtr = makeGVariantPtr(interfaces, true); 
-            
-            // Check if this object has the Adapter1 interface
-            GVariant* adapterInterface = g_variant_lookup_value(
-                interfacesPtr.get(),
-                BlueZConstants::ADAPTER_INTERFACE.c_str(),
-                G_VARIANT_TYPE("a{sv}")
-            );
-            
-            if (adapterInterface) {
+        // Find objects with the Adapter1 interface
+        for (const auto& [objectPath, interfaces] : managedObjects) {
+            if (interfaces.find(BlueZConstants::ADAPTER_INTERFACE) != interfaces.end()) {
                 adapters.push_back(objectPath);
-                g_variant_unref(adapterInterface);
             }
         }
     }
@@ -199,7 +192,7 @@ std::vector<std::string> BlueZUtils::getAdapters(std::shared_ptr<IDBusConnection
     return adapters;
 }
 
-std::string BlueZUtils::getDefaultAdapter(std::shared_ptr<IDBusConnection> connection) {
+std::string BlueZUtils::getDefaultAdapter(std::shared_ptr<SDBusConnection> connection) {
     std::vector<std::string> adapters = getAdapters(connection);
     
     if (adapters.empty()) {
@@ -211,80 +204,73 @@ std::string BlueZUtils::getDefaultAdapter(std::shared_ptr<IDBusConnection> conne
     return adapters[0];
 }
 
-GVariantPtr BlueZUtils::getAdapterProperty(
-    std::shared_ptr<IDBusConnection> connection,
+sdbus::Variant BlueZUtils::getAdapterProperty(
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& property,
     const std::string& adapterPath)
 {
+    if (!connection || !connection->isConnected()) {
+        Logger::error("Cannot get adapter property: invalid D-Bus connection");
+        return sdbus::Variant();
+    }
+    
     try {
-        // Call org.freedesktop.DBus.Properties.Get
-        GVariant* params = g_variant_new("(ss)", 
-                               BlueZConstants::ADAPTER_INTERFACE.c_str(),
-                               property.c_str());
-        // floating reference를 sink하여 참조 카운트 관리
-        GVariantPtr parameters = makeGVariantPtr(g_variant_ref_sink(params), true); 
-        
-        GVariantPtr result = connection->callMethod(
+        // Create proxy for adapter
+        auto proxy = connection->createProxy(
             BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(adapterPath),
-            BlueZConstants::PROPERTIES_INTERFACE,
-            "Get",
-            std::move(parameters)
+            adapterPath
         );
         
-        if (!result) {
-            Logger::error("Failed to get adapter property: " + property);
-            return makeNullGVariantPtr();
+        if (!proxy) {
+            Logger::error("Failed to create adapter proxy");
+            return sdbus::Variant();
         }
+
+        // Extract variant
+        sdbus::Variant value;
         
-        // Extract the variant from the result (which is a variant of variant)
-        GVariant* variant = nullptr;
-        g_variant_get(result.get(), "(v)", &variant);
+        // Call Get method on Properties interface
+        proxy->callMethod("Get")
+            .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+            .withArguments(std::string(BlueZConstants::ADAPTER_INTERFACE), property)
+            .storeResultsTo(value);
         
-        if (!variant) {
-            Logger::error("Invalid result format for adapter property: " + property);
-            return makeNullGVariantPtr();
-        }
-        
-        return makeGVariantPtr(variant, true);  // take ownership
+        return value;
     }
     catch (const std::exception& e) {
         Logger::error("Exception in getAdapterProperty: " + std::string(e.what()));
-        return makeNullGVariantPtr();
+        return sdbus::Variant();
     }
 }
 
 bool BlueZUtils::setAdapterProperty(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& property,
-    GVariantPtr value,
+    const sdbus::Variant& value,
     const std::string& adapterPath)
 {
+    if (!connection || !connection->isConnected()) {
+        Logger::error("Cannot set adapter property: invalid D-Bus connection");
+        return false;
+    }
+    
     try {
-        if (!value) {
-            Logger::error("Cannot set adapter property with null value: " + property);
+        // Create proxy for adapter
+        auto proxy = connection->createProxy(
+            BlueZConstants::BLUEZ_SERVICE,
+            adapterPath
+        );
+        
+        if (!proxy) {
+            Logger::error("Failed to create adapter proxy");
             return false;
         }
         
-        // Create parameters for Properties.Set
-        GVariantBuilder builder;
-        g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
-        g_variant_builder_add(&builder, "s", BlueZConstants::ADAPTER_INTERFACE.c_str());
-        g_variant_builder_add(&builder, "s", property.c_str());
-        g_variant_builder_add(&builder, "v", value.get());
+        // Call Set method on Properties interface
+        proxy->callMethod("Set")
+            .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+            .withArguments(std::string(BlueZConstants::ADAPTER_INTERFACE), property, value);
         
-        GVariant* params = g_variant_builder_end(&builder);
-        GVariantPtr parameters = makeGVariantPtr(params, true);
-        
-        GVariantPtr result = connection->callMethod(
-            BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(adapterPath),
-            BlueZConstants::PROPERTIES_INTERFACE,
-            "Set",
-            std::move(parameters)
-        );
-        
-        // No return value for Set, so just check if the call succeeded
         return true;
     }
     catch (const std::exception& e) {
@@ -294,51 +280,67 @@ bool BlueZUtils::setAdapterProperty(
 }
 
 bool BlueZUtils::isAdapterPowered(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& adapterPath)
 {
-    GVariantPtr result = getAdapterProperty(connection, 
-                                          BlueZConstants::ADAPTER_PROPERTY_POWERED,
-                                          adapterPath);
-    
-    if (!result) {
+    try {
+        sdbus::Variant result = getAdapterProperty(
+            connection, 
+            BlueZConstants::ADAPTER_PROPERTY_POWERED, 
+            adapterPath
+        );
+        
+        if (result.isEmpty()) {
+            return false;
+        }
+        
+        return result.get<bool>();
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in isAdapterPowered: " + std::string(e.what()));
         return false;
     }
-    
-    return Utils::variantToBoolean(result.get(), false);
 }
 
 bool BlueZUtils::setAdapterPower(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     bool powered,
     const std::string& adapterPath)
 {
     Logger::info(std::string("Setting adapter power to: ") + (powered ? "on" : "off"));
     
-    GVariantPtr value = Utils::gvariantPtrFromBoolean(powered);
-    
-    bool success = setAdapterProperty(connection, 
-                                    BlueZConstants::ADAPTER_PROPERTY_POWERED,
-                                    std::move(value),
-                                    adapterPath);
-    
-    if (success) {
-        // Wait a moment for the power state to change
-        usleep(500000);  // 500ms
+    try {
+        // Set the Powered property
+        sdbus::Variant value(powered);
+        bool success = setAdapterProperty(
+            connection,
+            BlueZConstants::ADAPTER_PROPERTY_POWERED,
+            value,
+            adapterPath
+        );
         
-        // Verify the change
-        bool actualPowered = isAdapterPowered(connection, adapterPath);
-        if (actualPowered != powered) {
-            Logger::warn("Adapter power state did not change as expected");
-            return false;
+        if (success) {
+            // Wait a moment for the power state to change
+            usleep(500000);  // 500ms
+            
+            // Verify the change
+            bool actualPowered = isAdapterPowered(connection, adapterPath);
+            if (actualPowered != powered) {
+                Logger::warn("Adapter power state did not change as expected");
+                return false;
+            }
         }
+        
+        return success;
     }
-    
-    return success;
+    catch (const std::exception& e) {
+        Logger::error("Exception in setAdapterPower: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool BlueZUtils::setAdapterDiscoverable(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     bool discoverable,
     uint16_t timeout,
     const std::string& adapterPath)
@@ -346,47 +348,57 @@ bool BlueZUtils::setAdapterDiscoverable(
     Logger::info(std::string("Setting adapter discoverable to: ") + 
                  (discoverable ? "on" : "off"));
     
-    // Set discoverable
-    GVariantPtr discValue = Utils::gvariantPtrFromBoolean(discoverable);
-    
-    bool success = setAdapterProperty(connection, 
-                                    BlueZConstants::ADAPTER_PROPERTY_DISCOVERABLE,
-                                    std::move(discValue),
-                                    adapterPath);
-    
-    if (!success) {
+    try {
+        // Set discoverable property
+        sdbus::Variant discValue(discoverable);
+        bool success = setAdapterProperty(
+            connection,
+            BlueZConstants::ADAPTER_PROPERTY_DISCOVERABLE,
+            discValue,
+            adapterPath
+        );
+        
+        if (!success) {
+            return false;
+        }
+        
+        // Set timeout if discoverable is enabled
+        if (discoverable && timeout > 0) {
+            sdbus::Variant timeoutValue(timeout);
+            success = setAdapterProperty(
+                connection,
+                BlueZConstants::ADAPTER_PROPERTY_DISCOVERABLE_TIMEOUT,
+                timeoutValue,
+                adapterPath
+            );
+        }
+        
+        return success;
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in setAdapterDiscoverable: " + std::string(e.what()));
         return false;
     }
-    
-    // Set timeout if discoverable is enabled
-    if (discoverable && timeout > 0) {
-        GVariantPtr timeoutValue = Utils::gvariantPtrFromUInt(timeout);
-        
-        success = setAdapterProperty(connection, 
-                                    BlueZConstants::ADAPTER_PROPERTY_DISCOVERABLE_TIMEOUT,
-                                    std::move(timeoutValue),
-                                    adapterPath);
-    }
-    
-    return success;
 }
 
 bool BlueZUtils::setAdapterName(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& name,
     const std::string& adapterPath)
 {
     Logger::info("Setting adapter alias to: " + name);
     
-    // BlueZ 5.82에서는 Name 속성이 읽기 전용이므로 Alias 속성을 사용
-    GVariantPtr value = Utils::gvariantPtrFromString(name);
-    
     try {
-        // Alias 속성 설정
-        bool success = setAdapterProperty(connection, 
-                                         "Alias",
-                                         std::move(value),
-                                         adapterPath);
+        // In BlueZ 5.82, Name property is read-only, use Alias instead
+        sdbus::Variant value(name);
+        
+        // Set the Alias property
+        bool success = setAdapterProperty(
+            connection,
+            "Alias", // use Alias instead of Name
+            value,
+            adapterPath
+        );
         
         if (success) {
             Logger::info("Successfully set adapter alias");
@@ -397,68 +409,80 @@ bool BlueZUtils::setAdapterName(
         }
     }
     catch (const std::exception& e) {
-        Logger::warn("Exception in setAdapterName (using Alias): " + std::string(e.what()) + 
-                     ". Continuing anyway.");
+        Logger::warn("Exception in setAdapterName: " + std::string(e.what()) + 
+                    ". Continuing anyway.");
         return false;
     }
 }
 
 bool BlueZUtils::resetAdapter(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& adapterPath)
 {
     Logger::info("Resetting adapter: " + adapterPath);
     
-    // Power off
-    if (!setAdapterPower(connection, false, adapterPath)) {
-        Logger::warn("Failed to power off adapter during reset");
+    try {
+        // Power off
+        if (!setAdapterPower(connection, false, adapterPath)) {
+            Logger::warn("Failed to power off adapter during reset");
+        }
+        
+        // Wait a moment
+        usleep(500000);  // 500ms
+        
+        // Power on
+        if (!setAdapterPower(connection, true, adapterPath)) {
+            Logger::error("Failed to power on adapter after reset");
+            return false;
+        }
+        
+        return true;
     }
-    
-    // Wait a moment
-    usleep(500000);  // 500ms
-    
-    // Power on
-    if (!setAdapterPower(connection, true, adapterPath)) {
-        Logger::error("Failed to power on adapter after reset");
+    catch (const std::exception& e) {
+        Logger::error("Exception in resetAdapter: " + std::string(e.what()));
         return false;
     }
-    
-    return true;
 }
 
 bool BlueZUtils::initializeAdapter(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& name,
     const std::string& adapterPath)
 {
     Logger::info("Initializing adapter for BLE peripheral mode");
     
-    // Check if adapter exists
-    if (!Utils::isBluetoothAdapterAvailable()) {
-        Logger::error("Bluetooth adapter not available");
+    try {
+        // Check if adapter exists
+        if (!Utils::isBluetoothAdapterAvailable()) {
+            Logger::error("Bluetooth adapter not available");
+            return false;
+        }
+        
+        // Reset adapter
+        if (!resetAdapter(connection, adapterPath)) {
+            Logger::error("Failed to reset adapter");
+            return false;
+        }
+        
+        // Set name
+        if (!name.empty() && !setAdapterName(connection, name, adapterPath)) {
+            Logger::warn("Failed to set adapter name");
+            // Continue anyway, not critical
+        }
+        
+        // Set discoverable
+        if (!setAdapterDiscoverable(connection, true, 0, adapterPath)) {
+            Logger::warn("Failed to set adapter as discoverable");
+            // Continue anyway, not critical
+        }
+        
+        Logger::info("Adapter initialization complete");
+        return true;
+    }
+    catch (const std::exception& e) {
+        Logger::error("Exception in initializeAdapter: " + std::string(e.what()));
         return false;
     }
-    
-    // Reset adapter
-    if (!resetAdapter(connection, adapterPath)) {
-        Logger::error("Failed to reset adapter");
-        return false;
-    }
-    
-    // Set name
-    if (!name.empty() && !setAdapterName(connection, name, adapterPath)) {
-        Logger::warn("Failed to set adapter name");
-        // Continue anyway, not critical
-    }
-    
-    // Set discoverable
-    if (!setAdapterDiscoverable(connection, true, 0, adapterPath)) {
-        Logger::warn("Failed to set adapter as discoverable");
-        // Continue anyway, not critical
-    }
-    
-    Logger::info("Adapter initialization complete");
-    return true;
 }
 
 std::string BlueZUtils::createBluetoothCtlScript(const std::vector<std::string>& commands) {
@@ -486,69 +510,56 @@ bool BlueZUtils::runBluetoothCtlCommands(const std::vector<std::string>& command
 }
 
 std::vector<std::string> BlueZUtils::getConnectedDevices(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& adapterPath)
 {
     std::vector<std::string> connectedDevices;
     
+    if (!connection || !connection->isConnected()) {
+        Logger::error("Cannot get connected devices: invalid D-Bus connection");
+        return connectedDevices;
+    }
+    
     try {
-        // Call org.freedesktop.DBus.ObjectManager.GetManagedObjects()
-        GVariantPtr result = connection->callMethod(
+        // Create proxy to ObjectManager interface
+        auto proxy = connection->createProxy(
             BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(BlueZConstants::ROOT_PATH),
-            BlueZConstants::OBJECT_MANAGER_INTERFACE,
-            BlueZConstants::GET_MANAGED_OBJECTS
+            BlueZConstants::ROOT_PATH
         );
         
-        if (!result) {
-            Logger::error("Failed to get managed objects");
+        if (!proxy) {
+            Logger::error("Failed to create ObjectManager proxy");
             return connectedDevices;
         }
+
+        std::map<sdbus::ObjectPath, 
+                std::map<std::string, 
+                std::map<std::string, sdbus::Variant>>> managedObjects;
         
-        // Parse the result (a{oa{sa{sv}}})
-        GVariantIter iter;
-        g_variant_iter_init(&iter, result.get());
+        // Call GetManagedObjects method
+        proxy->callMethod(BlueZConstants::GET_MANAGED_OBJECTS)
+            .onInterface(BlueZConstants::OBJECT_MANAGER_INTERFACE).storeResultsTo(managedObjects);
         
-        gchar* objectPath;
-        GVariant* interfaces;
-        
-        while (g_variant_iter_next(&iter, "{&o@a{sa{sv}}}", &objectPath, &interfaces)) {
-            if (!objectPath || !interfaces) {
-                continue;
-            }
-            
+        // Find device objects under this adapter with Connected=true
+        for (const auto& [objectPath, interfaces] : managedObjects) {
             // Check if this is a device under our adapter
-            if (std::string(objectPath).find(adapterPath) != 0) {
-                g_variant_unref(interfaces);
+            std::string pathStr = objectPath;
+            if (pathStr.find(adapterPath) != 0) {
                 continue;
             }
-            
-            GVariantPtr interfacesPtr = makeGVariantPtr(interfaces, true); 
             
             // Check if this object has the Device1 interface
-            GVariant* deviceInterface = g_variant_lookup_value(
-                interfacesPtr.get(),
-                BlueZConstants::DEVICE_INTERFACE.c_str(),
-                G_VARIANT_TYPE("a{sv}")
-            );
+            auto deviceIt = interfaces.find(BlueZConstants::DEVICE_INTERFACE);
+            if (deviceIt == interfaces.end()) {
+                continue;
+            }
             
-            if (deviceInterface) {
-                // Check if device is connected
-                GVariant* connectedValue = g_variant_lookup_value(
-                    deviceInterface,
-                    BlueZConstants::PROPERTY_CONNECTED.c_str(),
-                    G_VARIANT_TYPE_BOOLEAN
-                );
-                
-                if (connectedValue && g_variant_get_boolean(connectedValue)) {
-                    connectedDevices.push_back(objectPath);
-                }
-                
-                if (connectedValue) {
-                    g_variant_unref(connectedValue);
-                }
-                
-                g_variant_unref(deviceInterface);
+            // Check if device is connected
+            const auto& deviceProps = deviceIt->second;
+            auto connectedIt = deviceProps.find(BlueZConstants::PROPERTY_CONNECTED);
+            
+            if (connectedIt != deviceProps.end() && connectedIt->second.get<bool>()) {
+                connectedDevices.push_back(pathStr);
             }
         }
     }
@@ -560,34 +571,51 @@ std::vector<std::string> BlueZUtils::getConnectedDevices(
 }
 
 bool BlueZUtils::isAdvertisingSupported(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& adapterPath)
 {
+    if (!connection || !connection->isConnected()) {
+        Logger::error("Cannot check advertising support: invalid D-Bus connection");
+        return false;
+    }
+    
     try {
-        // See if LEAdvertisingManager1 interface exists
-        GVariantPtr parameters = Utils::gvariantPtrFromString(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE);
-        
-        GVariantPtr result = connection->callMethod(
+        // Create proxy for adapter
+        auto proxy = connection->createProxy(
             BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(adapterPath),
-            BlueZConstants::PROPERTIES_INTERFACE,
-            "GetAll",
-            std::move(parameters)
+            adapterPath
         );
         
-        return result != nullptr;
+        if (!proxy) {
+            Logger::error("Failed to create adapter proxy");
+            return false;
+        }
+        
+        // Try to get properties of LEAdvertisingManager1 interface
+        proxy->callMethod("GetAll")
+            .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+            .withArguments(std::string(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE));
+        
+        // If we got here without exception, the interface is supported
+        return true;
     }
     catch (const std::exception& e) {
         // Exception is expected if interface doesn't exist
+        Logger::debug("Advertising not supported: " + std::string(e.what()));
         return false;
     }
 }
 
 bool BlueZUtils::tryEnableAdvertising(
-    std::shared_ptr<IDBusConnection> connection,
+    std::shared_ptr<SDBusConnection> connection,
     const std::string& adapterPath)
 {
     Logger::info("Attempting to enable BLE advertising");
+    
+    if (!connection || !connection->isConnected()) {
+        Logger::error("Cannot enable advertising: invalid D-Bus connection");
+        return false;
+    }
     
     // Track success for each method
     struct {
@@ -632,16 +660,32 @@ bool BlueZUtils::tryEnableAdvertising(
     try {
         Logger::debug("Method 3: Enabling advertising via D-Bus properties");
         
+        // Create proxy for adapter
+        auto proxy = connection->createProxy(
+            BlueZConstants::BLUEZ_SERVICE,
+            adapterPath
+        );
+        
+        if (!proxy) {
+            Logger::error("Failed to create adapter proxy for advertising");
+            return false;
+        }
+        
         // Make sure adapter is powered
         if (!isAdapterPowered(connection, adapterPath)) {
-            GVariantPtr poweredValue = Utils::gvariantPtrFromBoolean(true);
-            setAdapterProperty(connection, "Powered", std::move(poweredValue), adapterPath);
+            sdbus::Variant poweredValue(true);
+            setAdapterProperty(connection, BlueZConstants::ADAPTER_PROPERTY_POWERED, poweredValue, adapterPath);
             usleep(200000);  // 200ms to let it take effect
         }
         
         // Try to enable discoverable (similar to advertising)
-        GVariantPtr discValue = Utils::gvariantPtrFromBoolean(true);
-        methods.dbus = setAdapterProperty(connection, "Discoverable", std::move(discValue), adapterPath);
+        sdbus::Variant discValue(true);
+        methods.dbus = setAdapterProperty(
+            connection, 
+            BlueZConstants::ADAPTER_PROPERTY_DISCOVERABLE, 
+            discValue, 
+            adapterPath
+        );
         
         if (methods.dbus) {
             Logger::info("Successfully enabled advertising via D-Bus properties");
@@ -676,7 +720,12 @@ bool BlueZUtils::tryEnableAdvertising(
     return false;
 }
 
-bool BlueZUtils::checkBlueZFeatures(std::shared_ptr<IDBusConnection> connection) {
+bool BlueZUtils::checkBlueZFeatures(std::shared_ptr<SDBusConnection> connection) {
+    if (!connection || !connection->isConnected()) {
+        Logger::error("Cannot check BlueZ features: invalid D-Bus connection");
+        return false;
+    }
+    
     bool featuresOk = true;
     
     // Get default adapter
@@ -688,23 +737,25 @@ bool BlueZUtils::checkBlueZFeatures(std::shared_ptr<IDBusConnection> connection)
     
     // Check for GATT Manager support
     try {
-        GVariantPtr parameters = Utils::gvariantPtrFromString(BlueZConstants::GATT_MANAGER_INTERFACE);
-        
-        GVariantPtr result = connection->callMethod(
+        auto proxy = connection->createProxy(
             BlueZConstants::BLUEZ_SERVICE,
-            DBusObjectPath(adapter),
-            BlueZConstants::PROPERTIES_INTERFACE,
-            "GetAll",
-            std::move(parameters)
+            adapter
         );
         
-        if (!result) {
-            Logger::error("GATT Manager interface not supported");
-            featuresOk = false;
+        if (!proxy) {
+            Logger::error("Failed to create adapter proxy");
+            return false;
         }
+        
+        // Check for GattManager1 interface
+        proxy->callMethod("GetAll")
+            .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+            .withArguments(std::string(BlueZConstants::GATT_MANAGER_INTERFACE));
+        
+        // If we get here, the interface exists
     }
-    catch (const std::exception&) {
-        Logger::error("GATT Manager interface not supported");
+    catch (const std::exception& e) {
+        Logger::error("GATT Manager interface not supported: " + std::string(e.what()));
         featuresOk = false;
     }
     

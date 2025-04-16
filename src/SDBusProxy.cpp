@@ -1,4 +1,4 @@
-#include "dbus/SDBusProxy.h"
+#include "SDBusProxy.h"
 #include "Logger.h"
 
 namespace ggk {

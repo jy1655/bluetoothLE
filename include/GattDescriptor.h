@@ -1,9 +1,9 @@
-// include/GattDescriptor.h
+// 2. GattDescriptor.h - 수정된 설명자 클래스
 #pragma once
 
-#include "GattTypes.h"
+#include "IGattNode.h"
 #include "GattCallbacks.h"
-#include "SDBusObject.h" 
+#include "SDBusObject.h"
 #include "BlueZConstants.h"
 #include <vector>
 #include <memory>
@@ -11,34 +11,37 @@
 
 namespace ggk {
 
-// 전방 선언 (순환 의존성 방지)
+// 전방 선언
 class GattCharacteristic;
 
-class GattDescriptor {
+/**
+ * @brief GATT 설명자 구현
+ */
+class GattDescriptor : public IGattNode {
 public:
     // 생성자
     GattDescriptor(
-        SDBusConnection& connection,  // DBusConnection 대신 SDBusConnection 사용
+        SDBusConnection& connection,  
         const std::string& path,
         const GattUuid& uuid,
-        GattCharacteristic& characteristic,
+        GattCharacteristic* characteristic, // 포인터로 변경 (weak reference)
         uint8_t permissions
     );
     
     virtual ~GattDescriptor() = default;
     
-    // 속성 접근자
-    const GattUuid& getUuid() const { return uuid; }
+    // IGattNode 구현
+    const GattUuid& getUuid() const override { return uuid; }
+    const std::string& getPath() const override { return object.getPath(); }
+    bool setupDBusInterfaces() override;
+    bool isRegistered() const override { return object.isRegistered(); }
     
+    // 값 관련 메서드
     const std::vector<uint8_t>& getValue() const {
         std::lock_guard<std::mutex> lock(valueMutex);
         return value;
     }
     
-    uint8_t getPermissions() const { return permissions; }
-    const std::string& getPath() const { return object.getPath(); }
-    
-    // 값 설정
     void setValue(const std::vector<uint8_t>& value);
     
     // 콜백 설정
@@ -52,19 +55,18 @@ public:
         writeCallback = callback;
     }
     
-    // BlueZ D-Bus 인터페이스 설정
-    bool setupDBusInterfaces();
-    bool isRegistered() const { return object.isRegistered(); }
-
-    // 부모 특성 접근자
-    GattCharacteristic& getCharacteristic() const { return characteristic; }
+    // 특성 약한 참조 접근자
+    GattCharacteristic* getCharacteristic() const { return parentCharacteristic; }
+    
+    // 권한 접근자
+    uint8_t getPermissions() const { return permissions; }
     
 private:
     // 내부 상태
     SDBusConnection& connection;
     SDBusObject object;
     GattUuid uuid;
-    GattCharacteristic& characteristic;
+    GattCharacteristic* parentCharacteristic; // 약한 참조로 변경
     uint8_t permissions;
     std::vector<uint8_t> value;
     mutable std::mutex valueMutex;

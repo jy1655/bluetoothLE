@@ -1,4 +1,4 @@
-#include "dbus/SDBusError.h"
+#include "SDBusError.h"
 
 namespace ggk {
 

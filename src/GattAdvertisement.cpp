@@ -42,12 +42,18 @@ void GattAdvertisement::addServiceUUIDs(const std::vector<GattUuid>& uuids) {
 void GattAdvertisement::setManufacturerData(uint16_t manufacturerId, const std::vector<uint8_t>& data) {
     manufacturerData[manufacturerId] = data;
     Logger::debug("ID 0x" + std::to_string(manufacturerId) + "에 대한 제조사 데이터 설정됨");
+    
+    // BlueZ 5.82 호환성: 제조사 데이터 추가 시 includes에도 추가
+    addInclude("manufacturer-data");
 }
 
 void GattAdvertisement::setServiceData(const GattUuid& serviceUuid, const std::vector<uint8_t>& data) {
     if (!serviceUuid.toString().empty()) {
         serviceData[serviceUuid] = data;
         Logger::debug("UUID에 대한 서비스 데이터 설정됨: " + serviceUuid.toString());
+        
+        // BlueZ 5.82 호환성: 서비스 데이터 추가 시 includes에도 추가
+        addInclude("service-data");
     }
 }
 
@@ -125,7 +131,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
     
     // 모든 속성 한 번에 정의
     
-    // Type 속성 (필수)
+    // Type 속성 (필수) - BlueZ 5.82에서 필수
     object.registerProperty(
         BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
         "Type",
@@ -133,7 +139,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         [this]() -> std::string { return getTypeProperty(); }
     );
     
-    // ServiceUUIDs 속성 (필수)
+    // ServiceUUIDs 속성 - BlueZ 5.82에서 Includes로 관리됨
     object.registerProperty(
         BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
         "ServiceUUIDs",
@@ -141,7 +147,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         [this]() -> std::vector<std::string> { return getServiceUUIDsProperty(); }
     );
     
-    // ManufacturerData 속성
+    // ManufacturerData 속성 - BlueZ 5.82에서 Includes로 관리됨
     object.registerProperty(
         BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
         "ManufacturerData",
@@ -149,7 +155,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         [this]() -> std::map<uint16_t, sdbus::Variant> { return getManufacturerDataProperty(); }
     );
     
-    // ServiceData 속성
+    // ServiceData 속성 - BlueZ 5.82에서 Includes로 관리됨
     object.registerProperty(
         BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
         "ServiceData",
@@ -157,7 +163,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         [this]() -> std::map<std::string, sdbus::Variant> { return getServiceDataProperty(); }
     );
     
-    // Discoverable 속성 (BlueZ 5.82+)
+    // Discoverable 속성 (BlueZ 5.82에서 필수)
     object.registerProperty(
         BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
         "Discoverable",
@@ -165,7 +171,7 @@ bool GattAdvertisement::setupDBusInterfaces() {
         [this]() -> bool { return discoverable; }
     );
     
-    // Includes 속성 (BlueZ 5.82+ 필수)
+    // Includes 속성 (BlueZ 5.82에서 필수)
     object.registerProperty(
         BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
         "Includes",
@@ -283,9 +289,9 @@ bool GattAdvertisement::registerWithBlueZ() {
         
         // RegisterAdvertisement 호출
         try {
-            proxy->callMethod("RegisterAdvertisement")
+            proxy->callMethod(BlueZConstants::REGISTER_ADVERTISEMENT)
                 .onInterface(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE)
-                .withArguments(object.getPath(), options);
+                .withArguments(sdbus::ObjectPath(object.getPath()), options);
             
             registered = true;
             Logger::info("BlueZ에 광고 등록 성공");
@@ -337,9 +343,9 @@ bool GattAdvertisement::unregisterFromBlueZ() {
         
         // UnregisterAdvertisement 호출
         try {
-            proxy->callMethod("UnregisterAdvertisement")
+            proxy->callMethod(BlueZConstants::UNREGISTER_ADVERTISEMENT)
                 .onInterface(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE)
-                .withArguments(object.getPath());
+                .withArguments(sdbus::ObjectPath(object.getPath()));
             
             Logger::info("BlueZ에서 광고 등록 해제 성공");
         } catch (const sdbus::Error& e) {
@@ -394,6 +400,16 @@ void GattAdvertisement::ensureBlueZ582Compatibility() {
         requiredIncludes.push_back("service-uuids");
     }
     
+    // 제조사 데이터 확인
+    if (!manufacturerData.empty() && std::find(includes.begin(), includes.end(), "manufacturer-data") == includes.end()) {
+        requiredIncludes.push_back("manufacturer-data");
+    }
+    
+    // 서비스 데이터 확인
+    if (!serviceData.empty() && std::find(includes.begin(), includes.end(), "service-data") == includes.end()) {
+        requiredIncludes.push_back("service-data");
+    }
+    
     // 필요한 항목 추가
     for (const auto& item : requiredIncludes) {
         includes.push_back(item);
@@ -421,6 +437,7 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
         bool bluetoothctl = false;
         bool hciconfig = false;
         bool btmgmt = false;
+        bool direct_dbus = false;
     } methods;
     
     // 방법 1: bluetoothctl 사용 (가장 안정적)
@@ -469,17 +486,54 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
         Logger::warn("btmgmt 방법이 예외로 실패함");
     }
     
+    // 방법 4: D-Bus 속성 직접 설정 (BlueZ 5.82 호환)
+    Logger::debug("방법 4: D-Bus 속성을 통한 광고 활성화 시도");
+    try {
+        auto adapterProxy = connection.createProxy(
+            BlueZConstants::BLUEZ_SERVICE,
+            BlueZConstants::ADAPTER_PATH
+        );
+        
+        if (adapterProxy) {
+            // 어댑터 속성 설정
+            adapterProxy->callMethod("Set")
+                .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+                .withArguments(std::string(BlueZConstants::ADAPTER_INTERFACE), 
+                               std::string("Discoverable"), 
+                               sdbus::Variant(true));
+            
+            usleep(200000); // 200ms
+            
+            // BlueZ 5.82에서 광고를 시작하기 위한 DiscoverableTimeout 설정
+            adapterProxy->callMethod("Set")
+                .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+                .withArguments(std::string(BlueZConstants::ADAPTER_INTERFACE), 
+                               std::string("DiscoverableTimeout"), 
+                               sdbus::Variant(static_cast<uint16_t>(0)));
+            
+            methods.direct_dbus = true;
+            Logger::info("D-Bus 속성을 통한 광고 활성화 성공");
+            registered = true;
+            return true;
+        }
+    } catch (const std::exception& e) {
+        Logger::warn("D-Bus 속성 방법이 예외로 실패함: " + std::string(e.what()));
+    }
+    
     // 모든 실패 로깅
     Logger::error("모든 광고 방법 실패: " +
                  std::string(methods.bluetoothctl ? "" : "bluetoothctl, ") +
                  std::string(methods.hciconfig ? "" : "hciconfig, ") +
-                 std::string(methods.btmgmt ? "" : "btmgmt"));
+                 std::string(methods.btmgmt ? "" : "btmgmt, ") +
+                 std::string(methods.direct_dbus ? "" : "D-Bus 속성"));
     
     return false;
 }
 
 std::string GattAdvertisement::getTypeProperty() const {
-    return (type == AdvertisementType::BROADCAST) ? "broadcast" : "peripheral";
+    return (type == AdvertisementType::BROADCAST) ? 
+            BlueZConstants::VALUE_BROADCAST : 
+            BlueZConstants::VALUE_PERIPHERAL;
 }
 
 std::vector<std::string> GattAdvertisement::getServiceUUIDsProperty() const {

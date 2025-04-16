@@ -1,6 +1,5 @@
-// src/GattService.cpp
+// src/GattService.cpp - 순환 참조 개선
 #include "GattService.h"
-#include "GattCharacteristic.h"
 #include "Logger.h"
 
 namespace ggk {
@@ -47,12 +46,12 @@ GattCharacteristicPtr GattService::createCharacteristic(
         std::string uuidShort = "/char" + uuid.toBlueZShortFormat().substr(0, 8);
         std::string charPath = getPath() + uuidShort;
         
-        // 특성 생성
+        // 특성 생성 - this로 자신에 대한 포인터 전달 (약한 참조)
         auto characteristic = std::make_shared<GattCharacteristic>(
             connection,
             charPath,
             uuid,
-            *this,
+            this,  // 부모 서비스 포인터
             properties,
             permissions
         );
@@ -87,15 +86,29 @@ GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const
 }
 
 bool GattService::setupDBusInterfaces() {
-    // 속성 등록
-    object.registerProperty(BlueZConstants::GATT_SERVICE_INTERFACE, "UUID", "s",
-                         [this]() -> std::string { return getUuidProperty(); });
+    // UUID 속성 등록
+    object.registerProperty(
+        BlueZConstants::GATT_SERVICE_INTERFACE,
+        BlueZConstants::PROPERTY_UUID,
+        "s",
+        [this]() -> std::string { return getUuidProperty(); }
+    );
     
-    object.registerProperty(BlueZConstants::GATT_SERVICE_INTERFACE, "Primary", "b",
-                         [this]() -> bool { return getPrimaryProperty(); });
+    // Primary 속성 등록
+    object.registerProperty(
+        BlueZConstants::GATT_SERVICE_INTERFACE,
+        BlueZConstants::PROPERTY_PRIMARY,
+        "b",
+        [this]() -> bool { return getPrimaryProperty(); }
+    );
     
-    object.registerProperty(BlueZConstants::GATT_SERVICE_INTERFACE, "Characteristics", "ao",
-                         [this]() -> std::vector<sdbus::ObjectPath> { return getCharacteristicsProperty(); });
+    // Characteristics 속성 등록
+    object.registerProperty(
+        BlueZConstants::GATT_SERVICE_INTERFACE,
+        "Characteristics",
+        "ao",
+        [this]() -> std::vector<sdbus::ObjectPath> { return getCharacteristicsProperty(); }
+    );
     
     // 객체 등록
     return object.registerObject();

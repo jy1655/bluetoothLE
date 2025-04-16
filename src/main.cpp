@@ -1,3 +1,4 @@
+// 리팩토링된 BlueZ 5.82 호환 BLE Peripheral 테스트
 #include "Server.h"
 #include "GattTypes.h"
 #include "GattCharacteristic.h"
@@ -119,13 +120,18 @@ GattServicePtr setupCustomService(Server& server) {
 }
 
 int main(int argc, char** argv) {
+    // 로그 레벨 설정
+    Logger::setLogLevel(Logger::Level::DEBUG);
+    
     // 시그널 핸들러 설정
     std::signal(SIGINT, signalHandler);
     std::signal(SIGTERM, signalHandler);
     
+    std::cout << "=== BlueZ 5.82 호환 BLE Peripheral 테스트 ===" << std::endl;
+    
     // BLE 서버 생성 및 초기화
     Server server;
-    if (!server.initialize("BLETestDevice")) {
+    if (!server.initialize("BLE-Test-Device")) {
         std::cerr << "BLE 서버 초기화 실패" << std::endl;
         return 1;
     }
@@ -150,14 +156,14 @@ int main(int argc, char** argv) {
     
     std::cout << "사용자 정의 서비스 설정 완료" << std::endl;
     
-    // 광고 설정
+    // BlueZ 5.82 호환 광고 설정
     server.configureAdvertisement(
-        "BLETestDev",           // 장치 이름
-        {},                     // 서비스 UUID (자동으로 추가됨)
-        0x0059,                 // 제조사 ID (예: 0x0059 = Nordic Semiconductor)
-        {0x01, 0x02, 0x03, 0x04}, // 제조사 데이터
-        true,                   // TX 파워 포함
-        0                       // 타임아웃 없음
+        "BLE-Test-Dev",                 // 장치 이름
+        {},                             // 서비스 UUID (자동으로 추가됨)
+        0x0059,                         // 제조사 ID (예: 0x0059 = Nordic Semiconductor)
+        {0x01, 0x02, 0x03, 0x04},       // 제조사 데이터
+        true,                           // TX 파워 포함
+        0                               // 타임아웃 없음
     );
     
     std::cout << "광고 설정 완료" << std::endl;

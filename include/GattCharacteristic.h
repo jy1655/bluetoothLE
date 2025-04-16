@@ -1,10 +1,10 @@
-// include/GattCharacteristic.h
+// 3. GattCharacteristic.h - 수정된 특성 클래스
 #pragma once
 
-#include "SDBusInterface.h"
-#include "SDBusObject.h"
-#include "GattTypes.h"
+#include "IGattNode.h"
+#include "GattDescriptor.h"
 #include "GattCallbacks.h"
+#include "SDBusObject.h"
 #include "BlueZConstants.h"
 #include <vector>
 #include <map>
@@ -15,28 +15,29 @@ namespace ggk {
 
 // 전방 선언
 class GattService;
-class GattDescriptor;
-using GattDescriptorPtr = std::shared_ptr<GattDescriptor>;
 
-class GattCharacteristic {
+/**
+ * @brief GATT 특성 구현
+ */
+class GattCharacteristic : public IGattNode {
 public:
     GattCharacteristic(
         SDBusConnection& connection,
         const std::string& path,
         const GattUuid& uuid,
-        GattService& service,
+        GattService* service, // 포인터로 변경 (weak reference)
         uint8_t properties,
         uint8_t permissions);
     
     virtual ~GattCharacteristic() = default;
     
-    // 기본 접근자
-    const GattUuid& getUuid() const { return uuid; }
-    const std::string& getPath() const { return object.getPath(); }
-    uint8_t getProperties() const { return properties; }
-    uint8_t getPermissions() const { return permissions; }
+    // IGattNode 구현
+    const GattUuid& getUuid() const override { return uuid; }
+    const std::string& getPath() const override { return object.getPath(); }
+    bool setupDBusInterfaces() override;
+    bool isRegistered() const override { return object.isRegistered(); }
     
-    // 값 관리
+    // 값 관련 메서드
     const std::vector<uint8_t>& getValue() const {
         std::lock_guard<std::mutex> lock(valueMutex);
         return value;
@@ -81,13 +82,12 @@ public:
         notifyCallback = callback;
     }
     
-    // D-Bus 인터페이스 설정
-    bool setupDBusInterfaces();
-    bool finishRegistration() { return object.registerObject(); }
-    bool isRegistered() const { return object.isRegistered(); }
+    // 속성 접근자
+    uint8_t getProperties() const { return properties; }
+    uint8_t getPermissions() const { return permissions; }
     
-    // 부모 서비스 접근자
-    GattService& getService() const { return service; }
+    // 서비스 약한 참조 접근자
+    GattService* getService() const { return parentService; }
     
 private:
     // D-Bus 메서드 핸들러
@@ -100,7 +100,7 @@ private:
     SDBusConnection& connection;
     SDBusObject object;
     GattUuid uuid;
-    GattService& service;
+    GattService* parentService; // 약한 참조로 변경
     uint8_t properties;
     uint8_t permissions;
     std::vector<uint8_t> value;
