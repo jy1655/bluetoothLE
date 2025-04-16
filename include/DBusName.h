@@ -1,5 +1,6 @@
+// include/DBusName.h
 #pragma once
-#include "DBusInterface.h"
+#include "SDBusInterface.h"
 #include "Logger.h"
 #include <string>
 #include <memory>
@@ -38,7 +39,7 @@ public:
      * 
      * @return D-Bus 연결 객체 참조
      */
-    std::shared_ptr<IDBusConnection> getConnection();
+    std::shared_ptr<SDBusConnection> getConnection();
     
     /**
      * @brief D-Bus 이름 획득
@@ -76,9 +77,9 @@ public:
     /**
      * @brief 버스 타입 설정 (시스템 버스 vs 세션 버스)
      * 
-     * @param type 버스 타입
+     * @param useSystemBus 시스템 버스 사용 여부
      */
-    void setBusType(GBusType type);
+    void setBusType(bool useSystemBus);
 #endif
 
 private:
@@ -91,8 +92,8 @@ private:
     DBusName& operator=(const DBusName&) = delete;
     
     // 상태 변수
-    std::shared_ptr<IDBusConnection> connection;
-    GBusType busType;
+    std::shared_ptr<SDBusConnection> connection;
+    bool useSystemBus;
     std::string busName;
     bool initialized;
     bool busNameAcquired;

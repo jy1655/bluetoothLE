@@ -1,3 +1,4 @@
+// include/GattAdvertisement.h
 #pragma once
 
 #include "SDBusInterface.h"
@@ -64,6 +65,12 @@ private:
     std::vector<std::string> getServiceUUIDsProperty() const;
     std::map<uint16_t, sdbus::Variant> getManufacturerDataProperty() const;
     std::map<std::string, sdbus::Variant> getServiceDataProperty() const;
+    std::string getLocalNameProperty() const;
+    uint16_t getAppearanceProperty() const;
+    uint16_t getDurationProperty() const;
+    bool getIncludeTxPowerProperty() const;
+    bool getDiscoverableProperty() const;
+    std::vector<std::string> getIncludesProperty() const;
     
     // 내부 상태
     SDBusConnection& connection;

@@ -1,3 +1,4 @@
+// include/GattService.h 수정
 #pragma once
 
 #include "SDBusInterface.h"
@@ -47,7 +48,7 @@ public:
     bool isRegistered() const { return object.isRegistered(); }
     
 private:
-    // D-Bus 등록에 필요한 속성 게터
+    // D-Bus 속성 게터
     std::string getUuidProperty() const;
     bool getPrimaryProperty() const;
     std::vector<sdbus::ObjectPath> getCharacteristicsProperty() const;

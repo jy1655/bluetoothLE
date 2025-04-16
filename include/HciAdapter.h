@@ -1,134 +1,135 @@
+// include/HciAdapter.h
 #pragma once
 
 #include <atomic>
 #include <string>
-#include "DBusInterface.h"
+#include "SDBusInterface.h"
 #include "Logger.h"
 
 namespace ggk {
 
 /**
- * @brief Modern HCI Adapter class for BlueZ 5.82+
+ * @brief BlueZ 5.82+를 위한 현대적인 HCI 어댑터 클래스
  * 
- * This class manages the Bluetooth HCI adapter using modern
- * BlueZ D-Bus APIs instead of direct HCI control. No direct
- * socket communication is used - everything is via D-Bus.
+ * 이 클래스는 직접 HCI 제어 대신 현대적인 BlueZ D-Bus API를 사용하여
+ * Bluetooth HCI 어댑터를 관리합니다. 모든 통신은 소켓이 아닌 D-Bus를 통해 
+ * 이루어집니다.
  */
 class HciAdapter {
 public:
     /**
-     * @brief Default constructor
+     * @brief 기본 생성자
      */
     HciAdapter();
     
     /**
-     * @brief Destructor
+     * @brief 소멸자
      */
     ~HciAdapter();
     
     /**
-     * @brief Initialize the adapter
+     * @brief 어댑터 초기화
      * 
-     * @param connection D-Bus connection to use
-     * @param adapterName Name to set for the adapter
-     * @param adapterPath Path to the adapter (default: /org/bluez/hci0)
-     * @return true if initialization was successful
+     * @param connection 사용할 D-Bus 연결
+     * @param adapterName 어댑터 이름으로 설정할 이름
+     * @param adapterPath 어댑터 경로 (기본값: /org/bluez/hci0)
+     * @return 초기화 성공 여부
      */
     bool initialize(
-        std::shared_ptr<IDBusConnection> connection,
+        std::shared_ptr<SDBusConnection> connection,
         const std::string& adapterName = "BluetoothDevice",
         const std::string& adapterPath = "/org/bluez/hci0");
     
     /**
-     * @brief Stop and clean up
+     * @brief 중지 및 정리
      */
     void stop();
     
     /**
-     * @brief Check if adapter is initialized
+     * @brief 어댑터가 초기화되었는지 확인
      * 
-     * @return true if adapter is initialized
+     * @return 어댑터가 초기화된 경우 true
      */
     bool isInitialized() const;
     
     /**
-     * @brief Get adapter path
+     * @brief 어댑터 경로 가져오기
      * 
-     * @return Adapter path (e.g., /org/bluez/hci0)
+     * @return 어댑터 경로 (예: /org/bluez/hci0)
      */
     const std::string& getAdapterPath() const;
     
     /**
-     * @brief Set adapter name
+     * @brief 어댑터 이름 설정
      * 
-     * @param name New name for the adapter
-     * @return true if successful
+     * @param name 어댑터의 새 이름
+     * @return 성공 여부
      */
     bool setName(const std::string& name);
     
     /**
-     * @brief Set adapter power state
+     * @brief 어댑터 전원 상태 설정
      * 
-     * @param powered true to power on, false to power off
-     * @return true if successful
+     * @param powered 전원 켜기(true), 끄기(false)
+     * @return 성공 여부
      */
     bool setPowered(bool powered);
     
     /**
-     * @brief Set adapter discoverable state
+     * @brief 어댑터 검색 가능 상태 설정
      * 
-     * @param discoverable true to make discoverable, false otherwise
-     * @param timeout Timeout in seconds (0 for no timeout)
-     * @return true if successful
+     * @param discoverable 검색 가능하게 설정(true), 아니면 false
+     * @param timeout 타임아웃(초) (0 = 타임아웃 없음)
+     * @return 성공 여부
      */
     bool setDiscoverable(bool discoverable, uint16_t timeout = 0);
     
     /**
-     * @brief Reset adapter to default state
+     * @brief 어댑터를 기본 상태로 재설정
      * 
-     * @return true if successful
+     * @return 성공 여부
      */
     bool reset();
     
     /**
-     * @brief Enable advertising
+     * @brief 광고 활성화
      * 
-     * @return true if successful
+     * @return 성공 여부
      */
     bool enableAdvertising();
     
     /**
-     * @brief Disable advertising
+     * @brief 광고 비활성화
      * 
-     * @return true if successful
+     * @return 성공 여부
      */
     bool disableAdvertising();
     
     /**
-     * @brief Check if the adapter supports advertising
+     * @brief 어댑터가 광고를 지원하는지 확인
      * 
-     * @return true if advertising is supported
+     * @return 광고가 지원되는 경우 true
      */
     bool isAdvertisingSupported() const;
     
     /**
-     * @brief Get the D-Bus connection
+     * @brief D-Bus 연결 가져오기
      * 
-     * @return Reference to the D-Bus connection
+     * @return D-Bus 연결 참조
      */
-    std::shared_ptr<IDBusConnection> getConnection();
+    std::shared_ptr<SDBusConnection> getConnection();
     
 private:
-    // D-Bus connection
-    std::shared_ptr<IDBusConnection> connection;
+    // D-Bus 연결
+    std::shared_ptr<SDBusConnection> connection;
     
-    // Adapter state
+    // 어댑터 상태
     std::string adapterPath;
     std::string adapterName;
     bool initialized;
     bool advertising;
     
-    // Helper methods
+    // 도우미 메서드
     bool verifyAdapterExists();
     bool runBluetoothCtlCommand(const std::vector<std::string>& commands);
 };

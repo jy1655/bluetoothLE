@@ -1,5 +1,6 @@
+// src/DBusName.cpp
 #include "DBusName.h"
-#include "Utils.h"
+#include "Logger.h"
 
 namespace ggk {
 
@@ -9,7 +10,7 @@ DBusName& DBusName::getInstance() {
 }
 
 DBusName::DBusName() 
-    : busType(G_BUS_TYPE_SYSTEM), // 실제 하드웨어는 시스템 버스 사용
+    : useSystemBus(true), // 실제 하드웨어는 시스템 버스 사용
       initialized(false), 
       busNameAcquired(false) {
 }
@@ -19,14 +20,14 @@ DBusName::~DBusName() {
 }
 
 #ifdef TESTING
-void DBusName::setBusType(GBusType type) {
+void DBusName::setBusType(bool systemBus) {
     if (initialized) {
         // 이미 초기화된 경우 먼저 연결 해제
         shutdown();
     }
     
-    busType = type;
-    connection = DBusConnectionFactory::createConnection(type);
+    useSystemBus = systemBus;
+    connection = std::make_shared<SDBusConnection>(useSystemBus);
 }
 #endif
 
@@ -38,43 +39,24 @@ bool DBusName::initialize(const std::string& name) {
     busName = name;
     
     // 연결 생성
-    connection = DBusConnectionFactory::createConnection(busType);
+    connection = std::make_shared<SDBusConnection>(useSystemBus);
     
     if (!connection || !connection->connect()) {
-        Logger::error("Failed to connect to D-Bus");
+        Logger::error("D-Bus에 연결 실패");
         return false;
     }
     
     // 버스 네임 요청
     try {
-        // 복잡한 GVariant 생성을 위한 안전한 방법
-        GVariant* paramsRaw = g_variant_new("(su)", busName.c_str(), 0x4);
-        // makeGVariantPtr 패턴 사용
-        GVariantPtr params = makeGVariantPtr(paramsRaw, true);  // true = 소유권 이전
-        
-        GVariantPtr result = connection->callMethod(
-            "org.freedesktop.DBus",
-            DBusObjectPath("/org/freedesktop/DBus"),
-            "org.freedesktop.DBus",
-            "RequestName",
-            std::move(params),  // 이동 의미론 사용하여 소유권 이전
-            "(u)"
-        );
-        
-        if (result) {
-            guint32 ret = 0;
-            g_variant_get(result.get(), "(u)", &ret);
-            
-            if (ret == 1) {  // DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER
-                Logger::info("Successfully acquired bus name: " + busName);
-                busNameAcquired = true;
-            } else {
-                Logger::error("Failed to acquire bus name: " + busName + ", return code: " + std::to_string(ret));
-                busNameAcquired = false;
-            }
+        if (connection->requestName(busName)) {
+            Logger::info("버스 이름 획득 성공: " + busName);
+            busNameAcquired = true;
+        } else {
+            Logger::error("버스 이름 획득 실패: " + busName);
+            busNameAcquired = false;
         }
     } catch (const std::exception& e) {
-        Logger::error("Failed to request bus name: " + std::string(e.what()));
+        Logger::error("버스 이름 요청 실패: " + std::string(e.what()));
         busNameAcquired = false;
     }
     
@@ -85,24 +67,7 @@ bool DBusName::initialize(const std::string& name) {
 void DBusName::shutdown() {
     if (busNameAcquired && connection) {
         try {
-            // 빌더 사용해서 GVariant 생성
-            GVariantBuilder builder;
-            g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
-            g_variant_builder_add(&builder, "s", busName.c_str());
-            
-            // 빌더로부터 GVariant 생성
-            GVariant* params = g_variant_builder_end(&builder);
-            
-            // makeGVariantPtr 패턴 사용
-            GVariantPtr params_ptr = makeGVariantPtr(params, true);
-            
-            connection->callMethod(
-                "org.freedesktop.DBus",
-                DBusObjectPath("/org/freedesktop/DBus"),
-                "org.freedesktop.DBus",
-                "ReleaseName",
-                std::move(params_ptr)  // 소유권 이전
-            );
+            connection->releaseName(busName);
         } catch (...) {
             // 종료 과정에서 예외가 발생해도 무시
         }
@@ -116,10 +81,10 @@ void DBusName::shutdown() {
     initialized = false;
 }
 
-std::shared_ptr<IDBusConnection> DBusName::getConnection() {
+std::shared_ptr<SDBusConnection> DBusName::getConnection() {
     if (!connection) {
         // 연결이 없으면 생성
-        connection = DBusConnectionFactory::createConnection(busType);
+        connection = std::make_shared<SDBusConnection>(useSystemBus);
         if (!connection->isConnected()) {
             connection->connect();
         }

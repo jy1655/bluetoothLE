@@ -1,7 +1,6 @@
 // src/ConnectionManager.cpp
 #include "ConnectionManager.h"
 #include "Logger.h"
-#include "Utils.h"
 
 namespace ggk {
 
@@ -18,16 +17,16 @@ ConnectionManager::~ConnectionManager() {
     shutdown();
 }
 
-bool ConnectionManager::initialize(DBusConnection& dbusConnection) {
+bool ConnectionManager::initialize(std::shared_ptr<SDBusConnection> dbusConnection) {
     if (initialized) {
         return true;
     }
 
-    connection = &dbusConnection;
+    connection = dbusConnection;
     registerSignalHandlers();
     initialized = true;
 
-    Logger::info("ConnectionManager initialized");
+    Logger::info("ConnectionManager 초기화됨");
     return true;
 }
 
@@ -40,15 +39,16 @@ void ConnectionManager::shutdown() {
         return;
     }
 
-    // Unregister signal handlers
-    for (guint handlerId : signalHandlerIds) {
+    // 신호 핸들러 등록 해제
+    for (uint32_t handlerId : signalHandlerIds) {
         if (connection) {
-            connection->removeSignalWatch(handlerId);
+            // SDBUS-C++는 현재 직접적인 시그널 핸들러 해제를 제공하지 않음
+            // 필요하다면 신호 핸들러 클래스 재설계 필요
         }
     }
     signalHandlerIds.clear();
 
-    // Clear connected devices list
+    // 연결된 장치 목록 정리
     {
         std::lock_guard<std::mutex> lock(devicesMutex);
         connectedDevices.clear();
@@ -56,165 +56,179 @@ void ConnectionManager::shutdown() {
 
     connection = nullptr;
     initialized = false;
-    Logger::info("ConnectionManager shutdown");
+    Logger::info("ConnectionManager 종료됨");
 }
 
 void ConnectionManager::registerSignalHandlers() {
     if (!connection || !connection->isConnected()) {
-        Logger::error("Cannot register signal handlers: D-Bus connection not available");
-        return;
-    }
-
-    // 1. InterfacesAdded signal - detect new device connections
-    guint id1 = connection->addSignalWatch(
-        BlueZConstants::BLUEZ_SERVICE,
-        BlueZConstants::OBJECT_MANAGER_INTERFACE,
-        "InterfacesAdded",
-        DBusObjectPath(BlueZConstants::ROOT_PATH),
-        [this](const std::string& signalName, GVariantPtr parameters) {
-            this->handleInterfacesAddedSignal(signalName, std::move(parameters));
-        }
-    );
-    signalHandlerIds.push_back(id1);
-
-    // 2. InterfacesRemoved signal - detect device disconnections
-    guint id2 = connection->addSignalWatch(
-        BlueZConstants::BLUEZ_SERVICE,
-        BlueZConstants::OBJECT_MANAGER_INTERFACE,
-        "InterfacesRemoved",
-        DBusObjectPath(BlueZConstants::ROOT_PATH),
-        [this](const std::string& signalName, GVariantPtr parameters) {
-            this->handleInterfacesRemovedSignal(signalName, std::move(parameters));
-        }
-    );
-    signalHandlerIds.push_back(id2);
-
-    // 3. PropertiesChanged signal - detect property changes (connection state, MTU, etc.)
-    guint id3 = connection->addSignalWatch(
-        BlueZConstants::BLUEZ_SERVICE,
-        BlueZConstants::PROPERTIES_INTERFACE,
-        "PropertiesChanged",
-        DBusObjectPath(""),  // Watch all object paths
-        [this](const std::string& signalName, GVariantPtr parameters) {
-            this->handlePropertiesChangedSignal(signalName, std::move(parameters));
-        }
-    );
-    signalHandlerIds.push_back(id3);
-
-    Logger::info("Registered BlueZ D-Bus signal handlers");
-}
-
-void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalName, GVariantPtr parameters) {
-    if (!parameters) {
+        Logger::error("D-Bus 신호 핸들러를 등록할 수 없음: D-Bus 연결을 사용할 수 없음");
         return;
     }
 
     try {
-        // Format: (o, a{sa{sv}})
-        // o - object path
-        // a{sa{sv}} - interface to properties map
-        const char* objectPath = nullptr;
-        GVariant* interfacesVariant = nullptr;
-        g_variant_get(parameters.get(), "(&o@a{sa{sv}})", &objectPath, &interfacesVariant);
+        // ObjectManager 신호 프록시 생성
+        auto proxy = connection->createProxy(
+            BlueZConstants::BLUEZ_SERVICE,
+            BlueZConstants::ROOT_PATH
+        );
 
-        if (!objectPath || !interfacesVariant) {
+        if (!proxy) {
+            Logger::error("Object Manager 프록시 생성 실패");
             return;
         }
 
-        // Use makeGVariantPtr instead of direct construction
-        GVariantPtr interfaces = makeGVariantPtr(interfacesVariant, true);
+        // InterfacesAdded 신호 핸들러
+        try {
+            proxy->registerSignalHandler(
+                BlueZConstants::OBJECT_MANAGER_INTERFACE,
+                "InterfacesAdded",
+                [this](sdbus::Signal& signal) {
+                    sdbus::ObjectPath path;
+                    std::map<std::string, std::map<std::string, sdbus::Variant>> interfaces;
+                    signal >> path >> interfaces;
 
-        // Check for Device interface
-        GVariant* deviceInterface = g_variant_lookup_value(interfaces.get(), 
-                                                         BlueZConstants::DEVICE_INTERFACE.c_str(), 
-                                                         G_VARIANT_TYPE("a{sv}"));
-        if (deviceInterface) {
-            // Check Connected property
-            GVariant* connectedVariant = g_variant_lookup_value(deviceInterface, 
-                                                             "Connected", 
-                                                             G_VARIANT_TYPE_BOOLEAN);
-            
-            if (connectedVariant) {
-                bool connected = g_variant_get_boolean(connectedVariant);
-                g_variant_unref(connectedVariant);
-                
+                    sdbus::Variant params;
+                    params = sdbus::Variant(std::make_tuple(path, interfaces));
+                    this->handleInterfacesAddedSignal("InterfacesAdded", params);
+                }
+            );
+            // 핸들러 ID를 저장할 수 없지만, 성공적으로 등록되었음을 추적하기 위해
+            // 카운트는 유지합니다.
+            signalHandlerIds.push_back(signalHandlerIds.size() + 1);
+        } catch (const std::exception& e) {
+            Logger::error("InterfacesAdded 신호 등록 실패: " + std::string(e.what()));
+        }
+
+        // InterfacesRemoved 신호 핸들러
+        try {
+            proxy->registerSignalHandler(
+                BlueZConstants::OBJECT_MANAGER_INTERFACE,
+                "InterfacesRemoved",
+                [this](sdbus::Signal& signal) {
+                    sdbus::ObjectPath path;
+                    std::vector<std::string> interfaces;
+                    signal >> path >> interfaces;
+
+                    sdbus::Variant params;
+                    params = sdbus::Variant(std::make_tuple(path, interfaces));
+                    this->handleInterfacesRemovedSignal("InterfacesRemoved", params);
+                }
+            );
+            signalHandlerIds.push_back(signalHandlerIds.size() + 1);
+        } catch (const std::exception& e) {
+            Logger::error("InterfacesRemoved 신호 등록 실패: " + std::string(e.what()));
+        }
+
+        // PropertiesChanged 신호 핸들러
+        try {
+            auto propsProxy = connection->createProxy(
+                BlueZConstants::BLUEZ_SERVICE,
+                BlueZConstants::ADAPTER_PATH
+            );
+
+            if (propsProxy) {
+                propsProxy->registerSignalHandler(
+                    BlueZConstants::PROPERTIES_INTERFACE,
+                    "PropertiesChanged",
+                    [this](sdbus::Signal& signal) {
+                        std::string interfaceName;
+                        std::map<std::string, sdbus::Variant> changedProps;
+                        std::vector<std::string> invalidatedProps;
+
+                        signal >> interfaceName >> changedProps >> invalidatedProps;
+
+                        sdbus::Variant params;
+                        params = sdbus::Variant(std::make_tuple(interfaceName, changedProps, invalidatedProps));
+                        this->handlePropertiesChangedSignal("PropertiesChanged", params);
+                    }
+                );
+                signalHandlerIds.push_back(signalHandlerIds.size() + 1);
+            } else {
+                Logger::error("PropertiesChanged용 프록시 생성 실패");
+            }
+        } catch (const std::exception& e) {
+            Logger::error("PropertiesChanged 신호 등록 실패: " + std::string(e.what()));
+        }
+
+        Logger::info("BlueZ D-Bus 신호 핸들러 등록 완료");
+    }
+    catch (const std::exception& e) {
+        Logger::error("신호 핸들러 등록 중 예외 발생: " + std::string(e.what()));
+    }
+}
+
+
+void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalName, const sdbus::Variant& parameters) {
+    try {
+        // Variant에서 튜플(객체 경로, 인터페이스 맵) 추출
+        auto [objectPath, interfaces] = parameters.get<std::tuple<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>>>();
+        
+        // Device 인터페이스 확인
+        auto it = interfaces.find(BlueZConstants::DEVICE_INTERFACE);
+        if (it == interfaces.end()) {
+            return; // Device 인터페이스가 없음
+        }
+        
+        // 속성 맵 가져오기
+        const auto& deviceProperties = it->second;
+        
+        // Connected 속성 확인
+        auto connectedIt = deviceProperties.find("Connected");
+        if (connectedIt != deviceProperties.end()) {
+            try {
+                bool connected = connectedIt->second.get<bool>();
                 if (connected) {
-                    // Get device address
-                    GVariant* addressVariant = g_variant_lookup_value(deviceInterface, 
-                                                                  "Address", 
-                                                                  G_VARIANT_TYPE_STRING);
-                    
-                    if (addressVariant) {
-                        const char* address = g_variant_get_string(addressVariant, nullptr);
-                        std::string deviceAddress(address);
+                    // Address 속성 가져오기
+                    auto addressIt = deviceProperties.find("Address");
+                    if (addressIt != deviceProperties.end()) {
+                        std::string deviceAddress = addressIt->second.get<std::string>();
                         
-                        // Add to connected devices
+                        // 연결된 장치 목록에 추가
                         {
                             std::lock_guard<std::mutex> lock(devicesMutex);
-                            connectedDevices[deviceAddress] = DBusObjectPath(objectPath);
+                            connectedDevices[deviceAddress] = objectPath.c_str();
                         }
                         
-                        // Execute callback
+                        // 콜백 실행
                         if (onConnectionCallback) {
                             onConnectionCallback(deviceAddress);
                         }
                         
-                        Logger::info("Device connected: " + deviceAddress + " at " + std::string(objectPath));
-                        
-                        g_variant_unref(addressVariant);
+                        Logger::info("장치 연결됨: " + deviceAddress + ", 경로: " + objectPath.c_str());
                     }
                 }
             }
-            
-            g_variant_unref(deviceInterface);
+            catch (const std::exception& e) {
+                Logger::error("장치 연결 처리 중 예외: " + std::string(e.what()));
+            }
         }
     } catch (const std::exception& e) {
-        Logger::error("Exception in handleInterfacesAddedSignal: " + std::string(e.what()));
+        Logger::error("InterfacesAdded 신호 처리 중 예외: " + std::string(e.what()));
     }
 }
 
-void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalName, GVariantPtr parameters) {
-    if (!parameters) {
-        return;
-    }
-
+void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalName, const sdbus::Variant& parameters) {
     try {
-        // Format: (o, as)
-        // o - object path
-        // as - removed interfaces list
-        const char* objectPath = nullptr;
-        GVariant* interfacesVariant = nullptr;
-        g_variant_get(parameters.get(), "(&o@as)", &objectPath, &interfacesVariant);
-
-        if (!objectPath || !interfacesVariant) {
-            return;
-        }
-
-        // Use makeGVariantPtr instead of direct construction
-        GVariantPtr interfaces = makeGVariantPtr(interfacesVariant, true);
-
-        // Check if Device interface was removed
-        bool deviceRemoved = false;
+        // Variant에서 튜플(객체 경로, 인터페이스 목록) 추출
+        auto [objectPath, interfaces] = parameters.get<std::tuple<sdbus::ObjectPath, std::vector<std::string>>>();
         
-        gsize numInterfaces = g_variant_n_children(interfaces.get());
-        for (gsize i = 0; i < numInterfaces; i++) {
-            const char* interface = nullptr;
-            g_variant_get_child(interfaces.get(), i, "&s", &interface);
-            
-            if (interface && std::string(interface) == BlueZConstants::DEVICE_INTERFACE) {
+        // Device 인터페이스 확인
+        bool deviceRemoved = false;
+        for (const auto& interface : interfaces) {
+            if (interface == BlueZConstants::DEVICE_INTERFACE) {
                 deviceRemoved = true;
                 break;
             }
         }
-
+        
         if (deviceRemoved) {
-            // Find which device was disconnected
+            // 연결 해제된 장치 찾기
             std::string deviceAddress;
             
             {
                 std::lock_guard<std::mutex> lock(devicesMutex);
                 for (auto it = connectedDevices.begin(); it != connectedDevices.end(); ) {
-                    if (it->second.toString() == objectPath) {
+                    if (it->second == objectPath.c_str()) {
                         deviceAddress = it->first;
                         it = connectedDevices.erase(it);
                         break;
@@ -226,70 +240,37 @@ void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalN
             
             if (!deviceAddress.empty() && onDisconnectionCallback) {
                 onDisconnectionCallback(deviceAddress);
-                Logger::info("Device disconnected: " + deviceAddress);
+                Logger::info("장치 연결 해제됨: " + deviceAddress);
             }
         }
     } catch (const std::exception& e) {
-        Logger::error("Exception in handleInterfacesRemovedSignal: " + std::string(e.what()));
+        Logger::error("InterfacesRemoved 신호 처리 중 예외: " + std::string(e.what()));
     }
 }
 
-void ConnectionManager::handlePropertiesChangedSignal(const std::string& signalName, GVariantPtr parameters) {
-    if (!parameters) {
-        return;
-    }
-
+void ConnectionManager::handlePropertiesChangedSignal(const std::string& signalName, const sdbus::Variant& parameters) {
     try {
-        // Format: (s, a{sv}, as)
-        // s - interface name
-        // a{sv} - changed properties and values
-        // as - invalidated properties
-        const char* interface = nullptr;
-        GVariant* propertiesVariant = nullptr;
-        GVariant* invalidatedVariant = nullptr;
+        // Variant에서 튜플(인터페이스, 변경 속성, 무효화 속성) 추출
+        auto [interfaceName, changedProperties, invalidatedProperties] = 
+            parameters.get<std::tuple<std::string, std::map<std::string, sdbus::Variant>, std::vector<std::string>>>();
         
-        g_variant_get(parameters.get(), "(&s@a{sv}@as)", 
-                     &interface, &propertiesVariant, &invalidatedVariant);
-
-        if (!interface || !propertiesVariant) {
-            return;
-        }
-
-        // Use makeGVariantPtr instead of direct construction
-        GVariantPtr properties = makeGVariantPtr(propertiesVariant, true);
-        GVariantPtr invalidated = makeGVariantPtr(invalidatedVariant, true);
-
-        std::string interfaceName(interface);
-
-        // Check for Device interface Connected property change
+        // Device 인터페이스의 속성 변경 처리
         if (interfaceName == BlueZConstants::DEVICE_INTERFACE) {
-            GVariant* connectedVariant = g_variant_lookup_value(properties.get(), 
-                                                             "Connected", 
-                                                             G_VARIANT_TYPE_BOOLEAN);
-            
-            if (connectedVariant) {
-                // Connection state change is already handled by InterfacesAdded/Removed
-                // so we skip duplicate processing here
-                g_variant_unref(connectedVariant);
+            // Connected 속성 확인
+            auto connectedIt = changedProperties.find("Connected");
+            if (connectedIt != changedProperties.end()) {
+                // InterfacesAdded/Removed 신호로 이미 처리되므로 여기서는 중복 처리 방지
             }
         }
-
-        // Execute property changed callback for all properties
+        
+        // 속성 변경 콜백 실행
         if (onPropertyChangedCallback) {
-            GVariantIter iter;
-            g_variant_iter_init(&iter, properties.get());
-            
-            const gchar* property;
-            GVariant* value;
-            
-            while (g_variant_iter_next(&iter, "{&sv}", &property, &value)) {
-                // Create new GVariantPtr with proper ownership
-                GVariantPtr valuePtr = makeGVariantPtr(value, true);
-                onPropertyChangedCallback(interfaceName, property, std::move(valuePtr));
+            for (const auto& [property, value] : changedProperties) {
+                onPropertyChangedCallback(interfaceName, property, value);
             }
         }
     } catch (const std::exception& e) {
-        Logger::error("Exception in handlePropertiesChangedSignal: " + std::string(e.what()));
+        Logger::error("PropertiesChanged 신호 처리 중 예외: " + std::string(e.what()));
     }
 }
 

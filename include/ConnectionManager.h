@@ -1,7 +1,8 @@
+// include/ConnectionManager.h
 #pragma once
 
-#include "DBusInterface.h"
-#include "DBusObjectPath.h"
+#include "SDBusInterface.h"
+#include "DBusObjectPath.h"  // 이 클래스도 SDBus 기반으로 업데이트해야 합니다
 #include "BlueZConstants.h"
 #include <map>
 #include <string>
@@ -11,78 +12,78 @@
 namespace ggk {
 
 /**
- * @brief Class for managing BLE device connections
+ * @brief BLE 장치 연결 관리 클래스
  * 
- * Monitors and manages connected devices via BlueZ D-Bus signals
+ * BlueZ D-Bus 신호를 통해 연결된 장치를 관리합니다
  */
 class ConnectionManager {
 public:
-    // Callback types
+    // 콜백 타입
     using ConnectionCallback = std::function<void(const std::string& deviceAddress)>;
     using PropertyChangedCallback = std::function<void(const std::string& interface, 
                                                       const std::string& property, 
-                                                      GVariantPtr value)>;
+                                                      const sdbus::Variant& value)>;
 
     /**
-     * @brief Get singleton instance
+     * @brief 싱글톤 인스턴스 가져오기
      * 
-     * @return Reference to singleton instance
+     * @return 싱글톤 인스턴스 참조
      */
     static ConnectionManager& getInstance();
 
     /**
-     * @brief Initialize manager
+     * @brief 초기화
      * 
-     * @param connection D-Bus connection
-     * @return Success status
+     * @param connection D-Bus 연결
+     * @return 성공 여부
      */
-    bool initialize(std::shared_ptr<IDBusConnection> connection);
+    bool initialize(std::shared_ptr<SDBusConnection> connection);
     
     /**
-     * @brief Shutdown manager
+     * @brief 종료
      */
     void shutdown();
 
     /**
-     * @brief Set connection callback
+     * @brief 연결 콜백 설정
      * 
-     * @param callback Function to call on connection
+     * @param callback 연결 시 호출할 함수
      */
     void setOnConnectionCallback(ConnectionCallback callback);
     
     /**
-     * @brief Set disconnection callback
+     * @brief 연결 해제 콜백 설정
      * 
-     * @param callback Function to call on disconnection
+     * @param callback 연결 해제 시 호출할 함수
      */
     void setOnDisconnectionCallback(ConnectionCallback callback);
     
     /**
-     * @brief Set property changed callback
+     * @brief 속성 변경 콜백 설정
      * 
-     * @param callback Function to call on property changes
+     * @param callback 속성 변경 시 호출할 함수
      */
     void setOnPropertyChangedCallback(PropertyChangedCallback callback);
 
     /**
-     * @brief Get connected devices
+     * @brief 연결된 장치 목록 가져오기
      * 
-     * @return List of connected device addresses
+     * @return 연결된 장치 주소 목록
      */
     std::vector<std::string> getConnectedDevices() const;
     
     /**
-     * @brief Check if device is connected
+     * @brief 장치 연결 상태 확인
      * 
-     * @param deviceAddress Device address to check
-     * @return Connection status
+     * @param deviceAddress 확인할 장치 주소
+     * @return 연결 상태
      */
     bool isDeviceConnected(const std::string& deviceAddress) const;
     
     /**
-     * @brief Check if manager is initialized
+     * @brief 초기화 상태 확인
      * 
-     * @return Initialization status
+     * @return 초기화 상태
      */
     bool isInitialized() const;
 
@@ -90,28 +91,28 @@ private:
     ConnectionManager();
     ~ConnectionManager();
 
-    // Prevent copying
+    // 복사 방지
     ConnectionManager(const ConnectionManager&) = delete;
     ConnectionManager& operator=(const ConnectionManager&) = delete;
 
-    // Signal handling
+    // 신호 처리
     void registerSignalHandlers();
-    void handleInterfacesAddedSignal(const std::string& signalName, GVariantPtr parameters);
-    void handleInterfacesRemovedSignal(const std::string& signalName, GVariantPtr parameters);
-    void handlePropertiesChangedSignal(const std::string& signalName, GVariantPtr parameters);
+    void handleInterfacesAddedSignal(const std::string& signalName, const sdbus::Variant& parameters);
+    void handleInterfacesRemovedSignal(const std::string& signalName, const sdbus::Variant& parameters);
+    void handlePropertiesChangedSignal(const std::string& signalName, const sdbus::Variant& parameters);
 
-    // Connection data
-    std::map<std::string, DBusObjectPath> connectedDevices;
+    // 연결 데이터
+    std::map<std::string, std::string> connectedDevices;  // 객체 경로를 문자열로 처리
     mutable std::mutex devicesMutex;
 
-    // Callbacks
+    // 콜백
     ConnectionCallback onConnectionCallback;
     ConnectionCallback onDisconnectionCallback;
     PropertyChangedCallback onPropertyChangedCallback;
 
-    // Signal handling
-    std::shared_ptr<IDBusConnection> connection;
-    std::vector<guint> signalHandlerIds;
+    // 신호 처리
+    std::shared_ptr<SDBusConnection> connection;
+    std::vector<uint32_t> signalHandlerIds;
     bool initialized;
 };
 

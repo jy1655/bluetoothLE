@@ -1,3 +1,4 @@
+// src/GattApplication.cpp
 #include "GattApplication.h"
 #include "Logger.h"
 #include "BlueZConstants.h"
@@ -34,7 +35,7 @@ bool GattApplication::setupDBusInterfaces() {
                               std::map<std::string, 
                               std::map<std::string, sdbus::Variant>>> {
                 // 복잡한 중첩 딕셔너리 생성 및 반환
-                return createManagedObjectsDict();
+                return handleGetManagedObjects();
             })) {
         Logger::error("GetManagedObjects 메서드 등록 실패");
         return false;
@@ -205,7 +206,7 @@ bool GattApplication::registerWithBlueZ() {
             // RegisterApplication(ObjectPath, Dict of {String, Variant})
             proxy->callMethod("RegisterApplication")
                 .onInterface(BlueZConstants::GATT_MANAGER_INTERFACE)
-                .withArguments(object.getPath(), options);
+                .withArguments(sdbus::ObjectPath(object.getPath()), options);
             
             registered = true;
             Logger::info("BlueZ에 GATT 애플리케이션 등록 성공");
@@ -232,7 +233,7 @@ bool GattApplication::registerWithBlueZ() {
                 // 다시 등록 시도
                 proxy->callMethod("RegisterApplication")
                     .onInterface(BlueZConstants::GATT_MANAGER_INTERFACE)
-                    .withArguments(object.getPath(), options);
+                    .withArguments(sdbus::ObjectPath(object.getPath()), options);
                 
                 registered = true;
                 Logger::info("재시도 후 BlueZ에 GATT 애플리케이션 등록 성공");
@@ -272,7 +273,7 @@ bool GattApplication::unregisterFromBlueZ() {
         try {
             proxy->callMethod("UnregisterApplication")
                 .onInterface(BlueZConstants::GATT_MANAGER_INTERFACE)
-                .withArguments(object.getPath());
+                .withArguments(sdbus::ObjectPath(object.getPath()));
             
             Logger::info("BlueZ에서 애플리케이션 등록 해제 성공");
         } catch (const sdbus::Error& e) {
@@ -292,6 +293,13 @@ bool GattApplication::unregisterFromBlueZ() {
         registered = false;  // 상태 업데이트
         return false;
     }
+}
+
+// ManagedObjects 딕셔너리 생성 메서드
+std::map<sdbus::ObjectPath, 
+       std::map<std::string, 
+       std::map<std::string, sdbus::Variant>>> GattApplication::handleGetManagedObjects() {
+    return createManagedObjectsDict();
 }
 
 std::map<sdbus::ObjectPath, 

@@ -3,7 +3,7 @@
 
 #include "GattTypes.h"
 #include "GattCallbacks.h"
-#include "SDBusObject.h"
+#include "SDBusObject.h" 
 #include "BlueZConstants.h"
 #include <vector>
 #include <memory>
@@ -11,15 +11,15 @@
 
 namespace ggk {
 
-// Forward declaration to avoid circular dependency
+// 전방 선언 (순환 의존성 방지)
 class GattCharacteristic;
 
-class GattDescriptor : public DBusObject, public std::enable_shared_from_this<GattDescriptor> {
+class GattDescriptor {
 public:
-    // Constructor
+    // 생성자
     GattDescriptor(
-        DBusConnection& connection,
-        const DBusObjectPath& path,
+        SDBusConnection& connection,  // DBusConnection 대신 SDBusConnection 사용
+        const std::string& path,
         const GattUuid& uuid,
         GattCharacteristic& characteristic,
         uint8_t permissions
@@ -27,7 +27,7 @@ public:
     
     virtual ~GattDescriptor() = default;
     
-    // Properties
+    // 속성 접근자
     const GattUuid& getUuid() const { return uuid; }
     
     const std::vector<uint8_t>& getValue() const {
@@ -36,11 +36,12 @@ public:
     }
     
     uint8_t getPermissions() const { return permissions; }
+    const std::string& getPath() const { return object.getPath(); }
     
-    // Value setter
+    // 값 설정
     void setValue(const std::vector<uint8_t>& value);
     
-    // Callbacks
+    // 콜백 설정
     void setReadCallback(GattReadCallback callback) {
         std::lock_guard<std::mutex> lock(callbackMutex);
         readCallback = callback;
@@ -51,36 +52,34 @@ public:
         writeCallback = callback;
     }
     
-    // BlueZ D-Bus interface setup
+    // BlueZ D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
+    bool isRegistered() const { return object.isRegistered(); }
 
-    // Get parent characteristic
+    // 부모 특성 접근자
     GattCharacteristic& getCharacteristic() const { return characteristic; }
     
 private:
-    // Properties
+    // 내부 상태
+    SDBusConnection& connection;
+    SDBusObject object;
     GattUuid uuid;
     GattCharacteristic& characteristic;
     uint8_t permissions;
     std::vector<uint8_t> value;
     mutable std::mutex valueMutex;
     
-    // Callbacks
+    // 콜백
     GattReadCallback readCallback;
     GattWriteCallback writeCallback;
     mutable std::mutex callbackMutex;
     
-    // D-Bus method handlers
-    void handleReadValue(const DBusMethodCall& call);
-    void handleWriteValue(const DBusMethodCall& call);
-    
-    // D-Bus property getters
-    GVariant* getUuidProperty();
-    GVariant* getCharacteristicProperty();
-    GVariant* getPermissionsProperty();
+    // D-Bus 메서드 핸들러
+    std::vector<uint8_t> handleReadValue(const std::map<std::string, sdbus::Variant>& options);
+    void handleWriteValue(const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options);
 };
 
-// Define shared pointer type
+// 공유 포인터 타입 정의
 using GattDescriptorPtr = std::shared_ptr<GattDescriptor>;
 
 } // namespace ggk

@@ -1,3 +1,4 @@
+// include/GattApplication.h
 #pragma once
 
 #include "SDBusInterface.h"
@@ -34,9 +35,9 @@ public:
     
 private:
     // D-Bus 객체 핸들러
-    void handleGetManagedObjects(std::map<sdbus::ObjectPath, 
-                               std::map<std::string, 
-                               std::map<std::string, sdbus::Variant>>>& result);
+    std::map<sdbus::ObjectPath, 
+           std::map<std::string, 
+           std::map<std::string, sdbus::Variant>>> handleGetManagedObjects();
     
     // ManagedObjects 딕셔너리 생성
     std::map<sdbus::ObjectPath, 
