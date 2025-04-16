@@ -3,7 +3,7 @@
 
 #include "GattTypes.h"
 #include "GattCallbacks.h"
-#include "DBusObject.h"
+#include "SDBusObject.h"
 #include "BlueZConstants.h"
 #include <vector>
 #include <memory>

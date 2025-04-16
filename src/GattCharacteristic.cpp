@@ -1,51 +1,41 @@
-// src/GattCharacteristic.cpp
 #include "GattCharacteristic.h"
 #include "GattService.h"
 #include "GattDescriptor.h"
 #include "Logger.h"
-#include "Utils.h"
 
 namespace ggk {
 
 GattCharacteristic::GattCharacteristic(
-    DBusConnection& connection,
-    const DBusObjectPath& path,
+    SDBusConnection& connection,
+    const std::string& path,
     const GattUuid& uuid,
     GattService& service,
     uint8_t properties,
-    uint8_t permissions
-) : DBusObject(connection, path),
-    uuid(uuid),
-    service(service),
-    properties(properties),
-    permissions(permissions),
-    notifying(false) {
+    uint8_t permissions)
+    : connection(connection),
+      object(connection, path),
+      uuid(uuid),
+      service(service),
+      properties(properties),
+      permissions(permissions),
+      notifying(false) {
 }
 
 void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
     try {
-        // Set the value
+        // 값 설정
         {
             std::lock_guard<std::mutex> lock(valueMutex);
             value = newValue;
         }
         
-        // Emit PropertyChanged signal if registered
-        if (isRegistered()) {
-            // Create GVariant using makeGVariantPtr pattern
-            GVariantPtr valueVariant = Utils::gvariantPtrFromByteArray(newValue.data(), newValue.size());
+        // 등록된 경우 PropertyChanged 시그널 발생
+        if (object.isRegistered()) {
+            // Value 속성 변경 알림
+            std::vector<uint8_t> valueCopy = newValue; // 복사본 생성
+            object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Value");
             
-            if (!valueVariant) {
-                Logger::error("Failed to create GVariant for characteristic value");
-                return;
-            }
-            
-            // Emit ValueChanged signal
-            emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
-                               "Value", 
-                               std::move(valueVariant));
-            
-            // If notifying, handle notification
+            // 알림 중이면 알림 처리
             bool isNotifying = false;
             {
                 std::lock_guard<std::mutex> notifyLock(notifyMutex);
@@ -53,86 +43,76 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
             }
             
             if (isNotifying) {
-                // Execute callback if registered
+                // 콜백이 등록된 경우 실행
                 std::lock_guard<std::mutex> callbackLock(callbackMutex);
                 if (notifyCallback) {
                     try {
                         notifyCallback();
                     } catch (const std::exception& e) {
-                        Logger::error("Exception in notify callback: " + std::string(e.what()));
+                        Logger::error("알림 콜백에서 예외: " + std::string(e.what()));
                     }
                 }
             }
         }
     } catch (const std::exception& e) {
-        Logger::error("Exception in setValue: " + std::string(e.what()));
+        Logger::error("setValue에서 예외: " + std::string(e.what()));
     }
 }
 
 void GattCharacteristic::setValue(std::vector<uint8_t>&& newValue) {
     try {
-        // Set the value using move semantics
+        // 이동 의미론을 사용하여 값 설정
         {
             std::lock_guard<std::mutex> lock(valueMutex);
             value = std::move(newValue);
         }
         
-        // Emit PropertyChanged signal if registered
-        if (isRegistered()) {
-            // Create GVariant using makeGVariantPtr pattern
-            GVariantPtr valueVariant = Utils::gvariantPtrFromByteArray(value.data(), value.size());
+        // 등록된 경우 PropertyChanged 시그널 발생
+        if (object.isRegistered()) {
+            // Value 속성 변경 알림
+            object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Value");
             
-            if (!valueVariant) {
-                Logger::error("Failed to create GVariant for characteristic value");
-                return;
-            }
-            
-            // Check notification state
+            // 알림 상태 확인
             bool isNotifying = false;
             {
                 std::lock_guard<std::mutex> notifyLock(notifyMutex);
                 isNotifying = notifying;
             }
             
-            // Handle notification if active
+            // 알림 중이면 알림 처리
             if (isNotifying) {
                 std::lock_guard<std::mutex> callbackLock(callbackMutex);
                 if (notifyCallback) {
                     try {
                         notifyCallback();
                     } catch (const std::exception& e) {
-                        Logger::error("Exception in notify callback: " + std::string(e.what()));
+                        Logger::error("알림 콜백에서 예외: " + std::string(e.what()));
                     }
                 }
             }
-            
-            // Emit property changed signal
-            emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
-                               "Value", 
-                               std::move(valueVariant));
         }
     } catch (const std::exception& e) {
-        Logger::error("Exception in setValue (move): " + std::string(e.what()));
+        Logger::error("setValue(이동)에서 예외: " + std::string(e.what()));
     }
 }
 
 GattDescriptorPtr GattCharacteristic::createDescriptor(
     const GattUuid& uuid,
-    uint8_t permissions
-) {
+    uint8_t permissions)
+{
     if (uuid.toString().empty()) {
-        Logger::error("Cannot create descriptor with empty UUID");
+        Logger::error("빈 UUID로 설명자를 생성할 수 없음");
         return nullptr;
     }
     
     // CCCD UUID (0x2902)
     const std::string CCCD_UUID = "00002902-0000-1000-8000-00805f9b34fb";
     
-    // Check if trying to create CCCD descriptor while characteristic has notify/indicate
+    // 특성에 알림/표시가 있는 경우 CCCD 설명자 수동 생성 시도 확인
     if (uuid.toString() == CCCD_UUID && 
         (properties & GattProperty::PROP_NOTIFY || properties & GattProperty::PROP_INDICATE)) {
-        Logger::warn("Attempted to manually create CCCD descriptor for characteristic with notify/indicate. " 
-                    "This is handled automatically by BlueZ 5.82+. Ignoring request.");
+        Logger::warn("알림/표시가 있는 특성에 CCCD 설명자를 수동으로 생성하려 시도함. " 
+                    "이는 BlueZ 5.82+에서 자동으로 처리됨. 요청 무시.");
         return nullptr;
     }
     
@@ -140,11 +120,11 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
     
     std::lock_guard<std::mutex> lock(descriptorsMutex);
     
-    // Check if already exists
+    // 이미 존재하는지 확인
     auto it = descriptors.find(uuidStr);
     if (it != descriptors.end()) {
         if (!it->second) {
-            Logger::error("Found null descriptor entry for UUID: " + uuidStr);
+            Logger::error("UUID에 대한 null 설명자 항목 발견: " + uuidStr);
             descriptors.erase(it);
         } else {
             return it->second;
@@ -152,13 +132,13 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
     }
     
     try {
-        // Create consistent object path
+        // 일관된 객체 경로 생성
         std::string descNum = "desc" + std::to_string(descriptors.size() + 1);
-        DBusObjectPath descriptorPath = getPath() + descNum;
+        std::string descriptorPath = getPath() + "/" + descNum;
         
-        // Create descriptor
-        GattDescriptorPtr descriptor = std::make_shared<GattDescriptor>(
-            getConnection(),
+        // 설명자 생성
+        auto descriptor = std::make_shared<GattDescriptor>(
+            connection,
             descriptorPath,
             uuid,
             *this,
@@ -166,17 +146,17 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
         );
         
         if (!descriptor) {
-            Logger::error("Failed to create descriptor for UUID: " + uuidStr);
+            Logger::error("UUID에 대한 설명자 생성 실패: " + uuidStr);
             return nullptr;
         }
         
-        // Add to map
+        // 맵에 추가
         descriptors[uuidStr] = descriptor;
         
-        Logger::info("Created descriptor: " + uuidStr + " at path: " + descriptorPath.toString());
+        Logger::info("설명자 생성됨: " + uuidStr + ", 경로: " + descriptorPath);
         return descriptor;
     } catch (const std::exception& e) {
-        Logger::error("Exception during descriptor creation: " + std::string(e.what()));
+        Logger::error("설명자 생성 중 예외: " + std::string(e.what()));
         return nullptr;
     }
 }
@@ -198,48 +178,37 @@ bool GattCharacteristic::startNotify() {
     std::lock_guard<std::mutex> lock(notifyMutex);
     
     if (notifying) {
-        return true;  // Already notifying
+        return true;  // 이미 알림 중
     }
     
-    // Check if characteristic supports notifications
+    // 특성이 알림을 지원하는지 확인
     if (!(properties & GattProperty::PROP_NOTIFY) && 
         !(properties & GattProperty::PROP_INDICATE)) {
-        Logger::error("Characteristic does not support notifications: " + uuid.toString());
+        Logger::error("특성이 알림을 지원하지 않음: " + uuid.toString());
         return false;
     }
     
     notifying = true;
     
-    // Emit PropertyChanged signal for Notifying
-    if (isRegistered()) {
-        // Use makeGVariantPtr pattern
-        GVariantPtr valueVariant = Utils::gvariantPtrFromBoolean(true);
-        
-        if (!valueVariant) {
-            Logger::error("Failed to create GVariant for notification state");
-            notifying = false;
-            return false;
-        }
-        
-        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
-                           "Notifying", 
-                           std::move(valueVariant));
+    // Notifying 속성에 대한 PropertyChanged 시그널 발생
+    if (object.isRegistered()) {
+        object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Notifying");
     }
     
-    // Call notify callback
+    // 알림 콜백 호출
     {
         std::lock_guard<std::mutex> callbackLock(callbackMutex);
         if (notifyCallback) {
             try {
                 notifyCallback();
             } catch (const std::exception& e) {
-                Logger::error("Exception in notify callback: " + std::string(e.what()));
-                // Keep notification state enabled even if callback fails
+                Logger::error("알림 콜백에서 예외: " + std::string(e.what()));
+                // 콜백이 실패해도 알림 상태 유지
             }
         }
     }
     
-    Logger::info("Started notifications for characteristic: " + uuid.toString());
+    Logger::info("특성에 대한 알림 시작됨: " + uuid.toString());
     return true;
 }
 
@@ -247,494 +216,228 @@ bool GattCharacteristic::stopNotify() {
     std::lock_guard<std::mutex> lock(notifyMutex);
     
     if (!notifying) {
-        return true;  // Already stopped
+        return true;  // 이미 중지됨
     }
     
     notifying = false;
     
-    // Emit PropertyChanged signal for Notifying
-    if (isRegistered()) {
-        // Use makeGVariantPtr pattern
-        GVariantPtr valueVariant = Utils::gvariantPtrFromBoolean(false);
-        
-        if (!valueVariant) {
-            Logger::error("Failed to create GVariant for notification state");
-            notifying = true;  // Restore original state
-            return false;
-        }
-        
-        emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, 
-                           "Notifying", 
-                           std::move(valueVariant));
+    // Notifying 속성에 대한 PropertyChanged 시그널 발생
+    if (object.isRegistered()) {
+        object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "Notifying");
     }
     
-    Logger::info("Stopped notifications for: " + uuid.toString());
+    Logger::info("특성에 대한 알림 중지됨: " + uuid.toString());
     return true;
 }
 
 bool GattCharacteristic::setupDBusInterfaces() {
-    // Define properties
-    std::vector<DBusProperty> properties = {
-        {
-            "UUID",
-            "s",
-            true,
-            false,
-            false,
-            [this]() { return getUuidProperty(); },
-            nullptr
-        },
-        {
-            "Service",
-            "o",
-            true,
-            false,
-            false,
-            [this]() { return getServiceProperty(); },
-            nullptr
-        },
-        {
-            "Flags",
-            "as",
-            true,
-            false,
-            false,
-            [this]() { return getPropertiesProperty(); },
-            nullptr
-        },
-        {
-            "Descriptors",
-            "ao",
-            true,
-            false,
-            true,
-            [this]() { return getDescriptorsProperty(); },
-            nullptr
-        },
-        {
-            "Notifying",
-            "b",
-            true,
-            false,
-            true,
-            [this]() { return getNotifyingProperty(); },
-            nullptr
+    // 속성 등록
+    object.registerProperty(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        "UUID",
+        "s",
+        [this]() -> std::string { return uuid.toBlueZFormat(); }
+    );
+    
+    object.registerProperty(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        "Service",
+        "o",
+        [this]() -> sdbus::ObjectPath { return sdbus::ObjectPath(service.getPath()); }
+    );
+    
+    // BlueZ 5.82+에서는 "Value" 속성이 자동으로 설정됨
+    
+    // Flags 속성 (특성 속성)
+    object.registerProperty(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        "Flags",
+        "as",
+        [this]() -> std::vector<std::string> {
+            std::vector<std::string> flags;
+            
+            if (properties & GattProperty::PROP_BROADCAST)
+                flags.push_back("broadcast");
+            if (properties & GattProperty::PROP_READ)
+                flags.push_back("read");
+            if (properties & GattProperty::PROP_WRITE_WITHOUT_RESPONSE)
+                flags.push_back("write-without-response");
+            if (properties & GattProperty::PROP_WRITE)
+                flags.push_back("write");
+            if (properties & GattProperty::PROP_NOTIFY)
+                flags.push_back("notify");
+            if (properties & GattProperty::PROP_INDICATE)
+                flags.push_back("indicate");
+            if (properties & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES)
+                flags.push_back("authenticated-signed-writes");
+            
+            return flags;
         }
-    };
+    );
     
-    // Add interface
-    if (!addInterface(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, properties)) {
-        Logger::error("Failed to add characteristic interface");
-        return false;
-    }
-    
-    // Add method handlers
-    if (!addMethodWithSignature(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "ReadValue", 
-                  [this](const DBusMethodCall& call) { handleReadValue(call); },
-                  "a{sv}", "ay")) {  // a{sv} 입력(옵션 딕셔너리), ay 출력(바이트 배열)
-        Logger::error("Failed to add ReadValue method");
-        return false;
-    }
-    
-    if (!addMethodWithSignature(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "WriteValue", 
-                  [this](const DBusMethodCall& call) { handleWriteValue(call); },
-                  "aya{sv}", "")) {  // aya{sv} 입력(값과 옵션 딕셔너리), 빈 출력
-        Logger::error("Failed to add WriteValue method");
-        return false;
-    }
-    
-    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "StartNotify", 
-                  [this](const DBusMethodCall& call) { handleStartNotify(call); })) {
-        Logger::error("Failed to add StartNotify method");
-        return false;
-    }
-    
-    if (!addMethod(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, "StopNotify", 
-                  [this](const DBusMethodCall& call) { handleStopNotify(call); })) {
-        Logger::error("Failed to add StopNotify method");
-        return false;
-    }
-    
-    // Register object
-    if (!registerObject()) {
-        Logger::error("Failed to register characteristic object");
-        return false;
-    }
-    
-    Logger::info("Registered GATT characteristic: " + uuid.toString());
-    return true;
-}
-
-void GattCharacteristic::handleReadValue(const DBusMethodCall& call) {
-    if (!call.invocation) {
-        Logger::error("Invalid method invocation in ReadValue");
-        return;
-    }
-    
-    Logger::debug("ReadValue called for characteristic: " + uuid.toString());
-    
-    try {
-        // 옵션 파라미터 처리 (offset 등)
-        // BlueZ 5.82에서는 a{sv} 형태로 옵션이 전달됨
-        uint16_t offset = 0;
-        if (call.parameters) {
-            Logger::debug("ReadValue parameters received: " + std::string(g_variant_get_type_string(call.parameters.get())));
-            // 옵션에서 offset 추출 예시
-            GVariant* offsetVar = g_variant_lookup_value(call.parameters.get(), "offset", G_VARIANT_TYPE_UINT16);
-            if (offsetVar) {
-                offset = g_variant_get_uint16(offsetVar);
-                g_variant_unref(offsetVar);
-                Logger::debug("Read offset: " + std::to_string(offset));
-            }
+    object.registerProperty(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        "Notifying",
+        "b",
+        [this]() -> bool {
+            std::lock_guard<std::mutex> lock(notifyMutex);
+            return notifying;
         }
-        
-        std::vector<uint8_t> returnValue;
-        
-        // 콜백 사용
-        {
-            std::lock_guard<std::mutex> callbackLock(callbackMutex);
-            if (readCallback) {
-                try {
-                    returnValue = readCallback();
-                } catch (const std::exception& e) {
-                    Logger::error("Exception in read callback: " + std::string(e.what()));
-                    g_dbus_method_invocation_return_error_literal(
-                        call.invocation.get(),
-                        G_DBUS_ERROR,
-                        G_DBUS_ERROR_FAILED,
-                        e.what()
-                    );
-                    return;
+    );
+    
+    object.registerProperty(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        "Descriptors",
+        "ao",
+        [this]() -> std::vector<sdbus::ObjectPath> {
+            std::vector<sdbus::ObjectPath> paths;
+            std::lock_guard<std::mutex> lock(descriptorsMutex);
+            
+            for (const auto& pair : descriptors) {
+                if (pair.second) {  // null 체크
+                    paths.push_back(sdbus::ObjectPath(pair.second->getPath()));
                 }
-            } else {
-                // 저장된 값 사용
-                std::lock_guard<std::mutex> valueLock(valueMutex);
-                returnValue = value;
-            }
-        }
-        
-        // offset 적용 (있는 경우)
-        if (offset > 0 && offset < returnValue.size()) {
-            returnValue.erase(returnValue.begin(), returnValue.begin() + offset);
-        }
-        
-        // 응답 생성
-        GVariantPtr resultVariant = Utils::gvariantPtrFromByteArray(returnValue.data(), returnValue.size());
-        
-        if (!resultVariant) {
-            Logger::error("Failed to create GVariant for read response");
-            g_dbus_method_invocation_return_error_literal(
-                call.invocation.get(),
-                G_DBUS_ERROR,
-                G_DBUS_ERROR_FAILED,
-                "Failed to create response"
-            );
-            return;
-        }
-        
-        // 응답 반환
-        g_dbus_method_invocation_return_value(call.invocation.get(), resultVariant.get());
-        
-    } catch (const std::exception& e) {
-        Logger::error("Exception in ReadValue: " + std::string(e.what()));
-        g_dbus_method_invocation_return_error_literal(
-            call.invocation.get(),
-            G_DBUS_ERROR,
-            G_DBUS_ERROR_FAILED,
-            e.what()
-        );
-    }
-}
-
-void GattCharacteristic::handleWriteValue(const DBusMethodCall& call) {
-    if (!call.invocation) {
-        Logger::error("Invalid method invocation in WriteValue");
-        return;
-    }
-    
-    Logger::debug("WriteValue called for characteristic: " + uuid.toString());
-    
-    // 파라미터 확인
-    if (!call.parameters) {
-        Logger::error("Missing parameters for WriteValue");
-        g_dbus_method_invocation_return_error_literal(
-            call.invocation.get(),
-            G_DBUS_ERROR,
-            G_DBUS_ERROR_INVALID_ARGS,
-            "Missing parameters"
-        );
-        return;
-    }
-    
-    // BlueZ 5.82에서는 WriteValue(ay options) 형태로 호출됨
-    // 첫 번째는 바이트 배열, 두 번째는 옵션 딕셔너리
-    try {
-        Logger::debug("WriteValue parameters type: " + std::string(g_variant_get_type_string(call.parameters.get())));
-        
-        // 바이트 배열과 옵션 추출
-        GVariant* value_variant = nullptr;
-        GVariant* options_variant = nullptr;
-        
-        // 튜플에서 값과 옵션 추출
-        if (g_variant_is_of_type(call.parameters.get(), G_VARIANT_TYPE("(aya{sv})"))) {
-            value_variant = g_variant_get_child_value(call.parameters.get(), 0);
-            options_variant = g_variant_get_child_value(call.parameters.get(), 1);
-        }
-        // 단일 값만 전달된 경우 (이전 버전 호환)
-        else if (g_variant_is_of_type(call.parameters.get(), G_VARIANT_TYPE("ay"))) {
-            value_variant = g_variant_ref(call.parameters.get());
-        }
-        
-        if (!value_variant) {
-            Logger::error("Cannot extract value from WriteValue parameters");
-            g_dbus_method_invocation_return_error_literal(
-                call.invocation.get(),
-                G_DBUS_ERROR,
-                G_DBUS_ERROR_INVALID_ARGS,
-                "Cannot extract value"
-            );
-            return;
-        }
-        
-        // 옵션 처리 (예: offset)
-        uint16_t offset = 0;
-        if (options_variant) {
-            GVariant* offsetVar = g_variant_lookup_value(options_variant, "offset", G_VARIANT_TYPE_UINT16);
-            if (offsetVar) {
-                offset = g_variant_get_uint16(offsetVar);
-                g_variant_unref(offsetVar);
-                Logger::debug("Write offset: " + std::to_string(offset));
-            }
-            g_variant_unref(options_variant);
-        }
-        
-        // 바이트 배열로 변환
-        std::vector<uint8_t> newValue = Utils::variantToByteArray(value_variant);
-        g_variant_unref(value_variant);
-        
-        // 콜백 사용
-        bool success = true;
-        {
-            std::lock_guard<std::mutex> callbackLock(callbackMutex);
-            if (writeCallback) {
-                try {
-                    success = writeCallback(newValue);
-                } catch (const std::exception& e) {
-                    Logger::error("Exception in write callback: " + std::string(e.what()));
-                    g_dbus_method_invocation_return_error_literal(
-                        call.invocation.get(),
-                        G_DBUS_ERROR,
-                        G_DBUS_ERROR_FAILED,
-                        e.what()
-                    );
-                    return;
-                }
-            }
-        }
-        
-        if (success) {
-            // 처리 성공 - offset 적용해서 값 설정
-            if (offset > 0) {
-                std::lock_guard<std::mutex> valueLock(valueMutex);
-                // 필요시 기존 값 확장
-                if (offset >= value.size()) {
-                    value.resize(offset + newValue.size(), 0);
-                }
-                // offset 위치에 새 값 복사
-                std::copy(newValue.begin(), newValue.end(), value.begin() + offset);
-            } else {
-                // 그냥 전체 값 설정
-                setValue(newValue);
             }
             
-            // 빈 응답
-            g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
+            return paths;
+        }
+    );
+    
+    // ReadValue 메서드 등록
+    object.registerReadValueMethod(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        [this](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
+            return handleReadValue(options);
+        }
+    );
+    
+    // WriteValue 메서드 등록
+    object.registerWriteValueMethod(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        [this](const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
+            handleWriteValue(value, options);
+        }
+    );
+    
+    // StartNotify/StopNotify 메서드 등록
+    object.registerNotifyMethod(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        "StartNotify",
+        [this]() { handleStartNotify(); }
+    );
+    
+    object.registerNotifyMethod(
+        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
+        "StopNotify",
+        [this]() { handleStopNotify(); }
+    );
+    
+    // 객체 등록
+    return object.registerObject();
+}
+
+std::vector<uint8_t> GattCharacteristic::handleReadValue(const std::map<std::string, sdbus::Variant>& options) {
+    Logger::debug("특성에 대해 ReadValue 호출됨: " + uuid.toString());
+    
+    // 옵션 처리 (예: offset)
+    uint16_t offset = 0;
+    if (options.count("offset") > 0) {
+        try {
+            offset = options.at("offset").get<uint16_t>();
+            Logger::debug("읽기 오프셋: " + std::to_string(offset));
+        } catch (...) {
+            // 타입 변환 오류 무시
+        }
+    }
+    
+    std::vector<uint8_t> returnValue;
+    
+    // 콜백 사용
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackMutex);
+        if (readCallback) {
+            try {
+                returnValue = readCallback();
+            } catch (const std::exception& e) {
+                Logger::error("읽기 콜백에서 예외: " + std::string(e.what()));
+                throw sdbus::Error("org.bluez.Error.Failed", e.what());
+            }
         } else {
-            // 콜백 실패
-            g_dbus_method_invocation_return_error_literal(
-                call.invocation.get(),
-                G_DBUS_ERROR,
-                G_DBUS_ERROR_FAILED,
-                "Write operation failed"
-            );
+            // 저장된 값 사용
+            std::lock_guard<std::mutex> valueLock(valueMutex);
+            returnValue = value;
         }
-    } catch (const std::exception& e) {
-        Logger::error("Failed to parse WriteValue parameters: " + std::string(e.what()));
-        g_dbus_method_invocation_return_error_literal(
-            call.invocation.get(),
-            G_DBUS_ERROR,
-            G_DBUS_ERROR_INVALID_ARGS,
-            "Invalid parameters"
-        );
-    }
-}
-
-void GattCharacteristic::handleStartNotify(const DBusMethodCall& call) {
-    if (!call.invocation) {
-        Logger::error("Invalid method invocation in StartNotify");
-        return;
     }
     
-    Logger::debug("StartNotify called for characteristic: " + uuid.toString());
-    
-    if (startNotify()) {
-        // Success response
-        g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
-    } else {
-        // Error response
-        g_dbus_method_invocation_return_error_literal(
-            call.invocation.get(),
-            G_DBUS_ERROR,
-            G_DBUS_ERROR_NOT_SUPPORTED,
-            "Notifications not supported"
-        );
-    }
-}
-
-void GattCharacteristic::handleStopNotify(const DBusMethodCall& call) {
-    if (!call.invocation) {
-        Logger::error("Invalid method invocation in StopNotify");
-        return;
+    // offset 적용 (있는 경우)
+    if (offset > 0 && offset < returnValue.size()) {
+        returnValue.erase(returnValue.begin(), returnValue.begin() + offset);
     }
     
-    Logger::debug("StopNotify called for characteristic: " + uuid.toString());
+    return returnValue;
+}
+
+void GattCharacteristic::handleWriteValue(const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
+    Logger::debug("특성에 대해 WriteValue 호출됨: " + uuid.toString());
     
-    if (stopNotify()) {
-        // Success response
-        g_dbus_method_invocation_return_value(call.invocation.get(), nullptr);
-    } else {
-        // Error response
-        g_dbus_method_invocation_return_error_literal(
-            call.invocation.get(),
-            G_DBUS_ERROR,
-            G_DBUS_ERROR_FAILED,
-            "Failed to stop notifications"
-        );
+    // 옵션 처리 (예: offset)
+    uint16_t offset = 0;
+    if (options.count("offset") > 0) {
+        try {
+            offset = options.at("offset").get<uint16_t>();
+            Logger::debug("쓰기 오프셋: " + std::to_string(offset));
+        } catch (...) {
+            // 타입 변환 오류 무시
+        }
     }
-}
-
-GVariant* GattCharacteristic::getUuidProperty() {
-    try {
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromString(uuid.toBlueZFormat());
-        if (!variantPtr) {
-            return nullptr;
-        }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getUuidProperty: " + std::string(e.what()));
-        return nullptr;
-    }
-}
-
-GVariant* GattCharacteristic::getServiceProperty() {
-    try {
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromObject(service.getPath());
-        if (!variantPtr) {
-            return nullptr;
-        }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getServiceProperty: " + std::string(e.what()));
-        return nullptr;
-    }
-}
-
-GVariant* GattCharacteristic::getPropertiesProperty() {
-    try {
-        std::vector<std::string> flags;
-        
-        // Add flags based on properties
-        if (properties & GattProperty::PROP_BROADCAST) {
-            flags.push_back("broadcast");
-        }
-        if (properties & GattProperty::PROP_READ) {
-            flags.push_back("read");
-        }
-        if (properties & GattProperty::PROP_WRITE_WITHOUT_RESPONSE) {
-            flags.push_back("write-without-response");
-        }
-        if (properties & GattProperty::PROP_WRITE) {
-            flags.push_back("write");
-        }
-        if (properties & GattProperty::PROP_NOTIFY) {
-            flags.push_back("notify");
-        }
-        if (properties & GattProperty::PROP_INDICATE) {
-            flags.push_back("indicate");
-        }
-        if (properties & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES) {
-            flags.push_back("authenticated-signed-writes");
-        }
-        
-        // Add permission flags
-        if (permissions & GattPermission::PERM_READ_ENCRYPTED) {
-            flags.push_back("encrypt-read");
-        }
-        if (permissions & GattPermission::PERM_WRITE_ENCRYPTED) {
-            flags.push_back("encrypt-write");
-        }
-        if (permissions & GattPermission::PERM_READ_AUTHENTICATED) {
-            flags.push_back("auth-read");
-        }
-        if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED) {
-            flags.push_back("auth-write");
-        }
-        
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(flags);
-        if (!variantPtr) {
-            return nullptr;
-        }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getPropertiesProperty: " + std::string(e.what()));
-        return nullptr;
-    }
-}
-
-GVariant* GattCharacteristic::getDescriptorsProperty() {
-    try {
-        std::vector<std::string> paths;
-        
-        std::lock_guard<std::mutex> lock(descriptorsMutex);
-        
-        for (const auto& pair : descriptors) {
-            if (pair.second) {  // Check for nullptr
-                paths.push_back(pair.second->getPath().toString());
+    
+    // 콜백 사용
+    bool success = true;
+    {
+        std::lock_guard<std::mutex> callbackLock(callbackMutex);
+        if (writeCallback) {
+            try {
+                success = writeCallback(value);
+            } catch (const std::exception& e) {
+                Logger::error("쓰기 콜백에서 예외: " + std::string(e.what()));
+                throw sdbus::Error("org.bluez.Error.Failed", e.what());
             }
         }
-        
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(paths);
-        if (!variantPtr) {
-            return nullptr;
+    }
+    
+    if (success) {
+        // offset 적용하여 값 설정
+        if (offset > 0) {
+            std::lock_guard<std::mutex> valueLock(valueMutex);
+            // 필요시 기존 값 확장
+            if (offset >= this->value.size()) {
+                this->value.resize(offset + value.size(), 0);
+            }
+            // offset 위치에 새 값 복사
+            std::copy(value.begin(), value.end(), this->value.begin() + offset);
+        } else {
+            // 그냥 전체 값 설정
+            setValue(value);
         }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getDescriptorsProperty: " + std::string(e.what()));
-        return nullptr;
+    } else {
+        // 콜백 실패 시 예외 발생
+        throw sdbus::Error("org.bluez.Error.Failed", "Write operation failed");
     }
 }
 
-GVariant* GattCharacteristic::getNotifyingProperty() {
-    try {
-        std::lock_guard<std::mutex> lock(notifyMutex);
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromBoolean(notifying);
-        if (!variantPtr) {
-            return nullptr;
-        }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getNotifyingProperty: " + std::string(e.what()));
-        return nullptr;
+void GattCharacteristic::handleStartNotify() {
+    Logger::debug("특성에 대해 StartNotify 호출됨: " + uuid.toString());
+    
+    if (!startNotify()) {
+        throw sdbus::Error("org.bluez.Error.Failed", "Cannot start notifications");
+    }
+}
+
+void GattCharacteristic::handleStopNotify() {
+    Logger::debug("특성에 대해 StopNotify 호출됨: " + uuid.toString());
+    
+    if (!stopNotify()) {
+        throw sdbus::Error("org.bluez.Error.Failed", "Cannot stop notifications");
     }
 }
 

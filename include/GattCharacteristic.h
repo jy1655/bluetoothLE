@@ -1,9 +1,9 @@
-// include/GattCharacteristic.h
 #pragma once
 
+#include "SDBusInterface.h"
+#include "SDBusObject.h"
 #include "GattTypes.h"
 #include "GattCallbacks.h"
-#include "DBusObject.h"
 #include "BlueZConstants.h"
 #include <vector>
 #include <map>
@@ -12,183 +12,92 @@
 
 namespace ggk {
 
-// Forward declarations
+// 전방 선언
 class GattService;
 class GattDescriptor;
-
-// Smart pointer types
 using GattDescriptorPtr = std::shared_ptr<GattDescriptor>;
 
-/**
- * @brief Class representing a GATT characteristic
- * 
- * A GATT characteristic has properties (Read, Write, Notify, etc.)
- * and can contain one or more descriptors.
- */
-class GattCharacteristic : public DBusObject, public std::enable_shared_from_this<GattCharacteristic> {
+class GattCharacteristic {
 public:
-    /**
-     * @brief Constructor
-     * 
-     * @param connection D-Bus connection
-     * @param path Object path
-     * @param uuid Characteristic UUID
-     * @param service Parent service
-     * @param properties Characteristic properties (GattProperty enum combination)
-     * @param permissions Characteristic permissions (GattPermission enum combination)
-     */
     GattCharacteristic(
-        DBusConnection& connection,
-        const DBusObjectPath& path,
+        SDBusConnection& connection,
+        const std::string& path,
         const GattUuid& uuid,
         GattService& service,
         uint8_t properties,
-        uint8_t permissions
-    );
+        uint8_t permissions);
     
-    /**
-     * @brief Destructor
-     */
     virtual ~GattCharacteristic() = default;
     
-    /**
-     * @brief Get UUID
-     */
+    // 기본 접근자
     const GattUuid& getUuid() const { return uuid; }
+    const std::string& getPath() const { return object.getPath(); }
+    uint8_t getProperties() const { return properties; }
+    uint8_t getPermissions() const { return permissions; }
     
-    /**
-     * @brief Get current value
-     */
+    // 값 관리
     const std::vector<uint8_t>& getValue() const {
         std::lock_guard<std::mutex> lock(valueMutex);
         return value;
     }
     
-    /**
-     * @brief Get characteristic properties
-     */
-    uint8_t getProperties() const { return properties; }
-    
-    /**
-     * @brief Get characteristic permissions
-     */
-    uint8_t getPermissions() const { return permissions; }
-    
-    /**
-     * @brief Set value
-     * 
-     * @param value New value (copied)
-     */
     void setValue(const std::vector<uint8_t>& value);
-    
-    /**
-     * @brief Set value (move semantics)
-     * 
-     * @param value New value (moved)
-     */
     void setValue(std::vector<uint8_t>&& value);
     
-    /**
-     * @brief Create descriptor
-     * 
-     * @param uuid Descriptor UUID
-     * @param permissions Descriptor permissions
-     * @return Descriptor pointer (nullptr on failure)
-     */
+    // 설명자 관리
     GattDescriptorPtr createDescriptor(
         const GattUuid& uuid,
-        uint8_t permissions
-    );
+        uint8_t permissions);
     
-    /**
-     * @brief Find descriptor by UUID
-     * 
-     * @param uuid Descriptor UUID
-     * @return Descriptor pointer (nullptr if not found)
-     */
     GattDescriptorPtr getDescriptor(const GattUuid& uuid) const;
     
-    /**
-     * @brief Get all descriptors
-     */
     const std::map<std::string, GattDescriptorPtr>& getDescriptors() const {
         std::lock_guard<std::mutex> lock(descriptorsMutex);
         return descriptors;
     }
     
-    /**
-     * @brief Start notifications
-     * 
-     * @return Success status
-     */
+    // 알림 관리
     bool startNotify();
-    
-    /**
-     * @brief Stop notifications
-     * 
-     * @return Success status
-     */
     bool stopNotify();
-    
-    /**
-     * @brief Check if notifications are active
-     */
     bool isNotifying() const {
         std::lock_guard<std::mutex> lock(notifyMutex);
         return notifying;
     }
     
-    /**
-     * @brief Set read callback
-     */
+    // 콜백 설정
     void setReadCallback(GattReadCallback callback) {
         std::lock_guard<std::mutex> lock(callbackMutex);
         readCallback = callback;
     }
     
-    /**
-     * @brief Set write callback
-     */
     void setWriteCallback(GattWriteCallback callback) {
         std::lock_guard<std::mutex> lock(callbackMutex);
         writeCallback = callback;
     }
     
-    /**
-     * @brief Set notify callback
-     */
     void setNotifyCallback(GattNotifyCallback callback) {
         std::lock_guard<std::mutex> lock(callbackMutex);
         notifyCallback = callback;
     }
     
-    /**
-     * @brief Setup BlueZ D-Bus interfaces
-     * 
-     * @return Success status
-     */
+    // D-Bus 인터페이스 설정
     bool setupDBusInterfaces();
-
-    /**
-     * @brief Get parent service
-     */
+    bool finishRegistration() { return object.registerObject(); }
+    bool isRegistered() const { return object.isRegistered(); }
+    
+    // 부모 서비스 접근자
     GattService& getService() const { return service; }
     
 private:
-    // D-Bus method handlers
-    void handleReadValue(const DBusMethodCall& call);
-    void handleWriteValue(const DBusMethodCall& call);
-    void handleStartNotify(const DBusMethodCall& call);
-    void handleStopNotify(const DBusMethodCall& call);
+    // D-Bus 메서드 핸들러
+    std::vector<uint8_t> handleReadValue(const std::map<std::string, sdbus::Variant>& options);
+    void handleWriteValue(const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options);
+    void handleStartNotify();
+    void handleStopNotify();
     
-    // D-Bus property getters
-    GVariant* getUuidProperty();
-    GVariant* getServiceProperty();
-    GVariant* getPropertiesProperty();
-    GVariant* getDescriptorsProperty();
-    GVariant* getNotifyingProperty();
-    
-    // Properties
+    // 내부 상태
+    SDBusConnection& connection;
+    SDBusObject object;
     GattUuid uuid;
     GattService& service;
     uint8_t properties;
@@ -199,18 +108,17 @@ private:
     bool notifying;
     mutable std::mutex notifyMutex;
     
-    // Descriptor management
+    // 설명자 관리
     std::map<std::string, GattDescriptorPtr> descriptors;
     mutable std::mutex descriptorsMutex;
     
-    // Callbacks
+    // 콜백
     GattReadCallback readCallback;
     GattWriteCallback writeCallback;
     GattNotifyCallback notifyCallback;
     mutable std::mutex callbackMutex;
 };
 
-// Smart pointer definition
 using GattCharacteristicPtr = std::shared_ptr<GattCharacteristic>;
 
 } // namespace ggk

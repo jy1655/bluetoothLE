@@ -1,12 +1,11 @@
-#include "dbus/SDBusObject.h"
-#include "Logger.h"
+#include "SDBusObject.h"
 
 namespace ggk {
 
 SDBusObject::SDBusObject(SDBusConnection& connection, const std::string& objectPath)
-    : connection(connection)
-    , objectPath(objectPath)
-    , registered(false) {
+    : connection(connection),
+      objectPath(objectPath),
+      registered(false) {
     
     try {
         sdbusObject = connection.createObject(objectPath);
@@ -36,7 +35,7 @@ bool SDBusObject::registerObject() {
     }
     
     try {
-        // Finalize all registrations and register with D-Bus
+        // 모든 등록 완료 및 D-Bus에 등록
         sdbusObject->finishRegistration();
         registered = true;
         Logger::info("Registered D-Bus object: " + objectPath);
@@ -73,54 +72,9 @@ bool SDBusObject::unregisterObject() {
 }
 
 bool SDBusObject::addInterface(const std::string& interfaceName) {
-    std::lock_guard<std::mutex> lock(objectMutex);
-    
-    if (registered) {
-        Logger::warn("Cannot add interface to already registered object: " + objectPath);
-        return false;
-    }
-    
-    if (!sdbusObject) {
-        return false;
-    }
-    
-    // Check if interface already added
-    for (const auto& existingInterface : interfaces) {
-        if (existingInterface == interfaceName) {
-            return true; // Interface already added
-        }
-    }
-    
-    interfaces.push_back(interfaceName);
-    Logger::debug("Added interface: " + interfaceName + " to object: " + objectPath);
+    // 인터페이스 이름을 등록 (sdbus-c++는 이를 명시적으로 필요로 하지 않음)
+    // 메서드 등록 시 자동으로 인터페이스를 생성함
     return true;
-}
-
-bool SDBusObject::registerSignal(
-    const std::string& interfaceName,
-    const std::string& signalName,
-    const std::string& signature) {
-    
-    std::lock_guard<std::mutex> lock(objectMutex);
-    
-    if (registered) {
-        Logger::warn("Cannot register signal on already registered object: " + objectPath);
-        return false;
-    }
-    
-    if (!sdbusObject) {
-        return false;
-    }
-    
-    try {
-        // Register the signal with sdbus
-        sdbusObject->registerSignal(interfaceName, signalName, signature);
-        return true;
-    }
-    catch (const sdbus::Error& e) {
-        Logger::error("Failed to register signal: " + std::string(e.what()));
-        return false;
-    }
 }
 
 bool SDBusObject::emitPropertyChanged(

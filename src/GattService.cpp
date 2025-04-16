@@ -1,28 +1,27 @@
-// src/GattService.cpp
 #include "GattService.h"
 #include "GattCharacteristic.h"
 #include "Logger.h"
-#include "Utils.h"
 
 namespace ggk {
 
 GattService::GattService(
-    DBusConnection& connection,
-    const DBusObjectPath& path,
+    SDBusConnection& connection,
+    const std::string& path,
     const GattUuid& uuid,
-    bool isPrimary
-) : DBusObject(connection, path),
-    uuid(uuid),
-    primary(isPrimary) {
+    bool isPrimary)
+    : connection(connection),
+      object(connection, path),
+      uuid(uuid),
+      primary(isPrimary) {
 }
 
 GattCharacteristicPtr GattService::createCharacteristic(
     const GattUuid& uuid,
     uint8_t properties,
-    uint8_t permissions
-) {
+    uint8_t permissions)
+{
     if (uuid.toString().empty()) {
-        Logger::error("Cannot create characteristic with empty UUID");
+        Logger::error("빈 UUID로 특성을 생성할 수 없음");
         return nullptr;
     }
     
@@ -30,11 +29,11 @@ GattCharacteristicPtr GattService::createCharacteristic(
     
     std::lock_guard<std::mutex> lock(characteristicsMutex);
     
-    // Check if already exists
+    // 이미 존재하는지 확인
     auto it = characteristics.find(uuidStr);
     if (it != characteristics.end()) {
         if (!it->second) {
-            Logger::error("Found null characteristic entry for UUID: " + uuidStr);
+            Logger::error("UUID에 대한 null 특성 항목 발견: " + uuidStr);
             characteristics.erase(it);
         } else {
             return it->second;
@@ -42,14 +41,14 @@ GattCharacteristicPtr GattService::createCharacteristic(
     }
     
     try {
-        // Create standardized object path
-        // Format: <service_path>/char<uuid_short>
+        // 표준화된 객체 경로 생성
+        // 형식: <service_path>/char<uuid_short>
         std::string uuidShort = "/char" + uuid.toBlueZShortFormat().substr(0, 8);
-        DBusObjectPath charPath = getPath() + uuidShort;
+        std::string charPath = getPath() + uuidShort;
         
-        // Create characteristic
-        GattCharacteristicPtr characteristic = std::make_shared<GattCharacteristic>(
-            getConnection(),
+        // 특성 생성
+        auto characteristic = std::make_shared<GattCharacteristic>(
+            connection,
             charPath,
             uuid,
             *this,
@@ -58,17 +57,17 @@ GattCharacteristicPtr GattService::createCharacteristic(
         );
         
         if (!characteristic) {
-            Logger::error("Failed to create characteristic for UUID: " + uuidStr);
+            Logger::error("UUID에 대한 특성 생성 실패: " + uuidStr);
             return nullptr;
         }
         
-        // Add to map
+        // 맵에 추가
         characteristics[uuidStr] = characteristic;
         
-        Logger::info("Created characteristic: " + uuidStr + " at path: " + charPath.toString());
+        Logger::info("특성 생성됨: " + uuidStr + ", 경로: " + charPath);
         return characteristic;
     } catch (const std::exception& e) {
-        Logger::error("Exception during characteristic creation: " + std::string(e.what()));
+        Logger::error("특성 생성 중 예외: " + std::string(e.what()));
         return nullptr;
     }
 }
@@ -87,106 +86,40 @@ GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const
 }
 
 bool GattService::setupDBusInterfaces() {
-    // Define properties
-    std::vector<DBusProperty> properties = {
-        {
-            "UUID",
-            "s",
-            true,
-            false,
-            false,
-            [this]() { return getUuidProperty(); },
-            nullptr
-        },
-        {
-            "Primary",
-            "b",
-            true,
-            false,
-            false,
-            [this]() { return getPrimaryProperty(); },
-            nullptr
-        },
-        {
-            "Characteristics",
-            "ao",
-            true,
-            false,
-            true,
-            [this]() { return getCharacteristicsProperty(); },
-            nullptr
-        }
-    };
+    // 속성 등록
+    object.registerProperty(BlueZConstants::GATT_SERVICE_INTERFACE, "UUID", "s",
+                         [this]() -> std::string { return getUuidProperty(); });
     
-    // Add interface
-    if (!addInterface(BlueZConstants::GATT_SERVICE_INTERFACE, properties)) {
-        Logger::error("Failed to add service interface");
-        return false;
-    }
+    object.registerProperty(BlueZConstants::GATT_SERVICE_INTERFACE, "Primary", "b",
+                         [this]() -> bool { return getPrimaryProperty(); });
     
-    // Register object
-    if (!registerObject()) {
-        Logger::error("Failed to register service object");
-        return false;
-    }
+    object.registerProperty(BlueZConstants::GATT_SERVICE_INTERFACE, "Characteristics", "ao",
+                         [this]() -> std::vector<sdbus::ObjectPath> { return getCharacteristicsProperty(); });
     
-    Logger::info("Registered GATT service: " + uuid.toString());
-    return true;
+    // 객체 등록
+    return object.registerObject();
 }
 
-GVariant* GattService::getUuidProperty() {
-    try {
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromString(uuid.toBlueZFormat());
-        if (!variantPtr) {
-            return nullptr;
-        }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getUuidProperty: " + std::string(e.what()));
-        return nullptr;
-    }
+std::string GattService::getUuidProperty() const {
+    return uuid.toBlueZFormat();
 }
 
-GVariant* GattService::getPrimaryProperty() {
-    try {
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromBoolean(primary);
-        if (!variantPtr) {
-            return nullptr;
-        }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getPrimaryProperty: " + std::string(e.what()));
-        return nullptr;
-    }
+bool GattService::getPrimaryProperty() const {
+    return primary;
 }
 
-GVariant* GattService::getCharacteristicsProperty() {
-    try {
-        std::vector<std::string> paths;
-        
-        std::lock_guard<std::mutex> lock(characteristicsMutex);
-        
-        for (const auto& pair : characteristics) {
-            if (pair.second) {  // Check for nullptr
-                paths.push_back(pair.second->getPath().toString());
-            }
+std::vector<sdbus::ObjectPath> GattService::getCharacteristicsProperty() const {
+    std::vector<sdbus::ObjectPath> paths;
+    
+    std::lock_guard<std::mutex> lock(characteristicsMutex);
+    
+    for (const auto& pair : characteristics) {
+        if (pair.second) {  // null 체크
+            paths.push_back(sdbus::ObjectPath(pair.second->getPath()));
         }
-        
-        // Use makeGVariantPtr pattern
-        GVariantPtr variantPtr = Utils::gvariantPtrFromStringArray(paths);
-        if (!variantPtr) {
-            return nullptr;
-        }
-        // Transfer ownership
-        return g_variant_ref(variantPtr.get());
-    } catch (const std::exception& e) {
-        Logger::error("Exception in getCharacteristicsProperty: " + std::string(e.what()));
-        return nullptr;
     }
+    
+    return paths;
 }
 
 } // namespace ggk

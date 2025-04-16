@@ -13,6 +13,7 @@ endif()
 
 # Find required packages
 find_package(PkgConfig REQUIRED)
+find_package(SDBusCpp REQUIRED)
 pkg_check_modules(GLIB REQUIRED glib-2.0)
 pkg_check_modules(GIO REQUIRED gio-2.0)
 pkg_check_modules(BLUEZ REQUIRED bluez)
@@ -61,6 +62,7 @@ target_link_libraries(ble_peripheral
         ${GLIB_LIBRARIES}
         ${GIO_LIBRARIES}
         ${BLUEZ_LIBRARIES}
+        SDBusCpp::sdbus-c++
         bluetooth
         pthread
 )
