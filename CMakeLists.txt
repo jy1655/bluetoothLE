@@ -29,7 +29,7 @@ set(SOURCES
     
     # D-Bus 관련 클래스
     src/SDBusInterface.cpp
-    src/SDBusConnection.cpp
+    #src/SDBusConnection.cpp
     src/SDBusObject.cpp
     src/SDBusProxy.cpp
     src/SDBusError.cpp

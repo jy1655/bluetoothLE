@@ -42,16 +42,12 @@ bool GattApplication::setupDBusInterfaces() {
     }
     
     // InterfacesAdded, InterfacesRemoved 시그널 등록
-    if (!object.registerSignal("org.freedesktop.DBus.ObjectManager", 
-                            "InterfacesAdded", 
-                            "objectPath", "interfacesAndProperties")) {
+    if (!object.registerSignal("org.freedesktop.DBus.ObjectManager", "InterfacesAdded")) {
         Logger::error("InterfacesAdded 시그널 등록 실패");
         return false;
     }
     
-    if (!object.registerSignal("org.freedesktop.DBus.ObjectManager", 
-                            "InterfacesRemoved", 
-                            "objectPath", "interfaces")) {
+    if (!object.registerSignal("org.freedesktop.DBus.ObjectManager", "InterfacesAdded")) {
         Logger::error("InterfacesRemoved 시그널 등록 실패");
         return false;
     }

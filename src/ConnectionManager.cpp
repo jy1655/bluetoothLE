@@ -86,10 +86,9 @@ void ConnectionManager::registerSignalHandlers() {
                     sdbus::ObjectPath path;
                     std::map<std::string, std::map<std::string, sdbus::Variant>> interfaces;
                     signal >> path >> interfaces;
-
-                    sdbus::Variant params;
-                    params = sdbus::Variant(std::make_tuple(path, interfaces));
-                    this->handleInterfacesAddedSignal("InterfacesAdded", params);
+                    
+                    // 직접 핸들러 함수 호출, tuple과 Variant 변환 없음
+                    this->handleInterfacesAddedSignal(path.c_str(), interfaces);
                 }
             );
             // 핸들러 ID를 저장할 수 없지만, 성공적으로 등록되었음을 추적하기 위해
@@ -108,10 +107,9 @@ void ConnectionManager::registerSignalHandlers() {
                     sdbus::ObjectPath path;
                     std::vector<std::string> interfaces;
                     signal >> path >> interfaces;
-
-                    sdbus::Variant params;
-                    params = sdbus::Variant(std::make_tuple(path, interfaces));
-                    this->handleInterfacesRemovedSignal("InterfacesRemoved", params);
+                    
+                    // 직접 핸들러 함수 호출, tuple과 Variant 변환 없음
+                    this->handleInterfacesRemovedSignal(path.c_str(), interfaces);
                 }
             );
             signalHandlerIds.push_back(signalHandlerIds.size() + 1);
@@ -134,12 +132,11 @@ void ConnectionManager::registerSignalHandlers() {
                         std::string interfaceName;
                         std::map<std::string, sdbus::Variant> changedProps;
                         std::vector<std::string> invalidatedProps;
-
+                
                         signal >> interfaceName >> changedProps >> invalidatedProps;
-
-                        sdbus::Variant params;
-                        params = sdbus::Variant(std::make_tuple(interfaceName, changedProps, invalidatedProps));
-                        this->handlePropertiesChangedSignal("PropertiesChanged", params);
+                        
+                        // 직접 핸들러 함수 호출, tuple과 Variant 변환 없음
+                        this->handlePropertiesChangedSignal(interfaceName, changedProps, invalidatedProps);
                     }
                 );
                 signalHandlerIds.push_back(signalHandlerIds.size() + 1);
@@ -158,11 +155,11 @@ void ConnectionManager::registerSignalHandlers() {
 }
 
 
-void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalName, const sdbus::Variant& parameters) {
+void ConnectionManager::handleInterfacesAddedSignal(
+    const std::string& objectPath,
+    const std::map<std::string, std::map<std::string, sdbus::Variant>>& interfaces) {
+    
     try {
-        // Variant에서 튜플(객체 경로, 인터페이스 맵) 추출
-        auto [objectPath, interfaces] = parameters.get<std::tuple<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>>>();
-        
         // Device 인터페이스 확인
         auto it = interfaces.find(BlueZConstants::DEVICE_INTERFACE);
         if (it == interfaces.end()) {
@@ -186,7 +183,7 @@ void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalNam
                         // 연결된 장치 목록에 추가
                         {
                             std::lock_guard<std::mutex> lock(devicesMutex);
-                            connectedDevices[deviceAddress] = objectPath.c_str();
+                            connectedDevices[deviceAddress] = objectPath;
                         }
                         
                         // 콜백 실행
@@ -194,7 +191,7 @@ void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalNam
                             onConnectionCallback(deviceAddress);
                         }
                         
-                        Logger::info("장치 연결됨: " + deviceAddress + ", 경로: " + objectPath.c_str());
+                        Logger::info("장치 연결됨: " + deviceAddress + ", 경로: " + objectPath);
                     }
                 }
             }
@@ -207,11 +204,11 @@ void ConnectionManager::handleInterfacesAddedSignal(const std::string& signalNam
     }
 }
 
-void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalName, const sdbus::Variant& parameters) {
+void ConnectionManager::handleInterfacesRemovedSignal(
+    const std::string& objectPath,
+    const std::vector<std::string>& interfaces) {
+    
     try {
-        // Variant에서 튜플(객체 경로, 인터페이스 목록) 추출
-        auto [objectPath, interfaces] = parameters.get<std::tuple<sdbus::ObjectPath, std::vector<std::string>>>();
-        
         // Device 인터페이스 확인
         bool deviceRemoved = false;
         for (const auto& interface : interfaces) {
@@ -228,7 +225,7 @@ void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalN
             {
                 std::lock_guard<std::mutex> lock(devicesMutex);
                 for (auto it = connectedDevices.begin(); it != connectedDevices.end(); ) {
-                    if (it->second == objectPath.c_str()) {
+                    if (it->second == objectPath) {
                         deviceAddress = it->first;
                         it = connectedDevices.erase(it);
                         break;
@@ -248,12 +245,12 @@ void ConnectionManager::handleInterfacesRemovedSignal(const std::string& signalN
     }
 }
 
-void ConnectionManager::handlePropertiesChangedSignal(const std::string& signalName, const sdbus::Variant& parameters) {
+void ConnectionManager::handlePropertiesChangedSignal(
+    const std::string& interfaceName,
+    const std::map<std::string, sdbus::Variant>& changedProperties,
+    const std::vector<std::string>& invalidatedProperties) {
+    
     try {
-        // Variant에서 튜플(인터페이스, 변경 속성, 무효화 속성) 추출
-        auto [interfaceName, changedProperties, invalidatedProperties] = 
-            parameters.get<std::tuple<std::string, std::map<std::string, sdbus::Variant>, std::vector<std::string>>>();
-        
         // Device 인터페이스의 속성 변경 처리
         if (interfaceName == BlueZConstants::DEVICE_INTERFACE) {
             // Connected 속성 확인

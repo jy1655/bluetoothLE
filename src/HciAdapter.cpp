@@ -16,14 +16,14 @@ HciAdapter::~HciAdapter() {
 }
 
 bool HciAdapter::initialize(
-    DBusConnection& connection,
+    std::shared_ptr<SDBusConnection> dbusConnection,
     const std::string& adapterName,
     const std::string& adapterPath)
 {
     Logger::info("Initializing HCI adapter: " + adapterPath);
     
     // Store parameters
-    this->connection = &connection;
+    this->connection = dbusConnection;
     this->adapterPath = adapterPath;
     this->adapterName = adapterName;
     
@@ -68,10 +68,10 @@ void HciAdapter::stop() {
     // Set adapter to default state
     try {
         // Power off the adapter
-        BlueZUtils::setAdapterPower(*connection, false, adapterPath);
+        BlueZUtils::setAdapterPower(connection, false, adapterPath);
         
         // Clear adapter discoverable state
-        BlueZUtils::setAdapterDiscoverable(*connection, false, 0, adapterPath);
+        BlueZUtils::setAdapterDiscoverable(connection, false, 0, adapterPath);
     }
     catch (const std::exception& e) {
         Logger::warn("Exception during HCI adapter shutdown: " + std::string(e.what()));
@@ -95,7 +95,7 @@ bool HciAdapter::setName(const std::string& name) {
         return false;
     }
     
-    if (BlueZUtils::setAdapterName(*connection, name, adapterPath)) {
+    if (BlueZUtils::setAdapterName(connection, name, adapterPath)) {
         adapterName = name;
         return true;
     }
@@ -109,7 +109,7 @@ bool HciAdapter::setPowered(bool powered) {
         return false;
     }
     
-    return BlueZUtils::setAdapterPower(*connection, powered, adapterPath);
+    return BlueZUtils::setAdapterPower(connection, powered, adapterPath);
 }
 
 bool HciAdapter::setDiscoverable(bool discoverable, uint16_t timeout) {
@@ -118,7 +118,7 @@ bool HciAdapter::setDiscoverable(bool discoverable, uint16_t timeout) {
         return false;
     }
     
-    return BlueZUtils::setAdapterDiscoverable(*connection, discoverable, timeout, adapterPath);
+    return BlueZUtils::setAdapterDiscoverable(connection, discoverable, timeout, adapterPath);
 }
 
 bool HciAdapter::reset() {
@@ -132,7 +132,7 @@ bool HciAdapter::reset() {
         disableAdvertising();
     }
     
-    return BlueZUtils::resetAdapter(*connection, adapterPath);
+    return BlueZUtils::resetAdapter(connection, adapterPath);
 }
 
 bool HciAdapter::enableAdvertising() {
@@ -154,7 +154,7 @@ bool HciAdapter::enableAdvertising() {
     }
     
     // Try to enable advertising using BlueZUtils
-    if (BlueZUtils::tryEnableAdvertising(*connection, adapterPath)) {
+    if (BlueZUtils::tryEnableAdvertising(connection, adapterPath)) {
         advertising = true;
         Logger::info("Advertising enabled successfully");
         return true;
@@ -185,7 +185,7 @@ bool HciAdapter::disableAdvertising() {
     }
     
     // As a fallback, try setting discoverable to false
-    if (BlueZUtils::setAdapterDiscoverable(*connection, false, 0, adapterPath)) {
+    if (BlueZUtils::setAdapterDiscoverable(connection, false, 0, adapterPath)) {
         advertising = false;
         Logger::info("Advertising disabled by disabling discoverable mode");
         return true;
@@ -200,27 +200,28 @@ bool HciAdapter::isAdvertisingSupported() const {
         return false;
     }
     
-    return BlueZUtils::isAdvertisingSupported(*connection, adapterPath);
+    return BlueZUtils::isAdvertisingSupported(connection, adapterPath);
 }
 
-DBusConnection& HciAdapter::getConnection() {
+std::shared_ptr<SDBusConnection> HciAdapter::getConnection() {
     if (!connection) {
         throw std::runtime_error("No D-Bus connection available");
     }
     
-    return *connection;
+    return connection;
 }
 
 bool HciAdapter::verifyAdapterExists() {
     // Check if adapter exists in the filesystem
-    if (!Utils::isBluetoothAdapterAvailable(adapterPath.substr(adapterPath.rfind('/') + 1))) {
+    std::string adapterId = adapterPath.substr(adapterPath.rfind('/') + 1);
+    if (!Utils::isBluetoothAdapterAvailable(adapterId)) {
         Logger::error("Bluetooth adapter not found in system");
         return false;
     }
     
     // If we have a connection, check if adapter exists in BlueZ
     if (connection && connection->isConnected()) {
-        auto adapters = BlueZUtils::getAdapters(*connection);
+        auto adapters = BlueZUtils::getAdapters(connection);
         for (const auto& adapter : adapters) {
             if (adapter == adapterPath) {
                 return true;

@@ -97,10 +97,19 @@ private:
 
     // 신호 처리
     void registerSignalHandlers();
-    void handleInterfacesAddedSignal(const std::string& signalName, const sdbus::Variant& parameters);
-    void handleInterfacesRemovedSignal(const std::string& signalName, const sdbus::Variant& parameters);
-    void handlePropertiesChangedSignal(const std::string& signalName, const sdbus::Variant& parameters);
-
+    void handleInterfacesAddedSignal(
+        const std::string& objectPath, 
+        const std::map<std::string, std::map<std::string, sdbus::Variant>>& interfaces);
+        
+    void handleInterfacesRemovedSignal(
+        const std::string& objectPath,
+        const std::vector<std::string>& interfaces);
+        
+    void handlePropertiesChangedSignal(
+        const std::string& interfaceName,
+        const std::map<std::string, sdbus::Variant>& changedProperties,
+        const std::vector<std::string>& invalidatedProperties);
+        
     // 연결 데이터
     std::map<std::string, std::string> connectedDevices;  // 객체 경로를 문자열로 처리
     mutable std::mutex devicesMutex;

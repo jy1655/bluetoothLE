@@ -275,7 +275,7 @@ public:
         
         try {
             // 메서드 등록 (인자 타입 자동 유추)
-            auto methodRegistrator = sdbusObject->registerMethod(methodName)
+            auto&& methodRegistrator = sdbusObject->registerMethod(methodName)
                                              .onInterface(interfaceName);
             
             // 여기서 핸들러는 템플릿으로 받기 때문에 시그니처가 자동으로 추론됨
@@ -314,7 +314,7 @@ public:
         }
         
         try {
-            auto propertyRegistrator = sdbusObject->registerProperty(propertyName)
+            auto&& propertyRegistrator = sdbusObject->registerProperty(propertyName)
                                                .onInterface(interfaceName);
             
             // 게터 설정
@@ -392,7 +392,7 @@ public:
         }
         
         try {
-            auto signal = sdbusObject->createSignal(interfaceName, signalName);
+            auto&& signal = sdbusObject->createSignal(interfaceName, signalName);
             
             if constexpr (sizeof...(args) > 0) {
                 // sdbus-c++ 1.4.0에서는 << 연산자를 사용하는 방식으로 변경됨
