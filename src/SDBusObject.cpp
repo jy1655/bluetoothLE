@@ -1,4 +1,5 @@
 #include "SDBusObject.h"
+#include "SDBusError.h"
 
 namespace ggk {
 
@@ -62,12 +63,34 @@ bool SDBusObject::unregisterObject() {
     }
 }
 
-bool SDBusObject::registerSignal(const std::string& interfaceName, const std::string& signalName) {
-    Logger::warn("registerSignal is no longer supported directly in sdbus-c++ 2.1.0. This method will need to be reworked using a custom signal structure.");
-    return false;
+bool SDBusObject::registerSignal(const sdbus::InterfaceName& interfaceName, const sdbus::SignalName& signalName) {
+    std::lock_guard<std::mutex> lock(objectMutex);
+    
+    if (registered || !object) {
+        return false;
+    }
+    
+    try {
+        // Create an empty signal vtable item for the signal
+        sdbus::SignalVTableItem signalVTable{
+            signalName,
+            sdbus::Signature{""}, // Empty signature - will be determined at runtime
+            {},
+            {}
+        };
+        
+        // Add vtable to object
+        object->addVTable(signalVTable).forInterface(interfaceName);
+        
+        Logger::info("Registered signal " + std::string(signalName) + " on interface " + std::string(interfaceName));
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("Failed to register signal: " + std::string(e.what()));
+        return false;
+    }
 }
 
-bool SDBusObject::emitPropertyChanged(const std::string& interfaceName, const std::string& propertyName) {
+bool SDBusObject::emitPropertyChanged(const sdbus::InterfaceName& interfaceName, const sdbus::PropertyName& propertyName) {
     std::lock_guard<std::mutex> lock(objectMutex);
 
     if (!registered || !object) {
@@ -79,15 +102,19 @@ bool SDBusObject::emitPropertyChanged(const std::string& interfaceName, const st
         changedProps[propertyName] = sdbus::Variant();
         std::vector<std::string> invalidatedProps;
 
-        object->emitSignal(
-            sdbus::Signal{
-                sdbus::InterfaceName{"org.freedesktop.DBus.Properties"},
-                sdbus::MemberName{"PropertiesChanged"},
-                interfaceName,
-                changedProps,
-                invalidatedProps
-            }
-        );
+        // PropertiesChanged signal on org.freedesktop.DBus.Properties interface
+        sdbus::InterfaceName propertiesInterface{"org.freedesktop.DBus.Properties"};
+        sdbus::SignalName signalName{"PropertiesChanged"};
+        
+        auto signal = object->createSignal(propertiesInterface, signalName);
+        
+        // Add arguments to signal
+        signal << interfaceName;
+        signal << changedProps;
+        signal << invalidatedProps;
+        
+        // Emit the signal
+        object->emitSignal(signal);
 
         return true;
     } catch (const std::exception& e) {
@@ -96,12 +123,11 @@ bool SDBusObject::emitPropertyChanged(const std::string& interfaceName, const st
     }
 }
 
-
-sdbus::IObject* SDBusObject::getObject() {
+sdbus::IObject& SDBusObject::getSdbusObject() {
     if (!object) {
         throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), "Object not initialized");
     }
-    return object.get();
+    return *object;
 }
 
 bool SDBusObject::registerObjectManager(std::function<ManagedObjectsDict()> handler) {
@@ -112,34 +138,62 @@ bool SDBusObject::registerObjectManager(std::function<ManagedObjectsDict()> hand
     }
 
     try {
-        object->addVTable(
-            "org.freedesktop.DBus.ObjectManager",
-            {
-                sdbus::MethodVTableItem(
-                    sdbus::MemberName{"GetManagedObjects"},
-                    sdbus::Signature{""},
-                    sdbus::Signature{"a{oa{sa{sv}}}"},
-                    [handler = std::move(handler)](sdbus::MethodCall& call) {
-                        try {
-                            auto reply = call.createReply();
-                            reply << handler();
-                            reply.send();
-                        } catch (const std::exception& e) {
-                            Logger::error("Exception in GetManagedObjects handler: " + std::string(e.what()));
-                            throw sdbus::Error(sdbus::Error::Name{"org.freedesktop.DBus.Error.Failed"}, e.what());
-                        }
-                    }
-                ),
-                sdbus::SignalVTableItem{
-                    sdbus::MemberName{"InterfacesAdded"},
-                    sdbus::Signature{"oa{sa{sv}}"}
-                },
-                sdbus::SignalVTableItem{
-                    sdbus::MemberName{"InterfacesRemoved"},
-                    sdbus::Signature{"oas"}
-                }
+        // Create and register method for ObjectManager
+        sdbus::InterfaceName interfaceName{"org.freedesktop.DBus.ObjectManager"};
+        sdbus::MethodName methodName{"GetManagedObjects"};
+        sdbus::Signature inputSignature{""};
+        sdbus::Signature outputSignature{"a{oa{sa{sv}}}"};
+
+        // Create method handler that accepts a MethodCall parameter and adapts it to call our handler
+        auto getManagedObjectsHandler = [handler](sdbus::MethodCall call) {
+            try {
+                // Call the actual handler to get the objects
+                auto objects = handler();
+                
+                // Create and send reply
+                auto reply = call.createReply();
+                reply << objects;
+                reply.send();
             }
-        );
+            catch (const std::exception& e) {
+                Logger::error("Exception in GetManagedObjects handler: " + std::string(e.what()));
+                
+                // Create a sdbus::Error using SDBusError
+                SDBusError error{"org.freedesktop.DBus.Error.Failed", e.what()};
+                auto errorReply = call.createErrorReply(error.toSdbusError());
+                errorReply.send();
+            }
+        };
+
+        // Create method vtable item
+        auto getManagedObjectsVTable = sdbus::MethodVTableItem{
+            methodName,
+            inputSignature,
+            {}, // No input param names
+            outputSignature,
+            {}, // No output param names
+            getManagedObjectsHandler,
+            {}
+        };
+
+        // Create signal vtable items
+        auto interfacesAddedVTable = sdbus::SignalVTableItem{
+            sdbus::SignalName{"InterfacesAdded"},
+            sdbus::Signature{"oa{sa{sv}}"},
+            {},
+            {}
+        };
+
+        auto interfacesRemovedVTable = sdbus::SignalVTableItem{
+            sdbus::SignalName{"InterfacesRemoved"},
+            sdbus::Signature{"oas"},
+            {},
+            {}
+        };
+
+        // Add vtable to object
+        object->addVTable(getManagedObjectsVTable, interfacesAddedVTable, interfacesRemovedVTable)
+              .forInterface(interfaceName);
 
         return true;
     } catch (const std::exception& e) {
