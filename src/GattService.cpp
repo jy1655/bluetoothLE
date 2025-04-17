@@ -1,4 +1,3 @@
-// src/GattService.cpp - 순환 참조 개선
 #include "GattService.h"
 #include "Logger.h"
 
@@ -88,30 +87,46 @@ GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const
 bool GattService::setupDBusInterfaces() {
     // UUID 속성 등록
     object.registerProperty(
-        BlueZConstants::GATT_SERVICE_INTERFACE,
-        BlueZConstants::PROPERTY_UUID,
+        sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE},
+        sdbus::PropertyName{BlueZConstants::PROPERTY_UUID},
         "s",
         [this]() -> std::string { return getUuidProperty(); }
     );
     
     // Primary 속성 등록
     object.registerProperty(
-        BlueZConstants::GATT_SERVICE_INTERFACE,
-        BlueZConstants::PROPERTY_PRIMARY,
+        sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE},
+        sdbus::PropertyName{BlueZConstants::PROPERTY_PRIMARY},
         "b",
         [this]() -> bool { return getPrimaryProperty(); }
     );
     
     // Characteristics 속성 등록
     object.registerProperty(
-        BlueZConstants::GATT_SERVICE_INTERFACE,
-        "Characteristics",
+        sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE},
+        sdbus::PropertyName{"Characteristics"},
         "ao",
         [this]() -> std::vector<sdbus::ObjectPath> { return getCharacteristicsProperty(); }
     );
     
-    // 객체 등록
-    return object.registerObject();
+    // 객체 등록 (v2에서는 addVTable 방식으로 변경)
+    auto& sdbusObj = object.getSdbusObject();
+    
+    // v2에서는 이전의 registerProperty 호출을 포함하는 vtable을 생성하고 등록
+    auto primaryVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_PRIMARY})
+                            .withGetter([this](){ return this->getPrimaryProperty(); });
+    
+    auto uuidVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_UUID})
+                        .withGetter([this](){ return this->getUuidProperty(); });
+    
+    auto charsVTable = sdbus::registerProperty(sdbus::PropertyName{"Characteristics"})
+                        .withGetter([this](){ return this->getCharacteristicsProperty(); });
+    
+    // vtable 등록
+    sdbusObj.addVTable(primaryVTable, uuidVTable, charsVTable)
+            .forInterface(sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE});
+    
+    return true;
 }
 
 std::string GattService::getUuidProperty() const {

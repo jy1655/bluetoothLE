@@ -129,106 +129,82 @@ bool GattAdvertisement::setupDBusInterfaces() {
     // BlueZ 5.82 호환성 확보
     ensureBlueZ582Compatibility();
     
-    // 모든 속성 한 번에 정의
+    auto& sdbusObj = object.getSdbusObject();
     
-    // Type 속성 (필수) - BlueZ 5.82에서 필수
-    object.registerProperty(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "Type",
-        "s",
-        [this]() -> std::string { return getTypeProperty(); }
-    );
+    // BlueZ 5.82 호환 vtable 등록 (v2 API 사용)
+    sdbus::InterfaceName interfaceName{BlueZConstants::LE_ADVERTISEMENT_INTERFACE};
     
-    // ServiceUUIDs 속성 - BlueZ 5.82에서 Includes로 관리됨
-    object.registerProperty(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "ServiceUUIDs",
-        "as",
-        [this]() -> std::vector<std::string> { return getServiceUUIDsProperty(); }
-    );
+    // Type 속성 vtable (필수)
+    auto typeVTable = sdbus::registerProperty(sdbus::PropertyName{"Type"})
+                        .withGetter([this]() -> std::string { return getTypeProperty(); });
     
-    // ManufacturerData 속성 - BlueZ 5.82에서 Includes로 관리됨
-    object.registerProperty(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "ManufacturerData",
-        "a{qv}",
-        [this]() -> std::map<uint16_t, sdbus::Variant> { return getManufacturerDataProperty(); }
-    );
+    // ServiceUUIDs 속성 vtable
+    auto serviceUUIDsVTable = sdbus::registerProperty(sdbus::PropertyName{"ServiceUUIDs"})
+                               .withGetter([this]() -> std::vector<std::string> { return getServiceUUIDsProperty(); });
     
-    // ServiceData 속성 - BlueZ 5.82에서 Includes로 관리됨
-    object.registerProperty(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "ServiceData",
-        "a{sv}",
-        [this]() -> std::map<std::string, sdbus::Variant> { return getServiceDataProperty(); }
-    );
+    // ManufacturerData 속성 vtable
+    auto manufacturerDataVTable = sdbus::registerProperty(sdbus::PropertyName{"ManufacturerData"})
+                                   .withGetter([this]() -> std::map<uint16_t, sdbus::Variant> { return getManufacturerDataProperty(); });
     
-    // Discoverable 속성 (BlueZ 5.82에서 필수)
-    object.registerProperty(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "Discoverable",
-        "b",
-        [this]() -> bool { return discoverable; }
-    );
+    // ServiceData 속성 vtable
+    auto serviceDataVTable = sdbus::registerProperty(sdbus::PropertyName{"ServiceData"})
+                              .withGetter([this]() -> std::map<std::string, sdbus::Variant> { return getServiceDataProperty(); });
     
-    // Includes 속성 (BlueZ 5.82에서 필수)
-    object.registerProperty(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "Includes",
-        "as",
-        [this]() -> std::vector<std::string> { return includes; }
-    );
+    // Discoverable 속성 vtable (BlueZ 5.82에서 필수)
+    auto discoverableVTable = sdbus::registerProperty(sdbus::PropertyName{"Discoverable"})
+                               .withGetter([this]() -> bool { return discoverable; });
     
-    // TX Power 속성 (이전 버전 호환용)
-    object.registerProperty(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "IncludeTxPower",
-        "b",
-        [this]() -> bool { return includeTxPower; }
-    );
+    // Includes 속성 vtable (BlueZ 5.82에서 필수)
+    auto includesVTable = sdbus::registerProperty(sdbus::PropertyName{"Includes"})
+                           .withGetter([this]() -> std::vector<std::string> { return includes; });
     
-    // 조건부 속성 추가
+    // TX Power 속성 vtable (이전 버전 호환용)
+    auto includeTxPowerVTable = sdbus::registerProperty(sdbus::PropertyName{"IncludeTxPower"})
+                                 .withGetter([this]() -> bool { return includeTxPower; });
+    
+    // 추가 조건부 vtable 항목
+    std::vector<sdbus::VTableItem> optionalVTables;
+    
+    // LocalName 속성 (조건부)
     if (!localName.empty()) {
-        object.registerProperty(
-            BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-            "LocalName",
-            "s",
-            [this]() -> std::string { return localName; }
+        optionalVTables.push_back(
+            sdbus::registerProperty(sdbus::PropertyName{"LocalName"})
+                .withGetter([this]() -> std::string { return localName; })
         );
     }
     
+    // Appearance 속성 (조건부)
     if (appearance != 0) {
-        object.registerProperty(
-            BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-            "Appearance",
-            "q",
-            [this]() -> uint16_t { return appearance; }
+        optionalVTables.push_back(
+            sdbus::registerProperty(sdbus::PropertyName{"Appearance"})
+                .withGetter([this]() -> uint16_t { return appearance; })
         );
     }
     
+    // Duration 속성 (조건부)
     if (duration != 0) {
-        object.registerProperty(
-            BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-            "Duration",
-            "q",
-            [this]() -> uint16_t { return duration; }
+        optionalVTables.push_back(
+            sdbus::registerProperty(sdbus::PropertyName{"Duration"})
+                .withGetter([this]() -> uint16_t { return duration; })
         );
     }
     
-    // Release 메서드 추가
-    object.registerMethod(
-        BlueZConstants::LE_ADVERTISEMENT_INTERFACE,
-        "Release",
-        [this]() { handleRelease(); }
-    );
+    // Release 메서드 vtable
+    auto releaseVTable = sdbus::registerMethod(sdbus::MethodName{"Release"})
+                           .implementedAs([this]() { handleRelease(); });
     
-    // 객체를 D-Bus에 등록
-    if (!object.registerObject()) {
-        Logger::error("광고 객체 등록 실패");
-        return false;
+    // 기본 vtable 등록
+    auto slot = sdbusObj.addVTable(
+        typeVTable, serviceUUIDsVTable, manufacturerDataVTable,
+        serviceDataVTable, discoverableVTable, includesVTable,
+        includeTxPowerVTable, releaseVTable
+    ).forInterface(interfaceName);
+    
+    // 조건부 vtable 항목 등록
+    for (const auto& vtable : optionalVTables) {
+        sdbusObj.addVTable(vtable).forInterface(interfaceName);
     }
     
-    Logger::info("LE Advertisement 등록됨: " + object.getPath());
     return true;
 }
 
@@ -275,8 +251,8 @@ bool GattAdvertisement::registerWithBlueZ() {
         
         // BlueZ LEAdvertisingManager 프록시 생성
         auto proxy = connection.createProxy(
-            BlueZConstants::BLUEZ_SERVICE,
-            BlueZConstants::ADAPTER_PATH
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
         );
         
         if (!proxy) {
@@ -289,18 +265,17 @@ bool GattAdvertisement::registerWithBlueZ() {
         
         // RegisterAdvertisement 호출
         try {
-            proxy->callMethod(BlueZConstants::REGISTER_ADVERTISEMENT)
-                .onInterface(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE)
-                .withArguments(sdbus::ObjectPath(object.getPath()), options);
+            proxy->callMethod(sdbus::MethodName{BlueZConstants::REGISTER_ADVERTISEMENT})
+                .onInterface(sdbus::InterfaceName{BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE})
+                .withArguments(sdbus::ObjectPath{object.getPath()}, options);
             
             registered = true;
             Logger::info("BlueZ에 광고 등록 성공");
             return true;
-        }
-        catch (const sdbus::Error& e) {
+        } catch (const sdbus::Error& e) {
             std::string errorName = e.getName();
             
-            // AlreadyExists 오류는 성공으로 간주
+            // "AlreadyExists" 오류는 성공으로 간주
             if (errorName.find("AlreadyExists") != std::string::npos) {
                 Logger::info("광고가 이미 등록됨 (AlreadyExists)");
                 registered = true;
@@ -331,8 +306,8 @@ bool GattAdvertisement::unregisterFromBlueZ() {
         
         // BlueZ LEAdvertisingManager 프록시 생성
         auto proxy = connection.createProxy(
-            BlueZConstants::BLUEZ_SERVICE,
-            BlueZConstants::ADAPTER_PATH
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
         );
         
         if (!proxy) {
@@ -343,9 +318,9 @@ bool GattAdvertisement::unregisterFromBlueZ() {
         
         // UnregisterAdvertisement 호출
         try {
-            proxy->callMethod(BlueZConstants::UNREGISTER_ADVERTISEMENT)
-                .onInterface(BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE)
-                .withArguments(sdbus::ObjectPath(object.getPath()));
+            proxy->callMethod(sdbus::MethodName{BlueZConstants::UNREGISTER_ADVERTISEMENT})
+                .onInterface(sdbus::InterfaceName{BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE})
+                .withArguments(sdbus::ObjectPath{object.getPath()});
             
             Logger::info("BlueZ에서 광고 등록 해제 성공");
         } catch (const sdbus::Error& e) {
@@ -490,14 +465,14 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
     Logger::debug("방법 4: D-Bus 속성을 통한 광고 활성화 시도");
     try {
         auto adapterProxy = connection.createProxy(
-            BlueZConstants::BLUEZ_SERVICE,
-            BlueZConstants::ADAPTER_PATH
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
         );
         
         if (adapterProxy) {
             // 어댑터 속성 설정
-            adapterProxy->callMethod("Set")
-                .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+            adapterProxy->callMethod(sdbus::MethodName{"Set"})
+                .onInterface(sdbus::InterfaceName{BlueZConstants::PROPERTIES_INTERFACE})
                 .withArguments(std::string(BlueZConstants::ADAPTER_INTERFACE), 
                                std::string("Discoverable"), 
                                sdbus::Variant(true));
@@ -505,8 +480,8 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
             usleep(200000); // 200ms
             
             // BlueZ 5.82에서 광고를 시작하기 위한 DiscoverableTimeout 설정
-            adapterProxy->callMethod("Set")
-                .onInterface(BlueZConstants::PROPERTIES_INTERFACE)
+            adapterProxy->callMethod(sdbus::MethodName{"Set"})
+                .onInterface(sdbus::InterfaceName{BlueZConstants::PROPERTIES_INTERFACE})
                 .withArguments(std::string(BlueZConstants::ADAPTER_INTERFACE), 
                                std::string("DiscoverableTimeout"), 
                                sdbus::Variant(static_cast<uint16_t>(0)));

@@ -1,4 +1,3 @@
-// src/GattCharacteristic.cpp - 순환 참조 개선
 #include "GattCharacteristic.h"
 #include "GattService.h" // 여기서만 포함 (헤더에서는 전방 선언만)
 #include "Logger.h"
@@ -32,7 +31,10 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
         // 등록된 경우 PropertyChanged 시그널 발생
         if (object.isRegistered()) {
             // Value 속성 변경 알림
-            object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, BlueZConstants::PROPERTY_VALUE);
+            object.emitPropertyChanged(
+                sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
+                sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE}
+            );
             
             // 알림 중이면 알림 처리
             bool isNotifying = false;
@@ -69,7 +71,10 @@ void GattCharacteristic::setValue(std::vector<uint8_t>&& newValue) {
         // 등록된 경우 PropertyChanged 시그널 발생
         if (object.isRegistered()) {
             // Value 속성 변경 알림
-            object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, BlueZConstants::PROPERTY_VALUE);
+            object.emitPropertyChanged(
+                sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
+                sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE}
+            );
             
             // 알림 상태 확인
             bool isNotifying = false;
@@ -192,7 +197,10 @@ bool GattCharacteristic::startNotify() {
     
     // Notifying 속성에 대한 PropertyChanged 시그널 발생
     if (object.isRegistered()) {
-        object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, BlueZConstants::PROPERTY_NOTIFYING);
+        object.emitPropertyChanged(
+            sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
+            sdbus::PropertyName{BlueZConstants::PROPERTY_NOTIFYING}
+        );
     }
     
     // 알림 콜백 호출
@@ -223,7 +231,10 @@ bool GattCharacteristic::stopNotify() {
     
     // Notifying 속성에 대한 PropertyChanged 시그널 발생
     if (object.isRegistered()) {
-        object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, BlueZConstants::PROPERTY_NOTIFYING);
+        object.emitPropertyChanged(
+            sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
+            sdbus::PropertyName{BlueZConstants::PROPERTY_NOTIFYING}
+        );
     }
     
     Logger::info("특성에 대한 알림 중지됨: " + uuid.toString());
@@ -231,136 +242,115 @@ bool GattCharacteristic::stopNotify() {
 }
 
 bool GattCharacteristic::setupDBusInterfaces() {
-    // 속성 등록
-    object.registerProperty(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        BlueZConstants::PROPERTY_UUID,
-        "s",
-        [this]() -> std::string { return uuid.toBlueZFormat(); }
-    );
+    auto& sdbusObj = object.getSdbusObject();
     
-    // Service 속성 등록 (부모 서비스가 있는 경우)
-    if (parentService) {
-        object.registerProperty(
-            BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-            BlueZConstants::PROPERTY_SERVICE,
-            "o",
-            [this]() -> sdbus::ObjectPath { 
-                return sdbus::ObjectPath(parentService->getPath()); 
-            }
-        );
-    }
+    // V2 API를 사용하여 vtable 생성 및 등록
+    sdbus::InterfaceName interfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE};
     
-    // BlueZ 5.82+ Value 속성 (sdbus-c++ variants로 처리)
-    object.registerProperty(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        BlueZConstants::PROPERTY_VALUE,
-        "ay",
-        [this]() -> std::vector<uint8_t> {
-            std::lock_guard<std::mutex> lock(valueMutex);
-            return value;
-        }
-    );
+    // UUID 속성 vtable
+    auto uuidVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_UUID})
+                        .withGetter([this](){ return uuid.toBlueZFormat(); });
     
-    // Flags 속성 (특성 속성) - BlueZ 5.82에서 중요한 필수 속성
-    object.registerProperty(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        BlueZConstants::PROPERTY_FLAGS,
-        "as",
-        [this]() -> std::vector<std::string> {
-            std::vector<std::string> flags;
-            
-            if (properties & GattProperty::PROP_BROADCAST)
-                flags.push_back(BlueZConstants::FLAG_BROADCAST);
-            if (properties & GattProperty::PROP_READ)
-                flags.push_back(BlueZConstants::FLAG_READ);
-            if (properties & GattProperty::PROP_WRITE_WITHOUT_RESPONSE)
-                flags.push_back(BlueZConstants::FLAG_WRITE_WITHOUT_RESPONSE);
-            if (properties & GattProperty::PROP_WRITE)
-                flags.push_back(BlueZConstants::FLAG_WRITE);
-            if (properties & GattProperty::PROP_NOTIFY)
-                flags.push_back(BlueZConstants::FLAG_NOTIFY);
-            if (properties & GattProperty::PROP_INDICATE)
-                flags.push_back(BlueZConstants::FLAG_INDICATE);
-            if (properties & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES)
-                flags.push_back(BlueZConstants::FLAG_AUTHENTICATED_SIGNED_WRITES);
-            if (properties & GattProperty::PROP_EXTENDED_PROPERTIES)
-                flags.push_back(BlueZConstants::FLAG_EXTENDED_PROPERTIES);
-            if (permissions & GattPermission::PERM_READ_ENCRYPTED)
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_READ);
-            if (permissions & GattPermission::PERM_WRITE_ENCRYPTED)
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_WRITE);
-            if (permissions & GattPermission::PERM_READ_AUTHENTICATED)
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_READ);
-            if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED)
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_WRITE);
-            
-            return flags;
-        }
-    );
+    // Service 속성 vtable (부모 서비스가 있는 경우)
+    auto serviceVTable = parentService ? 
+        sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_SERVICE})
+            .withGetter([this](){ return sdbus::ObjectPath(parentService->getPath()); }) : 
+        sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_SERVICE})
+            .withGetter([](){ return sdbus::ObjectPath("/"); });
     
-    object.registerProperty(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        BlueZConstants::PROPERTY_NOTIFYING,
-        "b",
-        [this]() -> bool {
-            std::lock_guard<std::mutex> lock(notifyMutex);
-            return notifying;
-        }
-    );
+    // Value 속성 vtable
+    auto valueVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE})
+                         .withGetter([this]() -> std::vector<uint8_t> {
+                             std::lock_guard<std::mutex> lock(valueMutex);
+                             return value;
+                         });
     
-    object.registerProperty(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        "Descriptors",
-        "ao",
-        [this]() -> std::vector<sdbus::ObjectPath> {
-            std::vector<sdbus::ObjectPath> paths;
-            std::lock_guard<std::mutex> lock(descriptorsMutex);
-            
-            for (const auto& pair : descriptors) {
-                if (pair.second) {  // null 체크
-                    paths.push_back(sdbus::ObjectPath(pair.second->getPath()));
-                }
-            }
-            
-            return paths;
-        }
-    );
+    // Flags 속성 vtable (특성 속성)
+    auto flagsVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_FLAGS})
+                          .withGetter([this]() -> std::vector<std::string> {
+                              std::vector<std::string> flags;
+                              
+                              if (properties & GattProperty::PROP_BROADCAST)
+                                  flags.push_back(BlueZConstants::FLAG_BROADCAST);
+                              if (properties & GattProperty::PROP_READ)
+                                  flags.push_back(BlueZConstants::FLAG_READ);
+                              if (properties & GattProperty::PROP_WRITE_WITHOUT_RESPONSE)
+                                  flags.push_back(BlueZConstants::FLAG_WRITE_WITHOUT_RESPONSE);
+                              if (properties & GattProperty::PROP_WRITE)
+                                  flags.push_back(BlueZConstants::FLAG_WRITE);
+                              if (properties & GattProperty::PROP_NOTIFY)
+                                  flags.push_back(BlueZConstants::FLAG_NOTIFY);
+                              if (properties & GattProperty::PROP_INDICATE)
+                                  flags.push_back(BlueZConstants::FLAG_INDICATE);
+                              if (properties & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES)
+                                  flags.push_back(BlueZConstants::FLAG_AUTHENTICATED_SIGNED_WRITES);
+                              if (properties & GattProperty::PROP_EXTENDED_PROPERTIES)
+                                  flags.push_back(BlueZConstants::FLAG_EXTENDED_PROPERTIES);
+                              if (permissions & GattPermission::PERM_READ_ENCRYPTED)
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_READ);
+                              if (permissions & GattPermission::PERM_WRITE_ENCRYPTED)
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_WRITE);
+                              if (permissions & GattPermission::PERM_READ_AUTHENTICATED)
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_READ);
+                              if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED)
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_WRITE);
+                              
+                              return flags;
+                          });
     
-    // ReadValue 메서드 등록 - BlueZ 5.82에서 표준 메서드
-    object.registerReadValueMethod(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        [this](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
-            return handleReadValue(options);
-        }
-    );
+    // Notifying 속성 vtable
+    auto notifyingVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_NOTIFYING})
+                             .withGetter([this]() -> bool {
+                                 std::lock_guard<std::mutex> lock(notifyMutex);
+                                 return notifying;
+                             });
     
-    // WriteValue 메서드 등록 - BlueZ 5.82에서 표준 메서드
-    object.registerWriteValueMethod(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        [this](const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
-            handleWriteValue(value, options);
-        }
-    );
+    // Descriptors 속성 vtable
+    auto descriptorsVTable = sdbus::registerProperty(sdbus::PropertyName{"Descriptors"})
+                               .withGetter([this]() -> std::vector<sdbus::ObjectPath> {
+                                   std::vector<sdbus::ObjectPath> paths;
+                                   std::lock_guard<std::mutex> lock(descriptorsMutex);
+                                   
+                                   for (const auto& pair : descriptors) {
+                                       if (pair.second) {  // null 체크
+                                           paths.push_back(sdbus::ObjectPath(pair.second->getPath()));
+                                       }
+                                   }
+                                   
+                                   return paths;
+                               });
     
-    // StartNotify/StopNotify 메서드 등록 - BlueZ 5.82에서 표준 메서드
-    object.registerNotifyMethod(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        BlueZConstants::START_NOTIFY,
-        [this]() { handleStartNotify(); }
-    );
+    // ReadValue 메서드 vtable
+    auto readValueVTable = sdbus::registerMethod(sdbus::MethodName{BlueZConstants::READ_VALUE})
+                             .implementedAs([this](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
+                                 return handleReadValue(options);
+                             });
     
-    object.registerNotifyMethod(
-        BlueZConstants::GATT_CHARACTERISTIC_INTERFACE,
-        BlueZConstants::STOP_NOTIFY,
-        [this]() { handleStopNotify(); }
-    );
+    // WriteValue 메서드 vtable
+    auto writeValueVTable = sdbus::registerMethod(sdbus::MethodName{BlueZConstants::WRITE_VALUE})
+                              .implementedAs([this](const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
+                                  handleWriteValue(value, options);
+                              });
+    
+    // StartNotify/StopNotify 메서드 vtable
+    auto startNotifyVTable = sdbus::registerMethod(sdbus::MethodName{BlueZConstants::START_NOTIFY})
+                               .implementedAs([this]() { handleStartNotify(); });
+    
+    auto stopNotifyVTable = sdbus::registerMethod(sdbus::MethodName{BlueZConstants::STOP_NOTIFY})
+                              .implementedAs([this]() { handleStopNotify(); });
+    
+    // vtable 등록
+    sdbusObj.addVTable(
+        uuidVTable, serviceVTable, valueVTable, flagsVTable, 
+        notifyingVTable, descriptorsVTable,
+        readValueVTable, writeValueVTable, 
+        startNotifyVTable, stopNotifyVTable
+    ).forInterface(interfaceName);
     
     // BlueZ 5.82에서는 CCCD 설명자가 자동으로 생성되므로,
     // 알림/표시 지원 특성에 대해 CCCD 설명자를 명시적으로 생성할 필요가 없음
     
-    // 객체 등록
-    return object.registerObject();
+    return true;
 }
 
 std::vector<uint8_t> GattCharacteristic::handleReadValue(const std::map<std::string, sdbus::Variant>& options) {
@@ -397,7 +387,7 @@ std::vector<uint8_t> GattCharacteristic::handleReadValue(const std::map<std::str
                 returnValue = readCallback();
             } catch (const std::exception& e) {
                 Logger::error("읽기 콜백에서 예외: " + std::string(e.what()));
-                throw sdbus::Error("org.bluez.Error.Failed", e.what());
+                throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
             }
         } else {
             // 저장된 값 사용
@@ -448,7 +438,7 @@ void GattCharacteristic::handleWriteValue(const std::vector<uint8_t>& value, con
                 success = writeCallback(value);
             } catch (const std::exception& e) {
                 Logger::error("쓰기 콜백에서 예외: " + std::string(e.what()));
-                throw sdbus::Error("org.bluez.Error.Failed", e.what());
+                throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
             }
         }
     }
@@ -466,7 +456,10 @@ void GattCharacteristic::handleWriteValue(const std::vector<uint8_t>& value, con
             
             // 값 변경 알림 발생
             if (object.isRegistered()) {
-                object.emitPropertyChanged(BlueZConstants::GATT_CHARACTERISTIC_INTERFACE, BlueZConstants::PROPERTY_VALUE);
+                object.emitPropertyChanged(
+                    sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
+                    sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE}
+                );
             }
         } else {
             // 그냥 전체 값 설정
@@ -474,7 +467,7 @@ void GattCharacteristic::handleWriteValue(const std::vector<uint8_t>& value, con
         }
     } else {
         // 콜백 실패 시 예외 발생
-        throw sdbus::Error("org.bluez.Error.Failed", "Write operation failed");
+        throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), "Write operation failed");
     }
 }
 
@@ -484,7 +477,7 @@ void GattCharacteristic::handleStartNotify() {
     // BlueZ 5.82에서는 StartNotify 호출 시 자동으로 CCCD 설정을 처리함
     
     if (!startNotify()) {
-        throw sdbus::Error("org.bluez.Error.Failed", "Cannot start notifications");
+        throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), "Cannot start notifications");
     }
 }
 
@@ -494,7 +487,7 @@ void GattCharacteristic::handleStopNotify() {
     // BlueZ 5.82에서는 StopNotify 호출 시 자동으로 CCCD 설정을 처리함
     
     if (!stopNotify()) {
-        throw sdbus::Error("org.bluez.Error.Failed", "Cannot stop notifications");
+        throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), "Cannot stop notifications");
     }
 }
 

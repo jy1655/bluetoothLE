@@ -1,4 +1,3 @@
-// src/GattDescriptor.cpp - 순환 참조 개선
 #include "GattDescriptor.h"
 #include "GattCharacteristic.h" // 여기서만 포함 (헤더에서는 전방 선언만)
 #include "Logger.h"
@@ -51,7 +50,10 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
         // 등록된 경우 속성 변경 시그널 발생
         if (object.isRegistered()) {
             // Value 속성 변경 알림
-            object.emitPropertyChanged(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, BlueZConstants::PROPERTY_VALUE);
+            object.emitPropertyChanged(
+                sdbus::InterfaceName{BlueZConstants::GATT_DESCRIPTOR_INTERFACE}, 
+                sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE}
+            );
         }
     } catch (const std::exception& e) {
         Logger::error("설명자 setValue에서 예외: " + std::string(e.what()));
@@ -59,92 +61,81 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
 }
 
 bool GattDescriptor::setupDBusInterfaces() {
-    // UUID 속성 등록
-    object.registerProperty(
-        BlueZConstants::GATT_DESCRIPTOR_INTERFACE,
-        BlueZConstants::PROPERTY_UUID,
-        "s",
-        [this]() -> std::string { return uuid.toBlueZFormat(); }
-    );
+    auto& sdbusObj = object.getSdbusObject();
     
-    // Characteristic 속성 등록 (부모 특성이 있는 경우)
-    if (parentCharacteristic) {
-        object.registerProperty(
-            BlueZConstants::GATT_DESCRIPTOR_INTERFACE,
-            BlueZConstants::PROPERTY_CHARACTERISTIC,
-            "o",
-            [this]() -> sdbus::ObjectPath { 
-                return sdbus::ObjectPath(parentCharacteristic->getPath()); 
-            }
-        );
-    }
+    // v2 API를 사용하여 vtable 생성 및 등록
+    sdbus::InterfaceName interfaceName{BlueZConstants::GATT_DESCRIPTOR_INTERFACE};
     
-    // Value 속성 등록 - BlueZ 5.82+ 호환
-    object.registerProperty(
-        BlueZConstants::GATT_DESCRIPTOR_INTERFACE,
-        BlueZConstants::PROPERTY_VALUE,
-        "ay",
-        [this]() -> std::vector<uint8_t> {
-            std::lock_guard<std::mutex> lock(valueMutex);
-            return value;
-        }
-    );
+    // UUID 속성 vtable
+    auto uuidVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_UUID})
+                        .withGetter([this](){ return uuid.toBlueZFormat(); });
     
-    // Flags 속성 등록 - BlueZ 5.82에서 중요한 필수 속성
-    object.registerProperty(
-        BlueZConstants::GATT_DESCRIPTOR_INTERFACE,
-        BlueZConstants::PROPERTY_FLAGS,
-        "as",
-        [this]() -> std::vector<std::string> {
-            std::vector<std::string> flags;
-            
-            // 권한에 따라 플래그 추가
-            if (permissions & GattPermission::PERM_READ) {
-                flags.push_back(BlueZConstants::FLAG_READ);
-            }
-            if (permissions & GattPermission::PERM_WRITE) {
-                flags.push_back(BlueZConstants::FLAG_WRITE);
-            }
-            if (permissions & GattPermission::PERM_READ_ENCRYPTED) {
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_READ);
-            }
-            if (permissions & GattPermission::PERM_WRITE_ENCRYPTED){
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_WRITE);
-            }
-            if (permissions & GattPermission::PERM_READ_AUTHENTICATED) {
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_READ);
-            }
-            if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED) {
-                flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_WRITE);
-            }
+    // Characteristic 속성 vtable (부모 특성이 있는 경우)
+    auto characteristicVTable = parentCharacteristic ? 
+        sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_CHARACTERISTIC})
+            .withGetter([this](){ return sdbus::ObjectPath(parentCharacteristic->getPath()); }) : 
+        sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_CHARACTERISTIC})
+            .withGetter([](){ return sdbus::ObjectPath("/"); });
+    
+    // Value 속성 vtable
+    auto valueVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE})
+                         .withGetter([this]() -> std::vector<uint8_t> {
+                             std::lock_guard<std::mutex> lock(valueMutex);
+                             return value;
+                         });
+    
+    // Flags 속성 vtable - BlueZ 5.82에서 중요한 필수 속성
+    auto flagsVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_FLAGS})
+                          .withGetter([this]() -> std::vector<std::string> {
+                              std::vector<std::string> flags;
+                              
+                              // 권한에 따라 플래그 추가
+                              if (permissions & GattPermission::PERM_READ) {
+                                  flags.push_back(BlueZConstants::FLAG_READ);
+                              }
+                              if (permissions & GattPermission::PERM_WRITE) {
+                                  flags.push_back(BlueZConstants::FLAG_WRITE);
+                              }
+                              if (permissions & GattPermission::PERM_READ_ENCRYPTED) {
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_READ);
+                              }
+                              if (permissions & GattPermission::PERM_WRITE_ENCRYPTED){
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_WRITE);
+                              }
+                              if (permissions & GattPermission::PERM_READ_AUTHENTICATED) {
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_READ);
+                              }
+                              if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED) {
+                                  flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_WRITE);
+                              }
 
-            if (flags.empty()) {
-                flags.push_back(BlueZConstants::FLAG_READ);  // 기본 권한 추가
-                Logger::warn("설명자 권한이 비어 있어 기본값 'read'로 설정");
-            }
-            
-            return flags;
-        }
-    );
+                              if (flags.empty()) {
+                                  flags.push_back(BlueZConstants::FLAG_READ);  // 기본 권한 추가
+                                  Logger::warn("설명자 권한이 비어 있어 기본값 'read'로 설정");
+                              }
+                              
+                              return flags;
+                          });
     
-    // ReadValue 메서드 등록 - BlueZ 5.82 표준 메서드
-    object.registerReadValueMethod(
-        BlueZConstants::GATT_DESCRIPTOR_INTERFACE,
-        [this](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
-            return handleReadValue(options);
-        }
-    );
+    // ReadValue 메서드 vtable
+    auto readValueVTable = sdbus::registerMethod(sdbus::MethodName{BlueZConstants::READ_VALUE})
+                             .implementedAs([this](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
+                                 return handleReadValue(options);
+                             });
     
-    // WriteValue 메서드 등록 - BlueZ 5.82 표준 메서드
-    object.registerWriteValueMethod(
-        BlueZConstants::GATT_DESCRIPTOR_INTERFACE,
-        [this](const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
-            handleWriteValue(value, options);
-        }
-    );
+    // WriteValue 메서드 vtable
+    auto writeValueVTable = sdbus::registerMethod(sdbus::MethodName{BlueZConstants::WRITE_VALUE})
+                              .implementedAs([this](const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
+                                  handleWriteValue(value, options);
+                              });
     
-    // 객체 등록
-    return object.registerObject();
+    // vtable 등록
+    sdbusObj.addVTable(
+        uuidVTable, characteristicVTable, valueVTable, flagsVTable,
+        readValueVTable, writeValueVTable
+    ).forInterface(interfaceName);
+    
+    return true;
 }
 
 std::vector<uint8_t> GattDescriptor::handleReadValue(const std::map<std::string, sdbus::Variant>& options) {
@@ -181,7 +172,7 @@ std::vector<uint8_t> GattDescriptor::handleReadValue(const std::map<std::string,
                 returnValue = readCallback();
             } catch (const std::exception& e) {
                 Logger::error("설명자 읽기 콜백에서 예외: " + std::string(e.what()));
-                throw sdbus::Error("org.bluez.Error.Failed", e.what());
+                throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
             }
         } else {
             // 저장된 값 사용
@@ -239,7 +230,7 @@ void GattDescriptor::handleWriteValue(const std::vector<uint8_t>& value, const s
                 success = writeCallback(value);
             } catch (const std::exception& e) {
                 Logger::error("설명자 쓰기 콜백에서 예외: " + std::string(e.what()));
-                throw sdbus::Error("org.bluez.Error.Failed", e.what());
+                throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
             }
         }
     }
@@ -260,7 +251,10 @@ void GattDescriptor::handleWriteValue(const std::vector<uint8_t>& value, const s
             
             // 값 변경 알림 발생
             if (object.isRegistered()) {
-                object.emitPropertyChanged(BlueZConstants::GATT_DESCRIPTOR_INTERFACE, BlueZConstants::PROPERTY_VALUE);
+                object.emitPropertyChanged(
+                    sdbus::InterfaceName{BlueZConstants::GATT_DESCRIPTOR_INTERFACE}, 
+                    sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE}
+                );
             }
         } else {
             // 전체 값 설정 (알림 및 CCCD 처리 포함)
@@ -268,7 +262,7 @@ void GattDescriptor::handleWriteValue(const std::vector<uint8_t>& value, const s
         }
     } else {
         // 콜백이 실패 반환
-        throw sdbus::Error("org.bluez.Error.Failed", "Write operation failed");
+        throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), "Write operation failed");
     }
 }
 
