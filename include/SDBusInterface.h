@@ -59,7 +59,7 @@ public:
      * @param objectPath 객체 경로
      * @return D-Bus 객체 포인터
      */
-    std::unique_ptr<sdbus::IObject> createObject(const std::string& objectPath);
+    std::shared_ptr<sdbus::IObject> createObject(const std::string& objectPath);
     
     /**
      * @brief D-Bus 프록시 생성

@@ -63,14 +63,6 @@ public:
     const std::string& getPath() const { return objectPath; }
     
     /**
-     * @brief 인터페이스 추가
-     * 
-     * @param interfaceName 인터페이스 이름
-     * @return 추가 성공 여부
-     */
-    bool addInterface(const std::string& interfaceName);
-    
-    /**
      * @brief GATT 특성 ReadValue 메서드 등록
      * 
      * @param interfaceName 인터페이스 이름
@@ -81,26 +73,25 @@ public:
     bool registerReadValueMethod(const std::string& interfaceName, Handler&& handler) {
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (registered || !sdbusObject) {
+        if (registered || !object) {
             return false;
         }
         
         try {
             // BlueZ ReadValue 메서드: a{sv} -> ay
-            sdbusObject->registerMethod("ReadValue")
-                .onInterface(interfaceName)
-                .withInputParamNames("options")
-                .implementedAs([handler](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
-                    try {
-                        // 콜백 호출 및 결과 반환 (시그니처 자동 변환)
-                        return handler(options);
-                    } catch (const std::exception& e) {
-                        Logger::error("Exception in ReadValue handler: " + std::string(e.what()));
-                        throw sdbus::Error("org.bluez.Error.Failed", e.what());
-                    }
-                });
+            object->registerMethod("ReadValue", 
+                               interfaceName,
+                               [handler](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
+                                   try {
+                                       // 콜백 호출 및 결과 반환 (시그니처 자동 변환)
+                                       return handler(options);
+                                   } catch (const std::exception& e) {
+                                       Logger::error("Exception in ReadValue handler: " + std::string(e.what()));
+                                       throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
+                                   }
+                               });
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to register ReadValue method: " + std::string(e.what()));
             return false;
         }
@@ -117,27 +108,26 @@ public:
     bool registerWriteValueMethod(const std::string& interfaceName, Handler&& handler) {
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (registered || !sdbusObject) {
+        if (registered || !object) {
             return false;
         }
         
         try {
             // BlueZ WriteValue 메서드: aya{sv} -> 없음
-            sdbusObject->registerMethod("WriteValue")
-                .onInterface(interfaceName)
-                .withInputParamNames("value", "options")
-                .implementedAs([handler](const std::vector<uint8_t>& value, 
-                                       const std::map<std::string, sdbus::Variant>& options) {
-                    try {
-                        // 콜백 호출 (시그니처 자동 변환)
-                        handler(value, options);
-                    } catch (const std::exception& e) {
-                        Logger::error("Exception in WriteValue handler: " + std::string(e.what()));
-                        throw sdbus::Error("org.bluez.Error.Failed", e.what());
-                    }
-                });
+            object->registerMethod("WriteValue", 
+                               interfaceName,
+                               [handler](const std::vector<uint8_t>& value, 
+                                        const std::map<std::string, sdbus::Variant>& options) {
+                                   try {
+                                       // 콜백 호출 (시그니처 자동 변환)
+                                       handler(value, options);
+                                   } catch (const std::exception& e) {
+                                       Logger::error("Exception in WriteValue handler: " + std::string(e.what()));
+                                       throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
+                                   }
+                               });
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to register WriteValue method: " + std::string(e.what()));
             return false;
         }
@@ -147,6 +137,7 @@ public:
      * @brief StartNotify, StopNotify 메서드 등록
      * 
      * @param interfaceName 인터페이스 이름
+     * @param methodName 메서드 이름
      * @param handler 핸들러 함수 (매개변수 없음)
      * @return 등록 성공 여부
      */
@@ -154,25 +145,25 @@ public:
     bool registerNotifyMethod(const std::string& interfaceName, const std::string& methodName, Handler&& handler) {
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (registered || !sdbusObject) {
+        if (registered || !object) {
             return false;
         }
         
         try {
             // BlueZ StartNotify/StopNotify 메서드: 없음 -> 없음
-            sdbusObject->registerMethod(methodName)
-                .onInterface(interfaceName)
-                .implementedAs([handler, methodName]() {
-                    try {
-                        // 콜백 호출 (시그니처 자동 변환)
-                        handler();
-                    } catch (const std::exception& e) {
-                        Logger::error("Exception in " + std::string(methodName) + " handler: " + std::string(e.what()));
-                        throw sdbus::Error("org.bluez.Error.Failed", e.what());
-                    }
-                });
+            object->registerMethod(methodName, 
+                               interfaceName,
+                               [handler, methodName]() {
+                                   try {
+                                       // 콜백 호출 (시그니처 자동 변환)
+                                       handler();
+                                   } catch (const std::exception& e) {
+                                       Logger::error("Exception in " + std::string(methodName) + " handler: " + std::string(e.what()));
+                                       throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
+                                   }
+                               });
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to register " + methodName + " method: " + std::string(e.what()));
             return false;
         }
@@ -188,28 +179,25 @@ public:
     bool registerGetManagedObjectsMethod(Handler&& handler) {
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (registered || !sdbusObject) {
+        if (registered || !object) {
             return false;
         }
         
         try {
-            // Register the method with explicit output parameter name
-            auto&& methodRegistrator = sdbusObject->registerMethod("GetManagedObjects")
-                                            .onInterface("org.freedesktop.DBus.ObjectManager")
-                                            .withOutputParamNames("objects");
-            
-            // Implement the method with explicit return type
-            methodRegistrator.implementedAs([handler = std::forward<Handler>(handler)]() -> ManagedObjectsDict {
-                try {
-                    return handler();
-                } catch (const std::exception& e) {
-                    Logger::error("Exception in GetManagedObjects handler: " + std::string(e.what()));
-                    throw sdbus::Error("org.freedesktop.DBus.Error.Failed", e.what());
-                }
-            });
+            // sdbus-c++ 2.1.0에서의 메서드 등록 방식
+            object->registerMethod("GetManagedObjects", 
+                               "org.freedesktop.DBus.ObjectManager",
+                               [handler = std::forward<Handler>(handler)]() -> ManagedObjectsDict {
+                                   try {
+                                       return handler();
+                                   } catch (const std::exception& e) {
+                                       Logger::error("Exception in GetManagedObjects handler: " + std::string(e.what()));
+                                       throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), e.what());
+                                   }
+                               });
             
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to register GetManagedObjects method: " + std::string(e.what()));
             return false;
         }
@@ -231,30 +219,29 @@ public:
         
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (registered || !sdbusObject) {
+        if (registered || !object) {
             return false;
         }
         
         try {
             // BlueZ Register* 메서드: os{sv} -> 없음
-            sdbusObject->registerMethod(methodName)
-                .onInterface(interfaceName)
-                .withInputParamNames("objectPath", "options")
-                .implementedAs([handler, methodName](const sdbus::ObjectPath& objectPath, 
-                                       const std::map<std::string, sdbus::Variant>& options) {
-                    try {
-                        // 콜백 호출 (시그니처 자동 변환)
-                        handler(objectPath, options);
-                    } catch (const sdbus::Error& e) {
-                        // BlueZ 오류 전달
-                        throw;
-                    } catch (const std::exception& e) {
-                        Logger::error("Exception in " + std::string(methodName) + " handler: " + std::string(e.what()));
-                        throw sdbus::Error("org.bluez.Error.Failed", e.what());
-                    }
-                });
+            object->registerMethod(methodName, 
+                               interfaceName,
+                               [handler, methodName](const sdbus::ObjectPath& objectPath, 
+                                                   const std::map<std::string, sdbus::Variant>& options) {
+                                   try {
+                                       // 콜백 호출 (시그니처 자동 변환)
+                                       handler(objectPath, options);
+                                   } catch (const sdbus::Error& e) {
+                                       // BlueZ 오류 전달
+                                       throw;
+                                   } catch (const std::exception& e) {
+                                       Logger::error("Exception in " + std::string(methodName) + " handler: " + std::string(e.what()));
+                                       throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), e.what());
+                                   }
+                               });
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to register " + methodName + " method: " + std::string(e.what()));
             return false;
         }
@@ -276,19 +263,17 @@ public:
         
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (registered || !sdbusObject) {
+        if (registered || !object) {
             return false;
         }
         
         try {
-            // 메서드 등록 (인자 타입 자동 유추)
-            auto&& methodRegistrator = sdbusObject->registerMethod(methodName)
-                                             .onInterface(interfaceName);
-            
-            // 여기서 핸들러는 템플릿으로 받기 때문에 시그니처가 자동으로 추론됨
-            methodRegistrator.implementedAs(std::forward<Handler>(handler));
+            // sdbus-c++ 2.1.0에서의 메서드 등록 방식
+            object->registerMethod(methodName, 
+                               interfaceName,
+                               std::forward<Handler>(handler));
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to register method " + methodName + ": " + std::string(e.what()));
             return false;
         }
@@ -299,44 +284,41 @@ public:
      * 
      * @param interfaceName 인터페이스 이름
      * @param propertyName 속성 이름
-     * @param signature 타입 시그니처
+     * @param signature 타입 시그니처 
      * @param getter 게터 함수
      * @param setter 세터 함수 (nullptr이면 읽기 전용)
-     * @param emitsChanged 속성 변경 시그널 발생 여부
      * @return 등록 성공 여부
      */
     template<typename Getter, typename Setter = std::nullptr_t>
     bool registerProperty(
         const std::string& interfaceName,
         const std::string& propertyName,
-        const std::string& signature,
         Getter&& getter,
-        Setter&& setter = nullptr,
-        bool emitsChanged = true) {
+        Setter&& setter = nullptr) {
         
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (registered || !sdbusObject) {
+        if (registered || !object) {
             return false;
         }
         
         try {
-            auto&& propertyRegistrator = sdbusObject->registerProperty(propertyName)
-                                               .onInterface(interfaceName);
-            
-            // 게터 설정
-            propertyRegistrator.withGetter(std::forward<Getter>(getter));
-            
-            // 세터 설정 (제공된 경우)
-            if constexpr (!std::is_same_v<Setter, std::nullptr_t>) {
-                if (setter != nullptr) {
-                    propertyRegistrator.withSetter(std::forward<Setter>(setter));
-                }
+            // 읽기 전용 속성인지 확인
+            if constexpr (std::is_same_v<Setter, std::nullptr_t> || std::is_null_pointer_v<Setter>) {
+                // 읽기 전용 속성
+                object->registerProperty(propertyName, 
+                                      interfaceName, 
+                                      std::forward<Getter>(getter));
+            } else {
+                // 읽기/쓰기 속성
+                object->registerProperty(propertyName, 
+                                      interfaceName, 
+                                      std::forward<Getter>(getter),
+                                      std::forward<Setter>(setter));
             }
             
-            
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to register property " + propertyName + ": " + std::string(e.what()));
             return false;
         }
@@ -347,36 +329,11 @@ public:
      * 
      * @param interfaceName 인터페이스 이름
      * @param signalName 시그널 이름
-     * @param parameterNames 매개변수 이름 (선택 사항)
      * @return 등록 성공 여부
      */
-    template<typename... Names>
     bool registerSignal(
         const std::string& interfaceName,
-        const std::string& signalName,
-        Names&&... parameterNames) {
-        
-        std::lock_guard<std::mutex> lock(objectMutex);
-        
-        if (registered || !sdbusObject) {
-            return false;
-        }
-        
-        try {
-            // 시그널 등록 (매개변수 이름 있을 경우 추가)
-            auto&& signalRegistrator = sdbusObject->registerSignal(signalName)
-                                             .onInterface(interfaceName);
-            
-            if constexpr (sizeof...(parameterNames) > 0) {
-                signalRegistrator.withParameters(std::forward<Names>(parameterNames)...);
-            }
-            
-            return true;
-        } catch (const sdbus::Error& e) {
-            Logger::error("Failed to register signal " + signalName + ": " + std::string(e.what()));
-            return false;
-        }
-    }
+        const std::string& signalName);
     
     /**
      * @brief 시그널 발생
@@ -394,21 +351,19 @@ public:
         
         std::lock_guard<std::mutex> lock(objectMutex);
         
-        if (!registered || !sdbusObject) {
+        if (!registered || !object) {
             return false;
         }
         
         try {
-            auto&& signal = sdbusObject->createSignal(interfaceName, signalName);
-            
+            // sdbus-c++ 2.1.0에서의 시그널 발생 방식
+            auto signal = object->createSignal(signalName, interfaceName);
             if constexpr (sizeof...(args) > 0) {
-                // sdbus-c++ 1.4.0에서는 << 연산자를 사용하는 방식으로 변경됨
                 (signal << ... << std::forward<Args>(args));
             }
-            
             signal.send();
             return true;
-        } catch (const sdbus::Error& e) {
+        } catch (const std::exception& e) {
             Logger::error("Failed to emit signal " + signalName + ": " + std::string(e.what()));
             return false;
         }
@@ -426,21 +381,25 @@ public:
         const std::string& propertyName);
     
     /**
-     * @brief 기본 sdbus::IObject 접근
+     * @brief 기본 object 접근자
      * 
-     * @return sdbus::IObject 레퍼런스
+     * @return sdbus::IObject 참조
      */
-    sdbus::IObject& getSdbusObject();
+    sdbus::IObject* getObject() { return object.get(); }
 
+    /**
+     * @brief ObjectManager 인터페이스 등록
+     * 
+     * @param handler GetManagedObjects 핸들러 함수
+     * @return 등록 성공 여부
+     */
     bool registerObjectManager(
-        std::function<std::map<sdbus::ObjectPath, 
-                     std::map<std::string, 
-                     std::map<std::string, sdbus::Variant>>>()> handler);
+        std::function<ManagedObjectsDict()> handler);
 
 private:
     SDBusConnection& connection;
     std::string objectPath;
-    std::unique_ptr<sdbus::IObject> sdbusObject;
+    std::shared_ptr<sdbus::IObject> object;
     bool registered;
     mutable std::mutex objectMutex;
 };

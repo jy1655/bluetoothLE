@@ -51,7 +51,7 @@ public:
         std::lock_guard<std::mutex> lock(proxyMutex);
 
         if (!sdbusProxy) {
-            throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "Proxy not initialized");
+            throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), "Proxy not initialized");
         }
 
         try {
@@ -96,7 +96,7 @@ public:
         std::lock_guard<std::mutex> lock(proxyMutex);
         
         if (!sdbusProxy) {
-            throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "Proxy not initialized");
+            throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), "Proxy not initialized");
         }
         
         try {
@@ -125,7 +125,7 @@ public:
         std::lock_guard<std::mutex> lock(proxyMutex);
         
         if (!sdbusProxy) {
-            throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "Proxy not initialized");
+            throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), "Proxy not initialized");
         }
         
         try {

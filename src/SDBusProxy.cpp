@@ -12,6 +12,7 @@ SDBusProxy::SDBusProxy(
     , objectPath(objectPath) {
     
     try {
+        // sdbus-c++ 2.1.0에서는 BusName과 ObjectPath 타입으로 변환 필요
         sdbusProxy = connection.createProxy(destination, objectPath);
         Logger::info("Created D-Bus proxy for " + destination + " at " + objectPath);
     }
@@ -32,7 +33,7 @@ sdbus::Variant SDBusProxy::getProperty(
     std::lock_guard<std::mutex> lock(proxyMutex);
     
     if (!sdbusProxy) {
-        throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "Proxy not initialized");
+        throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), "Proxy not initialized");
     }
     
     try {
@@ -69,7 +70,7 @@ void SDBusProxy::unregisterSignalHandler(
 
 sdbus::IProxy& SDBusProxy::getSdbusProxy() {
     if (!sdbusProxy) {
-        throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "Proxy not initialized");
+        throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), "Proxy not initialized");
     }
     
     return *sdbusProxy;

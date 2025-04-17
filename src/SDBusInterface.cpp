@@ -1,4 +1,3 @@
-
 #include "SDBusInterface.h"
 #include "Logger.h"
 
@@ -97,7 +96,8 @@ bool SDBusConnection::requestName(const std::string& name) {
     }
     
     try {
-        connection->requestName(name);
+        // sdbus-c++ 2.1.0에서는 BusName 타입으로 변환 필요
+        connection->requestName(sdbus::BusName(name));
         Logger::info("서비스 이름 획득 성공: " + name);
         return true;
     }
@@ -116,7 +116,8 @@ bool SDBusConnection::releaseName(const std::string& name) {
     }
     
     try {
-        connection->releaseName(name);
+        // sdbus-c++ 2.1.0에서는 BusName 타입으로 변환 필요
+        connection->releaseName(sdbus::BusName(name));
         Logger::info("서비스 이름 해제 성공: " + name);
         return true;
     }
@@ -126,14 +127,16 @@ bool SDBusConnection::releaseName(const std::string& name) {
     }
 }
 
-std::unique_ptr<sdbus::IObject> SDBusConnection::createObject(const std::string& objectPath) {
+std::shared_ptr<sdbus::IObject> SDBusConnection::createObject(const std::string& objectPath) {
     if (!connection) {
         Logger::error("객체를 생성할 수 없음: 연결 객체가 null임");
         return nullptr;
     }
     
     try {
-        return sdbus::createObject(*connection, objectPath);
+        // sdbus-c++ 2.1.0에서는 ObjectPath 타입으로 변환 필요
+        // 또한 std::shared_ptr로 반환
+        return sdbus::createObject(*connection, sdbus::ObjectPath(objectPath));
     }
     catch (const sdbus::Error& e) {
         Logger::error("객체 생성 실패: " + std::string(e.what()));
@@ -150,7 +153,8 @@ std::unique_ptr<sdbus::IProxy> SDBusConnection::createProxy(
     }
     
     try {
-        return sdbus::createProxy(*connection, destination, objectPath);
+        // sdbus-c++ 2.1.0에서는 BusName과 ObjectPath 타입으로 변환 필요
+        return sdbus::createProxy(*connection, sdbus::BusName(destination), sdbus::ObjectPath(objectPath));
     }
     catch (const sdbus::Error& e) {
         Logger::error("프록시 생성 실패: " + std::string(e.what()));
@@ -160,10 +164,39 @@ std::unique_ptr<sdbus::IProxy> SDBusConnection::createProxy(
 
 sdbus::IConnection& SDBusConnection::getConnection() {
     if (!connection) {
-        throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "연결 객체가 null임");
+        // sdbus-c++ 2.1.0에서는 Error 생성자가 변경됨
+        throw sdbus::Error(sdbus::Error::Name("org.freedesktop.DBus.Error.Failed"), "연결 객체가 null임");
     }
     
     return *connection;
+}
+
+void SDBusConnection::enterEventLoop() {
+    if (!connection) {
+        Logger::error("이벤트 루프를 시작할 수 없음: 연결 객체가 null임");
+        return;
+    }
+    
+    try {
+        connection->enterEventLoop();
+    }
+    catch (const sdbus::Error& e) {
+        Logger::error("이벤트 루프 실행 중 오류: " + std::string(e.what()));
+    }
+}
+
+void SDBusConnection::leaveEventLoop() {
+    if (!connection) {
+        Logger::error("이벤트 루프를 종료할 수 없음: 연결 객체가 null임");
+        return;
+    }
+    
+    try {
+        connection->leaveEventLoop();
+    }
+    catch (const sdbus::Error& e) {
+        Logger::error("이벤트 루프 종료 중 오류: " + std::string(e.what()));
+    }
 }
 
 } // namespace ggk

@@ -11,7 +11,8 @@ SDBusError::SDBusError(const sdbus::Error& error)
 }
 
 sdbus::Error SDBusError::toSdbusError() const {
-    return sdbus::Error(name, message);
+    // sdbus-c++ 2.1.0에서는 Error 생성자가 변경됨
+    return sdbus::Error(sdbus::Error::Name(name), message);
 }
 
 std::string SDBusError::toString() const {
