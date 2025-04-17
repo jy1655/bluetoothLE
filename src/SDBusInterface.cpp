@@ -1,3 +1,4 @@
+
 #include "SDBusInterface.h"
 #include "Logger.h"
 
@@ -38,7 +39,7 @@ SDBusConnection::~SDBusConnection() {
 }
 
 bool SDBusConnection::connect() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(connectionMutex);
     
     if (connected) {
         return true;
@@ -63,7 +64,7 @@ bool SDBusConnection::connect() {
 }
 
 bool SDBusConnection::disconnect() {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(connectionMutex);
     
     if (!connected || !connection) {
         return true;
@@ -83,12 +84,12 @@ bool SDBusConnection::disconnect() {
 }
 
 bool SDBusConnection::isConnected() const {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(connectionMutex);
     return connected && connection != nullptr;
 }
 
 bool SDBusConnection::requestName(const std::string& name) {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(connectionMutex);
     
     if (!connection) {
         Logger::error("이름을 요청할 수 없음: 연결 객체가 null임");
@@ -107,7 +108,7 @@ bool SDBusConnection::requestName(const std::string& name) {
 }
 
 bool SDBusConnection::releaseName(const std::string& name) {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::lock_guard<std::mutex> lock(connectionMutex);
     
     if (!connection) {
         Logger::error("이름을 해제할 수 없음: 연결 객체가 null임");

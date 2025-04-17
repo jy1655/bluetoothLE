@@ -1,29 +1,40 @@
-#include "SDBusConnection.h"
+#include "SDBusInterface.h"
 #include "Logger.h"
 
 namespace ggk {
 
+// 싱글톤 인스턴스
+static std::unique_ptr<SDBusConnection> g_connection;
+
+SDBusConnection& getSDBusConnection() {
+    if (!g_connection) {
+        g_connection = std::make_unique<SDBusConnection>(true); // 시스템 버스 사용
+        g_connection->connect();
+    }
+    return *g_connection;
+}
+
 SDBusConnection::SDBusConnection(bool useSystemBus)
     : connected(false) {
     try {
-        // Create the appropriate connection type
+        // 적절한 버스 유형에 맞는 연결 생성
         if (useSystemBus) {
             connection = sdbus::createSystemBusConnection();
         } else {
             connection = sdbus::createSessionBusConnection();
         }
         
-        Logger::info("SDBusConnection created");
+        Logger::info("SDBusConnection 생성됨");
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Failed to create D-Bus connection: " + std::string(e.what()));
+        Logger::error("D-Bus 연결 생성 실패: " + std::string(e.what()));
         connection = nullptr;
     }
 }
 
 SDBusConnection::~SDBusConnection() {
     disconnect();
-    Logger::info("SDBusConnection destroyed");
+    Logger::info("SDBusConnection 소멸됨");
 }
 
 bool SDBusConnection::connect() {
@@ -34,75 +45,89 @@ bool SDBusConnection::connect() {
     }
     
     if (!connection) {
-        Logger::error("Cannot connect: connection is null");
+        Logger::error("연결할 수 없음: 연결 객체가 null임");
         return false;
     }
     
     try {
-        // Start processing D-Bus messages in a separate thread
+        // 별도 스레드에서 D-Bus 메시지 처리 시작
         connection->enterEventLoopAsync();
         connected = true;
-        Logger::info("Connected to D-Bus");
+        Logger::info("D-Bus에 연결됨");
         return true;
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Failed to connect to D-Bus: " + std::string(e.what()));
+        Logger::error("D-Bus 연결 실패: " + std::string(e.what()));
         return false;
     }
 }
 
-void SDBusConnection::disconnect() {
+bool SDBusConnection::disconnect() {
     std::lock_guard<std::mutex> lock(connectionMutex);
     
     if (!connected || !connection) {
-        return;
+        return true;
     }
     
     try {
-        // Stop message processing
+        // 메시지 처리 중지
         connection->leaveEventLoop();
         connected = false;
-        Logger::info("Disconnected from D-Bus");
+        Logger::info("D-Bus 연결 해제됨");
+        return true;
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Error during disconnect: " + std::string(e.what()));
+        Logger::error("연결 해제 중 오류: " + std::string(e.what()));
+        return false;
     }
 }
 
-bool SDBusConnection::isConnected() {
+bool SDBusConnection::isConnected() const {
     std::lock_guard<std::mutex> lock(connectionMutex);
     return connected && connection != nullptr;
 }
 
-sdbus::IConnection& SDBusConnection::getSdbusConnection() {
-    if (!connection) {
-        throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "Connection is null");
-    }
+bool SDBusConnection::requestName(const std::string& name) {
+    std::lock_guard<std::mutex> lock(connectionMutex);
     
-    return *connection;
-}
-
-std::unique_ptr<sdbus::IProxy> SDBusConnection::createProxy(
-    const std::string& destination,
-    const std::string& objectPath) {
     if (!connection) {
-        Logger::error("Cannot create proxy: connection is null");
-        return nullptr;
+        Logger::error("이름을 요청할 수 없음: 연결 객체가 null임");
+        return false;
     }
     
     try {
-        return sdbus::createProxy(*connection, destination, objectPath);
+        connection->requestName(name);
+        Logger::info("서비스 이름 획득 성공: " + name);
+        return true;
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Failed to create proxy: " + std::string(e.what()));
-        return nullptr;
+        Logger::error("이름 요청 실패: " + std::string(e.what()));
+        return false;
     }
 }
 
-std::unique_ptr<sdbus::IObject> SDBusConnection::createObject(
-    const std::string& objectPath) {
+bool SDBusConnection::releaseName(const std::string& name) {
+    std::lock_guard<std::mutex> lock(connectionMutex);
+    
     if (!connection) {
-        Logger::error("Cannot create object: connection is null");
+        Logger::error("이름을 해제할 수 없음: 연결 객체가 null임");
+        return false;
+    }
+    
+    try {
+        connection->releaseName(name);
+        Logger::info("서비스 이름 해제 성공: " + name);
+        return true;
+    }
+    catch (const sdbus::Error& e) {
+        Logger::error("이름 해제 실패: " + std::string(e.what()));
+        return false;
+    }
+}
+
+std::unique_ptr<sdbus::IObject> SDBusConnection::createObject(const std::string& objectPath) {
+    if (!connection) {
+        Logger::error("객체를 생성할 수 없음: 연결 객체가 null임");
         return nullptr;
     }
     
@@ -110,48 +135,39 @@ std::unique_ptr<sdbus::IObject> SDBusConnection::createObject(
         return sdbus::createObject(*connection, objectPath);
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Failed to create object: " + std::string(e.what()));
+        Logger::error("객체 생성 실패: " + std::string(e.what()));
         return nullptr;
     }
 }
 
-bool SDBusConnection::requestName(const std::string& serviceName) {
+std::unique_ptr<sdbus::IProxy> SDBusConnection::createProxy(
+    const std::string& destination, 
+    const std::string& objectPath) {
     if (!connection) {
-        Logger::error("Cannot request name: connection is null");
-        return false;
+        Logger::error("프록시를 생성할 수 없음: 연결 객체가 null임");
+        return nullptr;
     }
     
     try {
-        connection->requestName(serviceName);
-        Logger::info("Successfully acquired service name: " + serviceName);
-        return true;
+        return sdbus::createProxy(*connection, destination, objectPath);
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Failed to request name: " + std::string(e.what()));
-        return false;
+        Logger::error("프록시 생성 실패: " + std::string(e.what()));
+        return nullptr;
     }
 }
 
-bool SDBusConnection::releaseName(const std::string& serviceName) {
+sdbus::IConnection& SDBusConnection::getConnection() {
     if (!connection) {
-        Logger::error("Cannot release name: connection is null");
-        return false;
+        throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "연결 객체가 null임");
     }
     
-    try {
-        connection->releaseName(serviceName);
-        Logger::info("Successfully released service name: " + serviceName);
-        return true;
-    }
-    catch (const sdbus::Error& e) {
-        Logger::error("Failed to release name: " + std::string(e.what()));
-        return false;
-    }
+    return *connection;
 }
 
 void SDBusConnection::enterEventLoop() {
     if (!connection) {
-        Logger::error("Cannot enter event loop: connection is null");
+        Logger::error("이벤트 루프를 시작할 수 없음: 연결 객체가 null임");
         return;
     }
     
@@ -159,13 +175,13 @@ void SDBusConnection::enterEventLoop() {
         connection->enterEventLoop();
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Error in event loop: " + std::string(e.what()));
+        Logger::error("이벤트 루프 실행 중 오류: " + std::string(e.what()));
     }
 }
 
 void SDBusConnection::leaveEventLoop() {
     if (!connection) {
-        Logger::error("Cannot leave event loop: connection is null");
+        Logger::error("이벤트 루프를 종료할 수 없음: 연결 객체가 null임");
         return;
     }
     
@@ -173,7 +189,7 @@ void SDBusConnection::leaveEventLoop() {
         connection->leaveEventLoop();
     }
     catch (const sdbus::Error& e) {
-        Logger::error("Error leaving event loop: " + std::string(e.what()));
+        Logger::error("이벤트 루프 종료 중 오류: " + std::string(e.what()));
     }
 }
 

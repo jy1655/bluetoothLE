@@ -7,7 +7,7 @@
 #include <mutex>
 #include <variant>
 #include <vector>
-#include "SDBusConnection.h"
+#include "SDBusInterface.h"
 
 namespace ggk {
 
@@ -49,33 +49,25 @@ public:
         Args&&... args)
     {
         std::lock_guard<std::mutex> lock(proxyMutex);
-        
+
         if (!sdbusProxy) {
             throw sdbus::Error("org.freedesktop.DBus.Error.Failed", "Proxy not initialized");
         }
-        
+
         try {
-            auto methodCall = sdbusProxy->createMethodCall(interfaceName, methodName);
-            
-            if constexpr (sizeof...(args) > 0) {
-                methodCall.appendArguments(std::forward<Args>(args)...);
-            }
-            
-            auto reply = methodCall.send();
-            
-            // Get the result as a Variant
+            // 실제 메서드 호출 및 결과 저장
             sdbus::Variant result;
-            if (!reply.isEmpty()) {
-                result = reply.readVariant();
-            }
-            
+            sdbusProxy->callMethod(methodName)
+                    .onInterface(interfaceName)
+                    .withArguments(std::forward<Args>(args)...)
+                    .storeResultsTo(result);
+
             return result;
         }
         catch (const sdbus::Error& e) {
-            // Re-throw the error
-            throw;
+            throw;  // 그대로 던짐
         }
-    }
+    }   
     
     /**
      * @brief Get a property value

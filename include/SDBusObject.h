@@ -5,8 +5,8 @@
 #include <functional>
 #include <map>
 #include <mutex>
-#include "SDBusConnection.h"
 #include "Logger.h"
+#include "SDBusInterface.h"
 
 namespace ggk {
 
@@ -83,7 +83,7 @@ public:
         
         try {
             // BlueZ ReadValue 메서드: a{sv} -> ay
-            sdbusObject->registerMethod(interfaceName, "ReadValue")
+            sdbusObject->registerMethod("ReadValue")
                 .onInterface(interfaceName)
                 .withInputParamNames("options")
                 .implementedAs([handler](const std::map<std::string, sdbus::Variant>& options) -> std::vector<uint8_t> {
@@ -119,7 +119,7 @@ public:
         
         try {
             // BlueZ WriteValue 메서드: aya{sv} -> 없음
-            sdbusObject->registerMethod(interfaceName, "WriteValue")
+            sdbusObject->registerMethod("WriteValue")
                 .onInterface(interfaceName)
                 .withInputParamNames("value", "options")
                 .implementedAs([handler](const std::vector<uint8_t>& value, 
@@ -156,9 +156,9 @@ public:
         
         try {
             // BlueZ StartNotify/StopNotify 메서드: 없음 -> 없음
-            sdbusObject->registerMethod(interfaceName, methodName)
+            sdbusObject->registerMethod(methodName)
                 .onInterface(interfaceName)
-                .implementedAs([handler]() {
+                .implementedAs([handler, methodName]() {
                     try {
                         // 콜백 호출 (시그니처 자동 변환)
                         handler();
@@ -190,7 +190,7 @@ public:
         
         try {
             // GetManagedObjects 메서드: 없음 -> a{oa{sa{sv}}}
-            sdbusObject->registerMethod("org.freedesktop.DBus.ObjectManager", "GetManagedObjects")
+            sdbusObject->registerMethod("GetManagedObjects")
                 .onInterface("org.freedesktop.DBus.ObjectManager")
                 .implementedAs([handler]() -> std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> {
                     try {
@@ -230,10 +230,10 @@ public:
         
         try {
             // BlueZ Register* 메서드: os{sv} -> 없음
-            sdbusObject->registerMethod(interfaceName, methodName)
+            sdbusObject->registerMethod(methodName)
                 .onInterface(interfaceName)
                 .withInputParamNames("objectPath", "options")
-                .implementedAs([handler](const sdbus::ObjectPath& objectPath, 
+                .implementedAs([handler, methodName](const sdbus::ObjectPath& objectPath, 
                                        const std::map<std::string, sdbus::Variant>& options) {
                     try {
                         // 콜백 호출 (시그니처 자동 변환)
@@ -275,7 +275,7 @@ public:
         
         try {
             // 메서드 등록 (인자 타입 자동 유추)
-            auto methodRegistrator = sdbusObject->registerMethod(interfaceName, methodName)
+            auto methodRegistrator = sdbusObject->registerMethod(methodName)
                                              .onInterface(interfaceName);
             
             // 여기서 핸들러는 템플릿으로 받기 때문에 시그니처가 자동으로 추론됨
@@ -314,7 +314,7 @@ public:
         }
         
         try {
-            auto propertyRegistrator = sdbusObject->registerProperty(interfaceName, propertyName, signature)
+            auto propertyRegistrator = sdbusObject->registerProperty(propertyName)
                                                .onInterface(interfaceName);
             
             // 게터 설정
@@ -327,12 +327,6 @@ public:
                 }
             }
             
-            // 변경 시그널 설정
-            if (emitsChanged) {
-                propertyRegistrator.withUpdateBehavior(sdbus::EmitsChangedSignal);
-            } else {
-                propertyRegistrator.withUpdateBehavior(sdbus::EmitsNoSignal);
-            }
             
             return true;
         } catch (const sdbus::Error& e) {
@@ -363,7 +357,8 @@ public:
         
         try {
             // 시그널 등록 (매개변수 이름 있을 경우 추가)
-            auto signalRegistrator = sdbusObject->registerSignal(interfaceName, signalName);
+            auto&& signalRegistrator = sdbusObject->registerSignal(signalName)
+                                             .onInterface(interfaceName);
             
             if constexpr (sizeof...(parameterNames) > 0) {
                 signalRegistrator.withParameters(std::forward<Names>(parameterNames)...);
@@ -400,7 +395,8 @@ public:
             auto signal = sdbusObject->createSignal(interfaceName, signalName);
             
             if constexpr (sizeof...(args) > 0) {
-                signal.appendArguments(std::forward<Args>(args)...);
+                // sdbus-c++ 1.4.0에서는 << 연산자를 사용하는 방식으로 변경됨
+                (signal << ... << std::forward<Args>(args));
             }
             
             signal.send();
