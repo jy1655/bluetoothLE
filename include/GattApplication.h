@@ -10,8 +10,14 @@
 
 namespace ggk {
 
+    using ManagedObjectsDict = std::map<sdbus::ObjectPath, 
+                            std::map<std::string, 
+                            std::map<std::string, sdbus::Variant>>>;
+
 class GattApplication {
 public:
+
+
     GattApplication(SDBusConnection& connection, const std::string& path = "/com/example/gatt");
     virtual ~GattApplication();
     
@@ -35,14 +41,8 @@ public:
     
 private:
     // D-Bus 객체 핸들러
-    std::map<sdbus::ObjectPath, 
-           std::map<std::string, 
-           std::map<std::string, sdbus::Variant>>> handleGetManagedObjects();
-    
-    // ManagedObjects 딕셔너리 생성
-    std::map<sdbus::ObjectPath, 
-           std::map<std::string, 
-           std::map<std::string, sdbus::Variant>>> createManagedObjectsDict();
+    ManagedObjectsDict handleGetManagedObjects();
+    ManagedObjectsDict createManagedObjectsDict();
     
     // 내부 상태
     SDBusConnection& connection;

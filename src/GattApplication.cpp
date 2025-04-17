@@ -21,45 +21,29 @@ GattApplication::~GattApplication() {
 }
 
 bool GattApplication::setupDBusInterfaces() {
-    // 이미 등록된 경우 성공 반환
-    if (object.isRegistered()) {
-        Logger::debug("애플리케이션 객체가 이미 D-Bus에 등록됨");
+    try {
+        // 직접 D-Bus 객체에 접근
+        auto& sdbusObj = object.getSdbusObject();
+        
+        // Python 예제와 같은 형식으로 메서드 등록
+        // @dbus.service.method(DBUS_OM_IFACE, out_signature='a{oa{sa{sv}}}')
+        sdbusObj.registerMethod("GetManagedObjects")
+                .onInterface("org.freedesktop.DBus.ObjectManager")
+                .withOutputParamNames("objects")  // 출력 매개변수 명시
+                .implementedAs([this]() {
+                    Logger::debug("GetManagedObjects called");
+                    return this->createManagedObjectsDict();
+                });
+        
+        // 등록 완료
+        sdbusObj.finishRegistration();
+        
         return true;
     }
-
-    Logger::info("애플리케이션 D-Bus 인터페이스 설정: " + object.getPath());
-    
-    // ObjectManager 인터페이스 - GetManagedObjects 메서드
-    if (!object.registerGetManagedObjectsMethod(
-            [this]() -> std::map<sdbus::ObjectPath, 
-                              std::map<std::string, 
-                              std::map<std::string, sdbus::Variant>>> {
-                // 복잡한 중첩 딕셔너리 생성 및 반환
-                return handleGetManagedObjects();
-            })) {
-        Logger::error("GetManagedObjects 메서드 등록 실패");
+    catch (const std::exception& e) {
+        Logger::error("Failed to setup application interfaces: " + std::string(e.what()));
         return false;
     }
-    
-    // InterfacesAdded, InterfacesRemoved 시그널 등록
-    if (!object.registerSignal("org.freedesktop.DBus.ObjectManager", "InterfacesAdded")) {
-        Logger::error("InterfacesAdded 시그널 등록 실패");
-        return false;
-    }
-    
-    if (!object.registerSignal("org.freedesktop.DBus.ObjectManager", "InterfacesRemoved")) {
-        Logger::error("InterfacesRemoved 시그널 등록 실패");
-        return false;
-    }
-    
-    // D-Bus에 객체 등록
-    if (!object.registerObject()) {
-        Logger::error("애플리케이션 객체 등록 실패");
-        return false;
-    }
-    
-    Logger::info("GATT 애플리케이션 D-Bus 인터페이스 설정 완료");
-    return true;
 }
 
 bool GattApplication::addService(GattServicePtr service) {
@@ -292,18 +276,12 @@ bool GattApplication::unregisterFromBlueZ() {
 }
 
 // ManagedObjects 딕셔너리 생성 메서드
-std::map<sdbus::ObjectPath, 
-       std::map<std::string, 
-       std::map<std::string, sdbus::Variant>>> GattApplication::handleGetManagedObjects() {
+ManagedObjectsDict GattApplication::handleGetManagedObjects() {
     return createManagedObjectsDict();
 }
 
-std::map<sdbus::ObjectPath, 
-       std::map<std::string, 
-       std::map<std::string, sdbus::Variant>>> GattApplication::createManagedObjectsDict() {
-    std::map<sdbus::ObjectPath, 
-           std::map<std::string, 
-           std::map<std::string, sdbus::Variant>>> result;
+ManagedObjectsDict GattApplication::createManagedObjectsDict() {
+    ManagedObjectsDict result;
     
     try {
         // 서비스 락

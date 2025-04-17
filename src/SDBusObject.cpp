@@ -105,4 +105,25 @@ sdbus::IObject& SDBusObject::getSdbusObject() {
     return *sdbusObject;
 }
 
+bool SDBusObject::registerObjectManager(
+    std::function<std::map<sdbus::ObjectPath, 
+                 std::map<std::string, 
+                 std::map<std::string, sdbus::Variant>>>()> handler) {
+    
+    if (!sdbusObject) return false;
+    
+    try {
+        // 직접 sdbus-c++ API 사용
+        sdbusObject->registerMethod("GetManagedObjects")
+            .onInterface("org.freedesktop.DBus.ObjectManager")
+            .implementedAs(std::move(handler));
+        
+        return true;
+    }
+    catch (const std::exception& e) {
+        Logger::error("ObjectManager 등록 실패: " + std::string(e.what()));
+        return false;
+    }
+}
+
 } // namespace ggk

@@ -10,6 +10,10 @@
 
 namespace ggk {
 
+    using ManagedObjectsDict = std::map<sdbus::ObjectPath, 
+                                std::map<std::string, 
+                                std::map<std::string, sdbus::Variant>>>;
+
 /**
  * @brief BlueZ와 통신하기 위한 D-Bus 객체 래퍼
  * 
@@ -189,18 +193,21 @@ public:
         }
         
         try {
-            // GetManagedObjects 메서드: 없음 -> a{oa{sa{sv}}}
-            sdbusObject->registerMethod("GetManagedObjects")
-                .onInterface("org.freedesktop.DBus.ObjectManager")
-                .implementedAs([handler]() -> std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> {
-                    try {
-                        // 콜백 호출 및 결과 반환 (복잡한 중첩 맵, 시그니처 자동 변환)
-                        return handler();
-                    } catch (const std::exception& e) {
-                        Logger::error("Exception in GetManagedObjects handler: " + std::string(e.what()));
-                        throw sdbus::Error("org.freedesktop.DBus.Error.Failed", e.what());
-                    }
-                });
+            // Register the method with explicit output parameter name
+            auto&& methodRegistrator = sdbusObject->registerMethod("GetManagedObjects")
+                                            .onInterface("org.freedesktop.DBus.ObjectManager")
+                                            .withOutputParamNames("objects");
+            
+            // Implement the method with explicit return type
+            methodRegistrator.implementedAs([handler = std::forward<Handler>(handler)]() -> ManagedObjectsDict {
+                try {
+                    return handler();
+                } catch (const std::exception& e) {
+                    Logger::error("Exception in GetManagedObjects handler: " + std::string(e.what()));
+                    throw sdbus::Error("org.freedesktop.DBus.Error.Failed", e.what());
+                }
+            });
+            
             return true;
         } catch (const sdbus::Error& e) {
             Logger::error("Failed to register GetManagedObjects method: " + std::string(e.what()));
@@ -424,6 +431,11 @@ public:
      * @return sdbus::IObject 레퍼런스
      */
     sdbus::IObject& getSdbusObject();
+
+    bool registerObjectManager(
+        std::function<std::map<sdbus::ObjectPath, 
+                     std::map<std::string, 
+                     std::map<std::string, sdbus::Variant>>>()> handler);
 
 private:
     SDBusConnection& connection;
