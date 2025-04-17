@@ -39,13 +39,9 @@ void ConnectionManager::shutdown() {
         return;
     }
 
-    // 신호 핸들러 등록 해제
-    for (uint32_t handlerId : signalHandlerIds) {
-        if (connection) {
-            // SDBUS-C++는 현재 직접적인 시그널 핸들러 해제를 제공하지 않음
-            // 필요하다면 신호 핸들러 클래스 재설계 필요
-        }
-    }
+    // 신호 핸들러 등록 해제 - v2에서는 다르게 처리
+    // sdbus-c++에서는 현재 직접적인 시그널 핸들러 해제를 제공하지 않음
+    // signalHandlerIds는 이제 사용하지 않지만 카운트 용도로 유지
     signalHandlerIds.clear();
 
     // 연결된 장치 목록 정리
@@ -68,8 +64,8 @@ void ConnectionManager::registerSignalHandlers() {
     try {
         // ObjectManager 신호 프록시 생성
         auto proxy = connection->createProxy(
-            BlueZConstants::BLUEZ_SERVICE,
-            BlueZConstants::ROOT_PATH
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ROOT_PATH}
         );
 
         if (!proxy) {
@@ -79,18 +75,15 @@ void ConnectionManager::registerSignalHandlers() {
 
         // InterfacesAdded 신호 핸들러
         try {
-            proxy->registerSignalHandler(
-                BlueZConstants::OBJECT_MANAGER_INTERFACE,
-                "InterfacesAdded",
-                [this](sdbus::Signal& signal) {
-                    sdbus::ObjectPath path;
-                    std::map<std::string, std::map<std::string, sdbus::Variant>> interfaces;
-                    signal >> path >> interfaces;
-                    
-                    // 직접 핸들러 함수 호출, tuple과 Variant 변환 없음
+            // v2에서는 uponSignal을 사용하고, 구체적인 타입으로 매개변수를 선언
+            proxy->uponSignal(sdbus::SignalName{"InterfacesAdded"})
+                .onInterface(sdbus::InterfaceName{BlueZConstants::OBJECT_MANAGER_INTERFACE})
+                .call([this](sdbus::ObjectPath path, 
+                            std::map<std::string, std::map<std::string, sdbus::Variant>> interfaces) {
+                    // 직접 핸들러 함수 호출, 파라미터를 이미 추출했으므로 바로 전달
                     this->handleInterfacesAddedSignal(path.c_str(), interfaces);
-                }
-            );
+                });
+            
             // 핸들러 ID를 저장할 수 없지만, 성공적으로 등록되었음을 추적하기 위해
             // 카운트는 유지합니다.
             signalHandlerIds.push_back(signalHandlerIds.size() + 1);
@@ -100,18 +93,13 @@ void ConnectionManager::registerSignalHandlers() {
 
         // InterfacesRemoved 신호 핸들러
         try {
-            proxy->registerSignalHandler(
-                BlueZConstants::OBJECT_MANAGER_INTERFACE,
-                "InterfacesRemoved",
-                [this](sdbus::Signal& signal) {
-                    sdbus::ObjectPath path;
-                    std::vector<std::string> interfaces;
-                    signal >> path >> interfaces;
-                    
-                    // 직접 핸들러 함수 호출, tuple과 Variant 변환 없음
+            proxy->uponSignal(sdbus::SignalName{"InterfacesRemoved"})
+                .onInterface(sdbus::InterfaceName{BlueZConstants::OBJECT_MANAGER_INTERFACE})
+                .call([this](sdbus::ObjectPath path, std::vector<std::string> interfaces) {
+                    // 직접 핸들러 함수 호출, 파라미터를 이미 추출했으므로 바로 전달
                     this->handleInterfacesRemovedSignal(path.c_str(), interfaces);
-                }
-            );
+                });
+            
             signalHandlerIds.push_back(signalHandlerIds.size() + 1);
         } catch (const std::exception& e) {
             Logger::error("InterfacesRemoved 신호 등록 실패: " + std::string(e.what()));
@@ -120,25 +108,20 @@ void ConnectionManager::registerSignalHandlers() {
         // PropertiesChanged 신호 핸들러
         try {
             auto propsProxy = connection->createProxy(
-                BlueZConstants::BLUEZ_SERVICE,
-                BlueZConstants::ADAPTER_PATH
+                sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+                sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
             );
 
             if (propsProxy) {
-                propsProxy->registerSignalHandler(
-                    BlueZConstants::PROPERTIES_INTERFACE,
-                    "PropertiesChanged",
-                    [this](sdbus::Signal& signal) {
-                        std::string interfaceName;
-                        std::map<std::string, sdbus::Variant> changedProps;
-                        std::vector<std::string> invalidatedProps;
-                
-                        signal >> interfaceName >> changedProps >> invalidatedProps;
-                        
-                        // 직접 핸들러 함수 호출, tuple과 Variant 변환 없음
+                propsProxy->uponSignal(sdbus::SignalName{"PropertiesChanged"})
+                    .onInterface(sdbus::InterfaceName{BlueZConstants::PROPERTIES_INTERFACE})
+                    .call([this](std::string interfaceName, 
+                                std::map<std::string, sdbus::Variant> changedProps,
+                                std::vector<std::string> invalidatedProps) {
+                        // 직접 핸들러 함수 호출, 파라미터를 이미 추출했으므로 바로 전달
                         this->handlePropertiesChangedSignal(interfaceName, changedProps, invalidatedProps);
-                    }
-                );
+                    });
+                
                 signalHandlerIds.push_back(signalHandlerIds.size() + 1);
             } else {
                 Logger::error("PropertiesChanged용 프록시 생성 실패");

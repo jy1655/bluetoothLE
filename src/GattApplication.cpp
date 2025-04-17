@@ -23,20 +23,28 @@ bool GattApplication::setupDBusInterfaces() {
     try {
         // 직접 D-Bus 객체에 접근
         auto& sdbusObj = object.getSdbusObject();
+        Logger::debug("SDBusObject 참조 획득 성공");
         
         // ObjectManager 인터페이스 메서드 등록
         sdbus::InterfaceName interfaceName{"org.freedesktop.DBus.ObjectManager"};
-        sdbusObj.registerMethod("GetManagedObjects")
-                .onInterface(interfaceName)
+        
+        // v2 API 방식으로 변경하고 반환 타입을 명시적으로 지정
+        sdbusObj.addVTable(
+            sdbus::registerMethod("GetManagedObjects")
                 .withOutputParamNames("objects")
-                .implementedAs([this]() {
+                .implementedAs([this]() -> ManagedObjectsDict {
                     Logger::debug("GetManagedObjects called");
                     return this->createManagedObjectsDict();
-                });
+                })
+        ).forInterface(interfaceName);
         
-        // 등록 완료
-        sdbusObj.finishRegistration();
+        // 객체 등록 명시적으로 수행
+        if (!object.registerObject()) {
+            Logger::error("Failed to register application object");
+            return false;
+        }
         
+        Logger::info("Application D-Bus interfaces setup complete");
         return true;
     }
     catch (const std::exception& e) {

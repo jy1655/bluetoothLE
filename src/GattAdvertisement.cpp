@@ -162,47 +162,37 @@ bool GattAdvertisement::setupDBusInterfaces() {
     auto includeTxPowerVTable = sdbus::registerProperty(sdbus::PropertyName{"IncludeTxPower"})
                                  .withGetter([this]() -> bool { return includeTxPower; });
     
-    // 추가 조건부 vtable 항목
-    std::vector<sdbus::VTableItem> optionalVTables;
-    
-    // LocalName 속성 (조건부)
-    if (!localName.empty()) {
-        optionalVTables.push_back(
-            sdbus::registerProperty(sdbus::PropertyName{"LocalName"})
-                .withGetter([this]() -> std::string { return localName; })
-        );
-    }
-    
-    // Appearance 속성 (조건부)
-    if (appearance != 0) {
-        optionalVTables.push_back(
-            sdbus::registerProperty(sdbus::PropertyName{"Appearance"})
-                .withGetter([this]() -> uint16_t { return appearance; })
-        );
-    }
-    
-    // Duration 속성 (조건부)
-    if (duration != 0) {
-        optionalVTables.push_back(
-            sdbus::registerProperty(sdbus::PropertyName{"Duration"})
-                .withGetter([this]() -> uint16_t { return duration; })
-        );
-    }
-    
     // Release 메서드 vtable
     auto releaseVTable = sdbus::registerMethod(sdbus::MethodName{"Release"})
                            .implementedAs([this]() { handleRelease(); });
     
     // 기본 vtable 등록
-    auto slot = sdbusObj.addVTable(
+    sdbusObj.addVTable(
         typeVTable, serviceUUIDsVTable, manufacturerDataVTable,
         serviceDataVTable, discoverableVTable, includesVTable,
         includeTxPowerVTable, releaseVTable
     ).forInterface(interfaceName);
     
-    // 조건부 vtable 항목 등록
-    for (const auto& vtable : optionalVTables) {
-        sdbusObj.addVTable(vtable).forInterface(interfaceName);
+    // 추가 조건부 vtable 항목 등록
+    // LocalName 속성 (조건부)
+    if (!localName.empty()) {
+        auto localNameVTable = sdbus::registerProperty(sdbus::PropertyName{"LocalName"})
+                                .withGetter([this]() -> std::string { return localName; });
+        sdbusObj.addVTable(localNameVTable).forInterface(interfaceName);
+    }
+    
+    // Appearance 속성 (조건부)
+    if (appearance != 0) {
+        auto appearanceVTable = sdbus::registerProperty(sdbus::PropertyName{"Appearance"})
+                                .withGetter([this]() -> uint16_t { return appearance; });
+        sdbusObj.addVTable(appearanceVTable).forInterface(interfaceName);
+    }
+    
+    // Duration 속성 (조건부)
+    if (duration != 0) {
+        auto durationVTable = sdbus::registerProperty(sdbus::PropertyName{"Duration"})
+                               .withGetter([this]() -> uint16_t { return duration; });
+        sdbusObj.addVTable(durationVTable).forInterface(interfaceName);
     }
     
     return true;

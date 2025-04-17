@@ -85,46 +85,25 @@ GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const
 }
 
 bool GattService::setupDBusInterfaces() {
-    // UUID 속성 등록
-    object.registerProperty(
-        sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE},
-        sdbus::PropertyName{BlueZConstants::PROPERTY_UUID},
-        "s",
-        [this]() -> std::string { return getUuidProperty(); }
-    );
-    
-    // Primary 속성 등록
-    object.registerProperty(
-        sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE},
-        sdbus::PropertyName{BlueZConstants::PROPERTY_PRIMARY},
-        "b",
-        [this]() -> bool { return getPrimaryProperty(); }
-    );
-    
-    // Characteristics 속성 등록
-    object.registerProperty(
-        sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE},
-        sdbus::PropertyName{"Characteristics"},
-        "ao",
-        [this]() -> std::vector<sdbus::ObjectPath> { return getCharacteristicsProperty(); }
-    );
-    
-    // 객체 등록 (v2에서는 addVTable 방식으로 변경)
+    // v2 API에서는 registerProperty 대신 vtable 시스템 사용
     auto& sdbusObj = object.getSdbusObject();
+    sdbus::InterfaceName interfaceName{BlueZConstants::GATT_SERVICE_INTERFACE};
     
-    // v2에서는 이전의 registerProperty 호출을 포함하는 vtable을 생성하고 등록
+    // Primary 속성 vtable 등록
     auto primaryVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_PRIMARY})
                             .withGetter([this](){ return this->getPrimaryProperty(); });
     
+    // UUID 속성 vtable 등록
     auto uuidVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_UUID})
                         .withGetter([this](){ return this->getUuidProperty(); });
     
+    // Characteristics 속성 vtable 등록
     auto charsVTable = sdbus::registerProperty(sdbus::PropertyName{"Characteristics"})
-                        .withGetter([this](){ return this->getCharacteristicsProperty(); });
+                         .withGetter([this](){ return this->getCharacteristicsProperty(); });
     
-    // vtable 등록
+    // 모든 vtable을 한번에 등록
     sdbusObj.addVTable(primaryVTable, uuidVTable, charsVTable)
-            .forInterface(sdbus::InterfaceName{BlueZConstants::GATT_SERVICE_INTERFACE});
+            .forInterface(interfaceName);
     
     return true;
 }
