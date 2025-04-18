@@ -33,6 +33,10 @@ public:
     // 인터페이스 설정
     /**
      * @brief 모든 D-Bus 인터페이스 설정 (자신과 모든 하위 객체)
+     * 
+     * sdbus-c++ 2.1.0 호환을 위해 addObjectManager()를 사용하여 
+     * GetManagedObjects 메서드를 자동으로 구현합니다.
+     * 
      * @return 설정 성공 여부
      */
     bool setupInterfaces();
@@ -65,7 +69,8 @@ public:
     const std::string& getPath() const { return object.getPath(); }
     
 private:
-    // D-Bus 객체 핸들러
+    // D-Bus 객체 핸들러 - 이 메서드들은 더 이상 필요하지 않지만 호환성을 위해 유지
+    // sdbus-c++ 2.1.0에서는 addObjectManager()가 자동으로 GetManagedObjects를 처리함
     ManagedObjectsDict handleGetManagedObjects();
     ManagedObjectsDict createManagedObjectsDict();
     

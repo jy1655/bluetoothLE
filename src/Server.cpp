@@ -253,6 +253,17 @@ bool Server::start(bool secureMode) {
         Logger::error("Failed to setup interfaces");
         return false;
     }
+
+    auto connection = DBusName::getInstance().getConnection();
+    if (!connection->isConnected()) {
+        Logger::info("Reconnecting to D-Bus and starting event loop");
+        if (!connection->connect()) {
+            Logger::error("Failed to connect to D-Bus");
+            return false;
+        }
+    } else {
+        Logger::info("D-Bus connection already active with event loop");
+    }
     
     // 2. BlueZ 바인딩
     if (!bindToBlueZ()) {

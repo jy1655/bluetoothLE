@@ -82,6 +82,7 @@ void DBusName::shutdown() {
 }
 
 std::shared_ptr<SDBusConnection> DBusName::getConnection() {
+    Logger::debug("getConnection: " + busName);
     if (!connection) {
         // 연결이 없으면 생성
         connection = std::make_shared<SDBusConnection>(useSystemBus);
