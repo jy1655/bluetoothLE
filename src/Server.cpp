@@ -121,54 +121,118 @@ bool Server::initialize(const std::string& name) {
     return true;
 }
 
-bool Server::registerDBusObjects() {
-    Logger::info("Registering D-Bus objects in the correct order...");
+// src/Server.cpp (메서드 구현)
+bool Server::setupInterfaces() {
+    if (interfaceSetup) return true;
     
-    // 1. 애플리케이션 객체 구성 및 등록
-    if (!application->setupDBusInterfaces()) {
-        Logger::error("Failed to setup application D-Bus interfaces");
-        return false;
-    }
+    Logger::info("BLE Server 인터페이스 설정 중...");
     
-    // 2. 서비스 인터페이스 등록 (전체 서비스 객체 초기화)
-    for (const auto& service : application->getServices()) {
-        if (!service->setupDBusInterfaces()) {
-            Logger::error("Failed to setup service D-Bus interfaces: " + service->getUuid().toString());
+    try {
+        // 1. 애플리케이션 인터페이스 설정
+        if (!application || !application->setupInterfaces()) {
+            Logger::error("애플리케이션 인터페이스 설정 실패");
             return false;
         }
         
-        // 3. 특성 인터페이스 등록
-        for (const auto& charPair : service->getCharacteristics()) {
-            auto characteristic = charPair.second;
-            if (!characteristic || !characteristic->setupDBusInterfaces()) {
-                Logger::error("Failed to setup characteristic D-Bus interfaces");
-                return false;
-            }
-            
-            // 4. 설명자 인터페이스 등록
-            for (const auto& descPair : characteristic->getDescriptors()) {
-                auto descriptor = descPair.second;
-                if (!descriptor || !descriptor->setupDBusInterfaces()) {
-                    Logger::error("Failed to setup descriptor D-Bus interfaces");
-                    return false;
-                }
-            }
+        // 2. 광고 인터페이스 설정
+        if (!advertisement || !advertisement->setupInterfaces()) {
+            Logger::error("광고 인터페이스 설정 실패");
+            return false;
         }
+        
+        // 설정 완료 표시
+        interfaceSetup = true;
+        Logger::info("BLE Server 인터페이스 설정 완료");
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("서버 인터페이스 설정 실패: " + std::string(e.what()));
+        return false;
     }
+}
+
+bool Server::bindToBlueZ() {
+    if (boundToBlueZ) return true;
     
-    // 5. 모든 객체 등록 완료
-    // (애플리케이션 객체가 이미 등록되어 있으므로 finishAllRegistrations()는 호출하지 않음)
-    
-    // 6. 광고 객체 인터페이스 등록
-    if (!advertisement->setupDBusInterfaces()) {
-        Logger::error("Failed to setup advertisement D-Bus interfaces");
+    // BlueZ 인터페이스 설정 (어댑터 초기화)
+    if (!setupBlueZInterface()) {
+        Logger::error("BlueZ 인터페이스 설정 실패");
         return false;
     }
     
-    Logger::info("All D-Bus objects registered successfully");
-    return true;
+    // 인터페이스가 설정되지 않은 경우 먼저 설정
+    if (!interfaceSetup) {
+        if (!setupInterfaces()) {
+            return false;
+        }
+    }
+    
+    try {
+        Logger::info("BlueZ에 BLE 서버 바인딩 중...");
+        
+        // 1. 애플리케이션 바인딩
+        if (!application->bindToBlueZ()) {
+            Logger::error("애플리케이션 BlueZ 바인딩 실패");
+            return false;
+        }
+        
+        // 2. 광고 바인딩 (또는 대체 방법 사용)
+        bool advertisingEnabled = false;
+        
+        try {
+            if (advertisement->bindToBlueZ()) {
+                advertisingEnabled = true;
+            } else {
+                Logger::warn("표준 광고 바인딩 실패, 대체 방법 시도");
+                advertisingEnabled = enableAdvertisingFallback();
+            }
+        } catch (const std::exception& e) {
+            Logger::error("광고 바인딩 예외: " + std::string(e.what()));
+            advertisingEnabled = enableAdvertisingFallback();
+        }
+        
+        if (!advertisingEnabled) {
+            Logger::warn("모든 광고 방법 실패! 장치가 발견되지 않을 수 있습니다.");
+        }
+        
+        boundToBlueZ = true;
+        Logger::info("BlueZ에 BLE 서버 바인딩 완료");
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("BlueZ 바인딩 실패: " + std::string(e.what()));
+        return false;
+    }
 }
 
+bool Server::unbindFromBlueZ() {
+    if (!boundToBlueZ) return true;
+    
+    try {
+        Logger::info("BlueZ에서 BLE 서버 바인딩 해제 중...");
+        
+        // 1. 광고 바인딩 해제
+        if (advertisement) {
+            advertisement->unbindFromBlueZ();
+        }
+        
+        // 2. 애플리케이션 바인딩 해제
+        if (application) {
+            application->unbindFromBlueZ();
+        }
+        
+        // 3. 백업으로 광고 비활성화
+        system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
+        
+        boundToBlueZ = false;
+        Logger::info("BlueZ에서 BLE 서버 바인딩 해제 완료");
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("BlueZ 바인딩 해제 실패: " + std::string(e.what()));
+        boundToBlueZ = false; // 안전을 위해 상태 업데이트
+        return false;
+    }
+}
+
+// start 메서드 수정
 bool Server::start(bool secureMode) {
     // 이미 실행 중인 경우
     if (running) {
@@ -184,46 +248,16 @@ bool Server::start(bool secureMode) {
     
     Logger::info("Starting BLE Server...");
     
-    // 1. BlueZ 인터페이스 설정
-    if (!setupBlueZInterface()) {
-        Logger::error("Failed to setup BlueZ interface");
+    // 1. 인터페이스 설정
+    if (!setupInterfaces()) {
+        Logger::error("Failed to setup interfaces");
         return false;
     }
     
-    // 2. 순서대로 객체 등록
-    
-    // 2.1 D-Bus 객체 등록 (애플리케이션, 서비스, 특성, 설명자, 광고)
-    if (!registerDBusObjects()) {
-        Logger::error("Failed to register D-Bus objects");
+    // 2. BlueZ 바인딩
+    if (!bindToBlueZ()) {
+        Logger::error("Failed to bind to BlueZ");
         return false;
-    }
-    
-    // 2.2 BlueZ에 애플리케이션 등록
-    if (!application->registerWithBlueZ()) {
-        Logger::error("Failed to register GATT application with BlueZ");
-        return false;
-    }
-    
-    // 2.3 BlueZ에 광고 등록 (또는 대체 방법 사용)
-    bool advertisingEnabled = false;
-    
-    try {
-        // BlueZ 5.82 호환성 확보
-        advertisement->ensureBlueZ582Compatibility();
-        
-        if (advertisement->registerWithBlueZ()) {
-            advertisingEnabled = true;
-        } else {
-            Logger::warn("Standard advertisement registration failed, trying fallbacks");
-            advertisingEnabled = enableAdvertisingFallback();
-        }
-    } catch (const std::exception& e) {
-        Logger::error("Exception in advertisement registration: " + std::string(e.what()));
-        advertisingEnabled = enableAdvertisingFallback();
-    }
-    
-    if (!advertisingEnabled) {
-        Logger::warn("All advertisement methods failed! Device may not be discoverable.");
     }
     
     running = true;
@@ -232,6 +266,7 @@ bool Server::start(bool secureMode) {
     return true;
 }
 
+// stop 메서드 수정
 void Server::stop() {
     if (!running) {
         return;
@@ -242,24 +277,13 @@ void Server::stop() {
     running = false;
     
     try {
-        // 1. ConnectionManager 중지
+        // 1. BlueZ 바인딩 해제
+        unbindFromBlueZ();
+        
+        // 2. ConnectionManager 중지
         ConnectionManager::getInstance().shutdown();
         
-        // 2. 광고 등록 해제 (BlueZ 5.82 호환 방식)
-        if (advertisement) {
-            Logger::info("Unregistering advertisement from BlueZ...");
-            advertisement->unregisterFromBlueZ();
-        }
-        
-        // 3. GATT 애플리케이션 등록 해제
-        if (application) {
-            application->unregisterFromBlueZ();
-        }
-        
-        // 4. 백업으로 광고 비활성화
-        system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
-        
-        // 5. 이벤트 스레드 대기
+        // 3. 이벤트 스레드 대기
         if (eventThread.joinable()) {
             // 타임아웃 있는 조인
             auto future = std::async(std::launch::async, [&]() {
@@ -270,15 +294,6 @@ void Server::stop() {
             if (status != std::future_status::ready) {
                 Logger::warn("Event thread did not complete in time");
             }
-        }
-        
-        // 6. 어댑터 정리
-        Logger::info("Resetting Bluetooth adapter...");
-        auto connection = DBusName::getInstance().getConnection();
-        if (connection) {
-            BlueZUtils::resetAdapter(connection, BlueZConstants::ADAPTER_PATH);
-        } else {
-            system("sudo hciconfig hci0 down > /dev/null 2>&1");
         }
         
         initialized = false;

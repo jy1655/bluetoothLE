@@ -54,6 +54,36 @@ public:
      * @brief BLE 서버 중지
      */
     void stop();
+
+    /**
+     * @brief 모든 D-Bus 인터페이스 설정 (애플리케이션 및 광고)
+     * @return 설정 성공 여부
+     */
+    bool setupInterfaces();
+    
+    /**
+     * @brief BlueZ에 모든 객체 바인딩
+     * @return 바인딩 성공 여부
+     */
+    bool bindToBlueZ();
+    
+    /**
+     * @brief BlueZ에서 모든 객체 바인딩 해제
+     * @return 바인딩 해제 성공 여부
+     */
+    bool unbindFromBlueZ();
+    
+    /**
+     * @brief 인터페이스 설정 상태 확인
+     * @return 설정 완료 여부
+     */
+    bool isInterfaceSetup() const { return interfaceSetup; }
+    
+    /**
+     * @brief BlueZ 바인딩 상태 확인
+     * @return 바인딩 완료 여부
+     */
+    bool isBoundToBlueZ() const { return boundToBlueZ; }
     
     /**
      * @brief 서비스 추가
@@ -175,6 +205,8 @@ private:
     std::thread eventThread;
     std::string deviceName;
     uint16_t advTimeout;
+    bool interfaceSetup{false}; // 인터페이스 설정 완료 여부
+    bool boundToBlueZ{false};   // BlueZ 바인딩 완료 여부
     
     // 콜백 함수
     std::function<void(const std::string&)> connectionCallback;
@@ -190,15 +222,6 @@ private:
     bool enableAdvertisingFallback();
     static void registerShutdownHandler(Server* server);
     
-    /**
-     * @brief D-Bus 객체 등록 프로세스
-     * 
-     * 모든 D-Bus 객체(애플리케이션, 서비스, 특성, 설명자, 광고)를
-     * 올바른 순서로 등록합니다.
-     * 
-     * @return 등록 성공 여부
-     */
-    bool registerDBusObjects();
 };
 
 } // namespace ggk

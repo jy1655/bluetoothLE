@@ -84,28 +84,49 @@ GattCharacteristicPtr GattService::getCharacteristic(const GattUuid& uuid) const
     return nullptr;
 }
 
-bool GattService::setupDBusInterfaces() {
-    // v2 API에서는 registerProperty 대신 vtable 시스템 사용
-    auto& sdbusObj = object.getSdbusObject();
-    sdbus::InterfaceName interfaceName{BlueZConstants::GATT_SERVICE_INTERFACE};
+// src/GattService.cpp (메서드 수정)
+bool GattService::setupInterfaces() {
+    if (interfaceSetup) return true;
     
-    // Primary 속성 vtable 등록
-    auto primaryVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_PRIMARY})
-                            .withGetter([this](){ return this->getPrimaryProperty(); });
-    
-    // UUID 속성 vtable 등록
-    auto uuidVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_UUID})
-                        .withGetter([this](){ return this->getUuidProperty(); });
-    
-    // Characteristics 속성 vtable 등록
-    auto charsVTable = sdbus::registerProperty(sdbus::PropertyName{"Characteristics"})
-                         .withGetter([this](){ return this->getCharacteristicsProperty(); });
-    
-    // 모든 vtable을 한번에 등록
-    sdbusObj.addVTable(primaryVTable, uuidVTable, charsVTable)
-            .forInterface(interfaceName);
-    
-    return true;
+    try {
+        auto& sdbusObj = object.getSdbusObject();
+        sdbus::InterfaceName interfaceName{BlueZConstants::GATT_SERVICE_INTERFACE};
+        
+        // Primary 속성 vtable 등록
+        auto primaryVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_PRIMARY})
+                               .withGetter([this](){ return this->getPrimaryProperty(); });
+        
+        // UUID 속성 vtable 등록
+        auto uuidVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_UUID})
+                           .withGetter([this](){ return this->getUuidProperty(); });
+        
+        // Characteristics 속성 vtable 등록
+        auto charsVTable = sdbus::registerProperty(sdbus::PropertyName{"Characteristics"})
+                            .withGetter([this](){ return this->getCharacteristicsProperty(); });
+        
+        // 모든 vtable을 한번에 등록
+        sdbusObj.addVTable(primaryVTable, uuidVTable, charsVTable)
+               .forInterface(interfaceName);
+        
+        // 모든 특성에 대해 인터페이스 설정
+        std::lock_guard<std::mutex> lock(characteristicsMutex);
+        for (const auto& [uuid, characteristic] : characteristics) {
+            if (characteristic && !characteristic->isInterfaceSetup()) {
+                if (!characteristic->setupInterfaces()) {
+                    Logger::error("특성 인터페이스 설정 실패: " + uuid);
+                    return false;
+                }
+            }
+        }
+        
+        // 설정 완료 표시
+        interfaceSetup = true;
+        Logger::info("서비스 인터페이스 설정 완료: " + uuid.toString());
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("서비스 인터페이스 설정 실패: " + std::string(e.what()));
+        return false;
+    }
 }
 
 std::string GattService::getUuidProperty() const {

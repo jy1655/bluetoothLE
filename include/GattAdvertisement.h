@@ -39,12 +39,38 @@ public:
     void setIncludes(const std::vector<std::string>& items);
     
     // BlueZ 등록
-    bool registerWithBlueZ();
-    bool unregisterFromBlueZ();
     bool isRegisteredWithBlueZ() const { return registered; }
     
     // D-Bus 인터페이스 설정
-    bool setupDBusInterfaces();
+    /**
+     * @brief 인터페이스 설정 (D-Bus vtable 등록)
+     * @return 설정 성공 여부
+     */
+    bool setupInterfaces();
+    
+    /**
+     * @brief BlueZ에 광고 바인딩 (등록)
+     * @return 바인딩 성공 여부
+     */
+    bool bindToBlueZ();
+    
+    /**
+     * @brief BlueZ에서 광고 바인딩 해제
+     * @return 바인딩 해제 성공 여부
+     */
+    bool unbindFromBlueZ();
+    
+    /**
+     * @brief 인터페이스 설정 상태 확인
+     * @return 설정 완료 여부
+     */
+    bool isInterfaceSetup() const { return interfaceSetup; }
+    
+    /**
+     * @brief BlueZ 바인딩 상태 확인
+     * @return 바인딩 완료 여부
+     */
+    bool isBoundToBlueZ() const { return boundToBlueZ; }
     
     // Release 메서드 처리
     void handleRelease();
@@ -86,6 +112,8 @@ private:
     bool discoverable;
     std::vector<std::string> includes;
     bool registered;
+    bool interfaceSetup{false}; // 인터페이스 설정 완료 여부
+    bool boundToBlueZ{false};   // BlueZ 바인딩 완료 여부
     
     // 대체 광고 방법
     bool tryAlternativeAdvertisingMethods();

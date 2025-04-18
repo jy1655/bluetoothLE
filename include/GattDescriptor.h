@@ -30,11 +30,11 @@ public:
     
     virtual ~GattDescriptor() = default;
     
-    // IGattNode 구현
+    // IGattNode 인터페이스 구현
     const GattUuid& getUuid() const override { return uuid; }
     const std::string& getPath() const override { return object.getPath(); }
-    bool setupDBusInterfaces() override;
-    bool isRegistered() const override { return object.isRegistered(); }
+    bool setupInterfaces() override;
+    bool isInterfaceSetup() const override { return interfaceSetup; }
     
     // 값 관련 메서드
     const std::vector<uint8_t>& getValue() const {
@@ -70,6 +70,7 @@ private:
     uint8_t permissions;
     std::vector<uint8_t> value;
     mutable std::mutex valueMutex;
+    bool interfaceSetup{false}; // 인터페이스 설정 완료 여부
     
     // 콜백
     GattReadCallback readCallback;

@@ -15,20 +15,24 @@ GattApplication::GattApplication(SDBusConnection& connection, const std::string&
 
 GattApplication::~GattApplication() {
     if (registered) {
-        unregisterFromBlueZ();
+        unbindFromBlueZ();
     }
 }
 
-bool GattApplication::setupDBusInterfaces() {
+// src/GattApplication.cpp (메서드 구현)
+bool GattApplication::setupInterfaces() {
+    if (interfaceSetup) return true;
+    
     try {
-        // 직접 D-Bus 객체에 접근
+        Logger::info("애플리케이션 인터페이스 설정 시작: " + object.getPath());
+        
+        // 애플리케이션 객체의 D-Bus 인터페이스 설정
         auto& sdbusObj = object.getSdbusObject();
-        Logger::debug("SDBusObject 참조 획득 성공");
         
         // ObjectManager 인터페이스 메서드 등록
         sdbus::InterfaceName interfaceName{"org.freedesktop.DBus.ObjectManager"};
         
-        // v2 API 방식으로 변경하고 반환 타입을 명시적으로 지정
+        // GetManagedObjects 메서드 설정
         sdbusObj.addVTable(
             sdbus::registerMethod("GetManagedObjects")
                 .withOutputParamNames("objects")
@@ -38,20 +42,149 @@ bool GattApplication::setupDBusInterfaces() {
                 })
         ).forInterface(interfaceName);
         
-        // 객체 등록 명시적으로 수행
-        if (!object.registerObject()) {
-            Logger::error("Failed to register application object");
-            return false;
+        // 모든 서비스 인터페이스 설정
+        std::lock_guard<std::mutex> lock(servicesMutex);
+        for (auto& service : services) {
+            if (service && !service->isInterfaceSetup()) {
+                if (!service->setupInterfaces()) {
+                    Logger::error("서비스 인터페이스 설정 실패: " + service->getUuid().toString());
+                    return false;
+                }
+            }
         }
         
-        Logger::info("Application D-Bus interfaces setup complete");
+        // 설정 완료 표시
+        interfaceSetup = true;
+        Logger::info("애플리케이션 인터페이스 설정 완료: " + object.getPath());
         return true;
     }
     catch (const std::exception& e) {
-        Logger::error("Failed to setup application interfaces: " + std::string(e.what()));
+        Logger::error("애플리케이션 인터페이스 설정 실패: " + std::string(e.what()));
         return false;
     }
 }
+
+bool GattApplication::bindToBlueZ() {
+    if (boundToBlueZ) return true;
+    
+    try {
+        Logger::info("BlueZ에 GATT 애플리케이션 바인딩 중");
+        
+        // 인터페이스가 설정되지 않은 경우 먼저 설정
+        if (!interfaceSetup) {
+            if (!setupInterfaces()) {
+                Logger::error("인터페이스 설정 실패로 BlueZ 바인딩 불가");
+                return false;
+            }
+        }
+
+        // BlueZ GattManager 프록시 생성
+        auto proxy = connection.createProxy(
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
+        );
+        
+        if (!proxy) {
+            Logger::error("BlueZ GattManager 프록시 생성 실패");
+            return false;
+        }
+        
+        // 빈 옵션 딕셔너리 생성
+        std::map<std::string, sdbus::Variant> options;
+        
+        // RegisterApplication 메서드 호출
+        try {
+            proxy->callMethod("RegisterApplication")
+                .onInterface(sdbus::InterfaceName{BlueZConstants::GATT_MANAGER_INTERFACE})
+                .withArguments(sdbus::ObjectPath{object.getPath()}, options);
+            
+            boundToBlueZ = true;
+            Logger::info("BlueZ에 GATT 애플리케이션 바인딩 성공");
+            return true;
+        } catch (const sdbus::Error& e) {
+            std::string errorName = e.getName();
+            
+            // "AlreadyExists" 오류는 성공으로 간주
+            if (errorName.find("AlreadyExists") != std::string::npos) {
+                Logger::info("애플리케이션이 이미 BlueZ에 바인딩됨 (AlreadyExists)");
+                boundToBlueZ = true;
+                return true;
+            }
+            
+            Logger::error("BlueZ 애플리케이션 바인딩 실패: " + errorName + " - " + e.getMessage());
+            
+            // 먼저 바인딩 해제 시도 후 재시도
+            try {
+                unbindFromBlueZ();
+                
+                // 잠시 대기
+                usleep(500000); // 500ms
+                
+                // 다시 바인딩 시도
+                proxy->callMethod("RegisterApplication")
+                    .onInterface(sdbus::InterfaceName{BlueZConstants::GATT_MANAGER_INTERFACE})
+                    .withArguments(sdbus::ObjectPath{object.getPath()}, options);
+                
+                boundToBlueZ = true;
+                Logger::info("재시도 후 BlueZ에 GATT 애플리케이션 바인딩 성공");
+                return true;
+            } catch (const sdbus::Error& retryEx) {
+                Logger::error("재시도 시 BlueZ 바인딩 실패: " + std::string(retryEx.what()));
+                return false;
+            }
+        }
+    } catch (const std::exception& e) {
+        Logger::error("bindToBlueZ 예외: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool GattApplication::unbindFromBlueZ() {
+    // 바인딩되지 않은 경우 할 일 없음
+    if (!boundToBlueZ) {
+        Logger::debug("애플리케이션이 BlueZ에 바인딩되지 않음, 해제할 것 없음");
+        return true;
+    }
+    
+    try {
+        // BlueZ GattManager 프록시 생성
+        auto proxy = connection.createProxy(
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
+        );
+        
+        if (!proxy) {
+            Logger::error("BlueZ GattManager 프록시 생성 실패");
+            boundToBlueZ = false; // 재시도 방지를 위해 상태 업데이트
+            return false;
+        }
+        
+        // UnregisterApplication 호출
+        try {
+            proxy->callMethod("UnregisterApplication")
+                .onInterface(sdbus::InterfaceName{BlueZConstants::GATT_MANAGER_INTERFACE})
+                .withArguments(sdbus::ObjectPath{object.getPath()});
+            
+            Logger::info("BlueZ에서 애플리케이션 바인딩 해제 성공");
+        } catch (const sdbus::Error& e) {
+            // DoesNotExist 오류는 괜찮음
+            std::string error = e.getName();
+            if (error.find("DoesNotExist") != std::string::npos) {
+                Logger::info("애플리케이션이 이미 BlueZ에서 바인딩 해제됨");
+            } else {
+                Logger::warn("BlueZ에서 바인딩 해제 실패: " + error);
+            }
+        }
+        
+        boundToBlueZ = false;
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("unbindFromBlueZ 예외: " + std::string(e.what()));
+        boundToBlueZ = false;  // 상태 업데이트
+        return false;
+    }
+}
+
 
 bool GattApplication::addService(GattServicePtr service) {
     if (!service) {
@@ -126,159 +259,6 @@ GattServicePtr GattApplication::getService(const GattUuid& uuid) const {
 std::vector<GattServicePtr> GattApplication::getServices() const {
     std::lock_guard<std::mutex> lock(servicesMutex);
     return services;
-}
-
-bool GattApplication::finishAllRegistrations() {
-    Logger::info("모든 GATT 객체 등록 완료 중");
-    
-    // 1. 애플리케이션 등록
-    if (!object.isRegistered() && !setupDBusInterfaces()) {
-        Logger::error("애플리케이션 객체 등록 실패");
-        return false;
-    }
-    
-    // 2. 모든 서비스, 특성, 설명자 등록
-    bool success = true;
-    
-    // 2.1 서비스 등록
-    {
-        std::lock_guard<std::mutex> lock(servicesMutex);
-        for (auto& service : services) {
-            if (!service->isRegistered()) {
-                if (!service->setupDBusInterfaces()) {
-                    Logger::error("서비스 등록 실패: " + service->getUuid().toString());
-                    success = false;
-                }
-            }
-            
-            // 2.2 특성 등록과 2.3 설명자 등록은 각 서비스/특성 클래스 내부에서 처리됨
-        }
-    }
-    
-    return success;
-}
-
-bool GattApplication::registerWithBlueZ() {
-    try {
-        Logger::info("BlueZ에 GATT 애플리케이션 등록 중");
-        
-        // 1. 모든 D-Bus 객체가 등록되었는지 확인
-        if (!finishAllRegistrations()) {
-            Logger::error("D-Bus 객체 등록 실패");
-            return false;
-        }
-
-        // 2. 이미 등록된 경우 성공 반환
-        if (registered) {
-            Logger::info("애플리케이션이 이미 BlueZ에 등록됨");
-            return true;
-        }
-        
-        // 3. BlueZ GattManager 프록시 생성
-        auto proxy = connection.createProxy(
-            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
-            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
-        );
-        
-        if (!proxy) {
-            Logger::error("BlueZ GattManager 프록시 생성 실패");
-            return false;
-        }
-        
-        // 4. 빈 옵션 딕셔너리 생성
-        std::map<std::string, sdbus::Variant> options;
-        
-        // 5. RegisterApplication 메서드 호출
-        try {
-            proxy->callMethod("RegisterApplication")
-                .onInterface(sdbus::InterfaceName{BlueZConstants::GATT_MANAGER_INTERFACE})
-                .withArguments(sdbus::ObjectPath{object.getPath()}, options);
-            
-            registered = true;
-            Logger::info("BlueZ에 GATT 애플리케이션 등록 성공");
-            return true;
-        } catch (const sdbus::Error& e) {
-            std::string errorName = e.getName();
-            
-            // "AlreadyExists" 오류는 성공으로 간주
-            if (errorName.find("AlreadyExists") != std::string::npos) {
-                Logger::info("애플리케이션이 이미 BlueZ에 등록됨 (AlreadyExists)");
-                registered = true;
-                return true;
-            }
-            
-            Logger::error("BlueZ 애플리케이션 등록 실패: " + errorName + " - " + e.getMessage());
-            
-            // 먼저 등록 해제 시도
-            try {
-                unregisterFromBlueZ();
-                
-                // 잠시 대기
-                usleep(500000); // 500ms
-                
-                // 다시 등록 시도
-                proxy->callMethod("RegisterApplication")
-                    .onInterface(sdbus::InterfaceName{BlueZConstants::GATT_MANAGER_INTERFACE})
-                    .withArguments(sdbus::ObjectPath{object.getPath()}, options);
-                
-                registered = true;
-                Logger::info("재시도 후 BlueZ에 GATT 애플리케이션 등록 성공");
-                return true;
-            } catch (const sdbus::Error& retryEx) {
-                Logger::error("재시도 시 BlueZ 등록 실패: " + std::string(retryEx.what()));
-                return false;
-            }
-        }
-    } catch (const std::exception& e) {
-        Logger::error("registerWithBlueZ 예외: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool GattApplication::unregisterFromBlueZ() {
-    // 등록되지 않은 경우 할 일 없음
-    if (!registered) {
-        Logger::debug("애플리케이션이 BlueZ에 등록되지 않음, 해제할 것 없음");
-        return true;
-    }
-    
-    try {
-        // BlueZ GattManager 프록시 생성
-        auto proxy = connection.createProxy(
-            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
-            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
-        );
-        
-        if (!proxy) {
-            Logger::error("BlueZ GattManager 프록시 생성 실패");
-            registered = false; // 재시도 방지를 위해 상태 업데이트
-            return false;
-        }
-        
-        // UnregisterApplication 호출
-        try {
-            proxy->callMethod("UnregisterApplication")
-                .onInterface(sdbus::InterfaceName{BlueZConstants::GATT_MANAGER_INTERFACE})
-                .withArguments(sdbus::ObjectPath{object.getPath()});
-            
-            Logger::info("BlueZ에서 애플리케이션 등록 해제 성공");
-        } catch (const sdbus::Error& e) {
-            // DoesNotExist 오류는 괜찮음
-            std::string error = e.getName();
-            if (error.find("DoesNotExist") != std::string::npos) {
-                Logger::info("애플리케이션이 이미 BlueZ에서 등록 해제됨");
-            } else {
-                Logger::warn("BlueZ에서 등록 해제 실패: " + error);
-            }
-        }
-        
-        registered = false;
-        return true;
-    } catch (const std::exception& e) {
-        Logger::error("unregisterFromBlueZ 예외: " + std::string(e.what()));
-        registered = false;  // 상태 업데이트
-        return false;
-    }
 }
 
 ManagedObjectsDict GattApplication::createManagedObjectsDict() {

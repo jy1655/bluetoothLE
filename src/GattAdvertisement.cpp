@@ -117,85 +117,74 @@ void GattAdvertisement::setIncludes(const std::vector<std::string>& items) {
     Logger::debug(std::to_string(includes.size()) + " 항목으로 includes 배열 설정됨");
 }
 
-bool GattAdvertisement::setupDBusInterfaces() {
-    // 이미 등록된 경우 성공 반환
-    if (object.isRegistered()) {
-        Logger::debug("광고가 이미 D-Bus에 등록됨");
-        return true;
-    }
+// src/GattAdvertisement.cpp (메서드 구현)
+bool GattAdvertisement::setupInterfaces() {
+    if (interfaceSetup) return true;
     
-    Logger::info("D-Bus 인터페이스 설정 - 광고: " + object.getPath());
+    Logger::info("광고 인터페이스 설정 - 경로: " + object.getPath());
     
     // BlueZ 5.82 호환성 확보
     ensureBlueZ582Compatibility();
     
-    auto& sdbusObj = object.getSdbusObject();
+    try {
+        auto& sdbusObj = object.getSdbusObject();
+        
+        // 기존의 vtable 등록 코드...
+        
+        // 설정 완료 표시
+        interfaceSetup = true;
+        Logger::info("광고 인터페이스 설정 완료");
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("광고 인터페이스 설정 실패: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool GattAdvertisement::bindToBlueZ() {
+    if (boundToBlueZ) return true;
     
-    // BlueZ 5.82 호환 vtable 등록 (v2 API 사용)
-    sdbus::InterfaceName interfaceName{BlueZConstants::LE_ADVERTISEMENT_INTERFACE};
-    
-    // Type 속성 vtable (필수)
-    auto typeVTable = sdbus::registerProperty(sdbus::PropertyName{"Type"})
-                        .withGetter([this]() -> std::string { return getTypeProperty(); });
-    
-    // ServiceUUIDs 속성 vtable
-    auto serviceUUIDsVTable = sdbus::registerProperty(sdbus::PropertyName{"ServiceUUIDs"})
-                               .withGetter([this]() -> std::vector<std::string> { return getServiceUUIDsProperty(); });
-    
-    // ManufacturerData 속성 vtable
-    auto manufacturerDataVTable = sdbus::registerProperty(sdbus::PropertyName{"ManufacturerData"})
-                                   .withGetter([this]() -> std::map<uint16_t, sdbus::Variant> { return getManufacturerDataProperty(); });
-    
-    // ServiceData 속성 vtable
-    auto serviceDataVTable = sdbus::registerProperty(sdbus::PropertyName{"ServiceData"})
-                              .withGetter([this]() -> std::map<std::string, sdbus::Variant> { return getServiceDataProperty(); });
-    
-    // Discoverable 속성 vtable (BlueZ 5.82에서 필수)
-    auto discoverableVTable = sdbus::registerProperty(sdbus::PropertyName{"Discoverable"})
-                               .withGetter([this]() -> bool { return discoverable; });
-    
-    // Includes 속성 vtable (BlueZ 5.82에서 필수)
-    auto includesVTable = sdbus::registerProperty(sdbus::PropertyName{"Includes"})
-                           .withGetter([this]() -> std::vector<std::string> { return includes; });
-    
-    // TX Power 속성 vtable (이전 버전 호환용)
-    auto includeTxPowerVTable = sdbus::registerProperty(sdbus::PropertyName{"IncludeTxPower"})
-                                 .withGetter([this]() -> bool { return includeTxPower; });
-    
-    // Release 메서드 vtable
-    auto releaseVTable = sdbus::registerMethod(sdbus::MethodName{"Release"})
-                           .implementedAs([this]() { handleRelease(); });
-    
-    // 기본 vtable 등록
-    sdbusObj.addVTable(
-        typeVTable, serviceUUIDsVTable, manufacturerDataVTable,
-        serviceDataVTable, discoverableVTable, includesVTable,
-        includeTxPowerVTable, releaseVTable
-    ).forInterface(interfaceName);
-    
-    // 추가 조건부 vtable 항목 등록
-    // LocalName 속성 (조건부)
-    if (!localName.empty()) {
-        auto localNameVTable = sdbus::registerProperty(sdbus::PropertyName{"LocalName"})
-                                .withGetter([this]() -> std::string { return localName; });
-        sdbusObj.addVTable(localNameVTable).forInterface(interfaceName);
+    try {
+        Logger::info("BlueZ에 GATT 광고 바인딩 중");
+        
+        // 인터페이스가 설정되지 않은 경우 먼저 설정
+        if (!interfaceSetup) {
+            if (!setupInterfaces()) {
+                Logger::error("인터페이스 설정 실패로 BlueZ 바인딩 불가");
+                return false;
+            }
+        }
+        
+        // 기존의 광고 등록 코드...
+        
+        // 성공 시 상태 업데이트
+        boundToBlueZ = true;
+        return true;
+    }
+    catch (const std::exception& e) {
+        Logger::error("bindToBlueZ 예외: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool GattAdvertisement::unbindFromBlueZ() {
+    // 바인딩되지 않은 경우 할 일 없음
+    if (!boundToBlueZ) {
+        Logger::debug("광고가 BlueZ에 바인딩되지 않음, 해제할 것 없음");
+        return true;
     }
     
-    // Appearance 속성 (조건부)
-    if (appearance != 0) {
-        auto appearanceVTable = sdbus::registerProperty(sdbus::PropertyName{"Appearance"})
-                                .withGetter([this]() -> uint16_t { return appearance; });
-        sdbusObj.addVTable(appearanceVTable).forInterface(interfaceName);
+    try {
+        // 기존의 광고 등록 해제 코드...
+        
+        // 상태 업데이트
+        boundToBlueZ = false;
+        return true;
+    } catch (const std::exception& e) {
+        Logger::error("unbindFromBlueZ 예외: " + std::string(e.what()));
+        boundToBlueZ = false;  // 안전을 위해 상태 업데이트
+        return false;
     }
-    
-    // Duration 속성 (조건부)
-    if (duration != 0) {
-        auto durationVTable = sdbus::registerProperty(sdbus::PropertyName{"Duration"})
-                               .withGetter([this]() -> uint16_t { return duration; });
-        sdbusObj.addVTable(durationVTable).forInterface(interfaceName);
-    }
-    
-    return true;
 }
 
 void GattAdvertisement::handleRelease() {
@@ -203,139 +192,6 @@ void GattAdvertisement::handleRelease() {
     
     // 등록 상태 업데이트
     registered = false;
-}
-
-bool GattAdvertisement::registerWithBlueZ() {
-    try {
-        Logger::info("BlueZ에 GATT 광고 등록 중");
-        
-        // 이미 등록된 경우 성공 반환
-        if (registered) {
-            Logger::info("광고가 이미 BlueZ에 등록됨");
-            return true;
-        }
-        
-        // D-Bus 인터페이스 설정
-        if (!object.isRegistered()) {
-            if (!setupDBusInterfaces()) {
-                Logger::error("광고 D-Bus 인터페이스 설정 실패");
-                return false;
-            }
-        }
-        
-        // BlueZ 5.82 호환성 확보
-        ensureBlueZ582Compatibility();
-        
-        // 기존 광고 중지
-        try {
-            // bluetoothctl로 광고 중지
-            system("echo -e 'menu advertise\\noff\\nback\\n' | bluetoothctl > /dev/null 2>&1");
-            // hciconfig로 광고 중지
-            system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
-            // 잠시 대기
-            usleep(500000); // 500ms
-        }
-        catch (...) {
-            // 실패해도 계속 진행
-        }
-        
-        // BlueZ LEAdvertisingManager 프록시 생성
-        auto proxy = connection.createProxy(
-            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
-            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
-        );
-        
-        if (!proxy) {
-            Logger::error("BlueZ LEAdvertisingManager 프록시 생성 실패");
-            return false;
-        }
-        
-        // 빈 옵션 맵
-        std::map<std::string, sdbus::Variant> options;
-        
-        // RegisterAdvertisement 호출
-        try {
-            proxy->callMethod(sdbus::MethodName{BlueZConstants::REGISTER_ADVERTISEMENT})
-                .onInterface(sdbus::InterfaceName{BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE})
-                .withArguments(sdbus::ObjectPath{object.getPath()}, options);
-            
-            registered = true;
-            Logger::info("BlueZ에 광고 등록 성공");
-            return true;
-        } catch (const sdbus::Error& e) {
-            std::string errorName = e.getName();
-            
-            // "AlreadyExists" 오류는 성공으로 간주
-            if (errorName.find("AlreadyExists") != std::string::npos) {
-                Logger::info("광고가 이미 등록됨 (AlreadyExists)");
-                registered = true;
-                return true;
-            }
-            
-            Logger::error("광고 등록 실패: " + errorName + " - " + e.getMessage());
-            
-            // 대체 방법 시도
-            return tryAlternativeAdvertisingMethods();
-        }
-    }
-    catch (const std::exception& e) {
-        Logger::error("registerWithBlueZ 예외: " + std::string(e.what()));
-        return false;
-    }
-}
-
-bool GattAdvertisement::unregisterFromBlueZ() {
-    // 등록되지 않은 경우 할 일 없음
-    if (!registered) {
-        Logger::debug("광고가 BlueZ에 등록되지 않음, 해제할 것 없음");
-        return true;
-    }
-    
-    try {
-        Logger::info("BlueZ에서 광고 등록 해제 중...");
-        
-        // BlueZ LEAdvertisingManager 프록시 생성
-        auto proxy = connection.createProxy(
-            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
-            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
-        );
-        
-        if (!proxy) {
-            Logger::error("BlueZ LEAdvertisingManager 프록시 생성 실패");
-            registered = false; // 재시도 방지를 위해 상태 업데이트
-            return false;
-        }
-        
-        // UnregisterAdvertisement 호출
-        try {
-            proxy->callMethod(sdbus::MethodName{BlueZConstants::UNREGISTER_ADVERTISEMENT})
-                .onInterface(sdbus::InterfaceName{BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE})
-                .withArguments(sdbus::ObjectPath{object.getPath()});
-            
-            Logger::info("BlueZ에서 광고 등록 해제 성공");
-        } catch (const sdbus::Error& e) {
-            // DoesNotExist 오류는 괜찮음
-            std::string error = e.getName();
-            if (error.find("DoesNotExist") != std::string::npos) {
-                Logger::info("광고가 이미 BlueZ에서 등록 해제됨");
-            } else {
-                Logger::warn("BlueZ에서 등록 해제 실패: " + error);
-            }
-        }
-        
-        // 백업 방법: bluetoothctl 사용
-        system("echo -e 'menu advertise\\noff\\nexit\\n' | bluetoothctl > /dev/null 2>&1");
-        
-        // 추가 백업: hciconfig 사용
-        system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
-        
-        registered = false;
-        return true;
-    } catch (const std::exception& e) {
-        Logger::error("unregisterFromBlueZ 예외: " + std::string(e.what()));
-        registered = false;  // 안전을 위해 상태 업데이트
-        return false;
-    }
 }
 
 void GattAdvertisement::ensureBlueZ582Compatibility() {

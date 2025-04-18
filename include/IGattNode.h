@@ -1,6 +1,4 @@
-// 명확한 계층 구조를 갖춘 GATT 클래스 설계
-
-// 1. IGattNode.h - 모든 GATT 노드의 공통 인터페이스
+// include/IGattNode.h
 #pragma once
 
 #include <string>
@@ -28,21 +26,16 @@ public:
     virtual const std::string& getPath() const = 0;
     
     /**
-     * @brief D-Bus 인터페이스 설정 및 등록
+     * @brief 인터페이스 설정 (D-Bus vtable 등록)
      * @return 설정 성공 여부
      */
-    virtual bool setupDBusInterfaces() = 0;
+    virtual bool setupInterfaces() = 0;
     
     /**
-     * @brief 노드가 D-Bus에 등록되었는지 확인
-     * @return 등록 여부
+     * @brief 인터페이스 설정 상태 확인
+     * @return 설정 완료 여부
      */
-    virtual bool isRegistered() const = 0;
+    virtual bool isInterfaceSetup() const = 0;
 };
 
 } // namespace ggk
-
-
-
-
-

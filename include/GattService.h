@@ -24,11 +24,11 @@ public:
     
     virtual ~GattService() = default;
     
-    // IGattNode 구현
+    // IGattNode 인터페이스 구현
     const GattUuid& getUuid() const override { return uuid; }
     const std::string& getPath() const override { return object.getPath(); }
-    bool setupDBusInterfaces() override;
-    bool isRegistered() const override { return object.isRegistered(); }
+    bool setupInterfaces() override;
+    bool isInterfaceSetup() const override { return interfaceSetup; }
     
     // 특성 관리
     GattCharacteristicPtr createCharacteristic(
@@ -60,6 +60,7 @@ private:
     SDBusObject object;
     GattUuid uuid;
     bool primary;
+    bool interfaceSetup{false}; // 인터페이스 설정 완료 여부
     
     // 특성 관리
     std::map<std::string, GattCharacteristicPtr> characteristics;
