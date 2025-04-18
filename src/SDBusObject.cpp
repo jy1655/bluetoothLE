@@ -138,63 +138,11 @@ bool SDBusObject::registerObjectManager(std::function<ManagedObjectsDict()> hand
     }
 
     try {
-        // Create and register method for ObjectManager
-        sdbus::InterfaceName interfaceName{"org.freedesktop.DBus.ObjectManager"};
-        sdbus::MethodName methodName{"GetManagedObjects"};
-        sdbus::Signature inputSignature{""};
-        sdbus::Signature outputSignature{"a{oa{sa{sv}}}"};
-
-        // Create method handler that accepts a MethodCall parameter and adapts it to call our handler
-        auto getManagedObjectsHandler = [handler](sdbus::MethodCall call) {
-            try {
-                // Call the actual handler to get the objects
-                auto objects = handler();
-                
-                // Create and send reply
-                auto reply = call.createReply();
-                reply << objects;
-                reply.send();
-            }
-            catch (const std::exception& e) {
-                Logger::error("Exception in GetManagedObjects handler: " + std::string(e.what()));
-                
-                // Create a sdbus::Error using SDBusError
-                SDBusError error{"org.freedesktop.DBus.Error.Failed", e.what()};
-                auto errorReply = call.createErrorReply(error.toSdbusError());
-                errorReply.send();
-            }
-        };
-
-        // Create method vtable item
-        auto getManagedObjectsVTable = sdbus::MethodVTableItem{
-            methodName,
-            inputSignature,
-            {}, // No input param names
-            outputSignature,
-            {}, // No output param names
-            getManagedObjectsHandler,
-            {}
-        };
-
-        // Create signal vtable items
-        auto interfacesAddedVTable = sdbus::SignalVTableItem{
-            sdbus::SignalName{"InterfacesAdded"},
-            sdbus::Signature{"oa{sa{sv}}"},
-            {},
-            {}
-        };
-
-        auto interfacesRemovedVTable = sdbus::SignalVTableItem{
-            sdbus::SignalName{"InterfacesRemoved"},
-            sdbus::Signature{"oas"},
-            {},
-            {}
-        };
-
-        // Add vtable to object
-        object->addVTable(getManagedObjectsVTable, interfacesAddedVTable, interfacesRemovedVTable)
-              .forInterface(interfaceName);
-
+        // 내장 ObjectManager 사용
+        object->addObjectManager();
+        
+        // 핸들러는 더 이상 필요하지 않지만, 
+        // 이전 코드와의 호환성을 위해 성공 값 반환
         return true;
     } catch (const std::exception& e) {
         Logger::error("ObjectManager registration failed: " + std::string(e.what()));

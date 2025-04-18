@@ -48,6 +48,30 @@ public:
      * @return 등록 해제 성공 여부
      */
     bool unregisterObject();
+
+    /**
+     * @brief ObjectManager 인터페이스 추가
+     * 
+     * @return 추가 성공 여부
+     */
+    bool addObjectManager() {
+        std::lock_guard<std::mutex> lock(objectMutex);
+        
+        if (!object) {
+            Logger::error("Cannot add ObjectManager: Object not initialized");
+            return false;
+        }
+        
+        try {
+            // sdbus-c++ 2.1.0의 내장 ObjectManager 추가
+            object->addObjectManager();
+            Logger::info("ObjectManager added to object: " + objectPath);
+            return true;
+        } catch (const std::exception& e) {
+            Logger::error("Failed to add ObjectManager: " + std::string(e.what()));
+            return false;
+        }
+    }
     
     /**
      * @brief 등록 상태 확인

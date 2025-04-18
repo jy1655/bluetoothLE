@@ -29,18 +29,8 @@ bool GattApplication::setupInterfaces() {
         // 애플리케이션 객체의 D-Bus 인터페이스 설정
         auto& sdbusObj = object.getSdbusObject();
         
-        // ObjectManager 인터페이스 메서드 등록
-        sdbus::InterfaceName interfaceName{"org.freedesktop.DBus.ObjectManager"};
-        
-        // GetManagedObjects 메서드 설정
-        sdbusObj.addVTable(
-            sdbus::registerMethod("GetManagedObjects")
-                .withOutputParamNames("objects")
-                .implementedAs([this]() -> ManagedObjectsDict {
-                    Logger::debug("GetManagedObjects called");
-                    return this->createManagedObjectsDict();
-                })
-        ).forInterface(interfaceName);
+        // 수동으로 등록하는 대신 addObjectManager() 사용
+        sdbusObj.addObjectManager();
         
         // 모든 서비스 인터페이스 설정
         std::lock_guard<std::mutex> lock(servicesMutex);
