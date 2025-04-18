@@ -1,4 +1,3 @@
-// 4. GattService.h - 수정된 서비스 클래스
 #pragma once
 
 #include "IGattNode.h"
@@ -46,8 +45,14 @@ public:
     // 속성 접근자
     bool isPrimary() const { return primary; }
     
-    // 추가 메서드
-    bool finishRegistration() { return object.registerObject(); }
+    // D-Bus 객체 등록 관리
+    bool registerObject();
+    bool unregisterObject();
+    bool isRegistered() const { return objectRegistered; }
+    
+    // 신호 발생 도우미
+    void emitInterfacesAddedForCharacteristic(GattCharacteristicPtr characteristic);
+    void emitInterfacesRemovedForCharacteristic(GattCharacteristicPtr characteristic);
     
 private:
     // D-Bus 속성 게터
@@ -60,7 +65,8 @@ private:
     SDBusObject object;
     GattUuid uuid;
     bool primary;
-    bool interfaceSetup{false}; // 인터페이스 설정 완료 여부
+    bool interfaceSetup;
+    bool objectRegistered;
     
     // 특성 관리
     std::map<std::string, GattCharacteristicPtr> characteristics;
@@ -68,5 +74,4 @@ private:
 };
 
 using GattServicePtr = std::shared_ptr<GattService>;
-
-} // namespace ggk
+}

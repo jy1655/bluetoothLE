@@ -1,4 +1,3 @@
-// 3. GattCharacteristic.h - 수정된 특성 클래스
 #pragma once
 
 #include "IGattNode.h"
@@ -89,6 +88,15 @@ public:
     // 서비스 약한 참조 접근자
     GattService* getService() const { return parentService; }
     
+    // D-Bus 객체 등록 관리
+    bool registerObject();
+    bool unregisterObject();
+    bool isRegistered() const { return objectRegistered; }
+    
+    // 신호 발생 도우미
+    void emitInterfacesAddedForDescriptor(GattDescriptorPtr descriptor);
+    void emitInterfacesRemovedForDescriptor(GattDescriptorPtr descriptor);
+    
 private:
     // D-Bus 메서드 핸들러
     std::vector<uint8_t> handleReadValue(const std::map<std::string, sdbus::Variant>& options);
@@ -105,7 +113,8 @@ private:
     uint8_t permissions;
     std::vector<uint8_t> value;
     mutable std::mutex valueMutex;
-    bool interfaceSetup{false}; // 인터페이스 설정 완료 여부
+    bool interfaceSetup;
+    bool objectRegistered;
     
     bool notifying;
     mutable std::mutex notifyMutex;
@@ -122,5 +131,4 @@ private:
 };
 
 using GattCharacteristicPtr = std::shared_ptr<GattCharacteristic>;
-
 } // namespace ggk

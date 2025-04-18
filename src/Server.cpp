@@ -1,3 +1,4 @@
+// src/Server.cpp
 #include "Server.h"
 #include "Logger.h"
 #include "Utils.h"
@@ -121,7 +122,6 @@ bool Server::initialize(const std::string& name) {
     return true;
 }
 
-// src/Server.cpp (메서드 구현)
 bool Server::setupInterfaces() {
     if (interfaceSetup) return true;
     
@@ -169,7 +169,7 @@ bool Server::bindToBlueZ() {
     try {
         Logger::info("BlueZ에 BLE 서버 바인딩 중...");
         
-        // 1. 애플리케이션 바인딩
+        // 1. 애플리케이션 바인딩 (이제 개별 객체 등록 방식 사용)
         if (!application->bindToBlueZ()) {
             Logger::error("애플리케이션 BlueZ 바인딩 실패");
             return false;
@@ -214,7 +214,7 @@ bool Server::unbindFromBlueZ() {
             advertisement->unbindFromBlueZ();
         }
         
-        // 2. 애플리케이션 바인딩 해제
+        // 2. 애플리케이션 바인딩 해제 (각 서비스/특성/설명자 자동 처리)
         if (application) {
             application->unbindFromBlueZ();
         }
@@ -253,17 +253,6 @@ bool Server::start(bool secureMode) {
         Logger::error("Failed to setup interfaces");
         return false;
     }
-
-    auto connection = DBusName::getInstance().getConnection();
-    if (!connection->isConnected()) {
-        Logger::info("Reconnecting to D-Bus and starting event loop");
-        if (!connection->connect()) {
-            Logger::error("Failed to connect to D-Bus");
-            return false;
-        }
-    } else {
-        Logger::info("D-Bus connection already active with event loop");
-    }
     
     // 2. BlueZ 바인딩
     if (!bindToBlueZ()) {
@@ -277,7 +266,6 @@ bool Server::start(bool secureMode) {
     return true;
 }
 
-// stop 메서드 수정
 void Server::stop() {
     if (!running) {
         return;
@@ -326,12 +314,6 @@ bool Server::addService(GattServicePtr service) {
         return false;
     }
     
-    // 실행 중에는 서비스를 추가할 수 없음
-    if (running) {
-        Logger::error("Cannot add service while server is running. Stop the server first.");
-        return false;
-    }
-    
     // 애플리케이션에 추가
     if (!application->addService(service)) {
         Logger::error("Failed to add service to application: " + service->getUuid().toString());
@@ -342,6 +324,13 @@ bool Server::addService(GattServicePtr service) {
     advertisement->addServiceUUID(service->getUuid());
     
     Logger::info("Added service: " + service->getUuid().toString());
+    
+    // 서버가 이미 실행 중이면 새 서비스를 즉시 등록
+    if (running && boundToBlueZ) {
+        // 서비스 인터페이스 설정 및 등록은 addService 내에서 처리됨
+        // application->addService() 메서드가 이 처리를 담당
+    }
+    
     return true;
 }
 
@@ -442,6 +431,13 @@ void Server::configureAdvertisement(
     
     // 타임아웃 저장
     advTimeout = timeout;
+    
+    // 서버가 이미 실행 중이고 광고가 바인딩되어 있다면 변경 사항 적용
+    if (running && boundToBlueZ && advertisement->isBoundToBlueZ()) {
+        // 광고 재등록
+        advertisement->unbindFromBlueZ();
+        advertisement->bindToBlueZ();
+    }
     
     Logger::info("Advertisement configured: LocalName=" + advertisement->getLocalName() + 
                 ", TxPower=" + (includeTxPower ? "Yes" : "No") + 

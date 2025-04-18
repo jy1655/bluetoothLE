@@ -1,4 +1,3 @@
-// 2. GattDescriptor.h - 수정된 설명자 클래스
 #pragma once
 
 #include "IGattNode.h"
@@ -61,6 +60,11 @@ public:
     // 권한 접근자
     uint8_t getPermissions() const { return permissions; }
     
+    // D-Bus 객체 등록 관리
+    bool registerObject();
+    bool unregisterObject();
+    bool isRegistered() const { return objectRegistered; }
+    
 private:
     // 내부 상태
     SDBusConnection& connection;
@@ -70,7 +74,8 @@ private:
     uint8_t permissions;
     std::vector<uint8_t> value;
     mutable std::mutex valueMutex;
-    bool interfaceSetup{false}; // 인터페이스 설정 완료 여부
+    bool interfaceSetup;
+    bool objectRegistered;
     
     // 콜백
     GattReadCallback readCallback;

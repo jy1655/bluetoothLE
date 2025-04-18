@@ -1,3 +1,4 @@
+/*
 // 리팩토링된 BlueZ 5.82 호환 BLE Peripheral 테스트
 #include "Server.h"
 #include "GattTypes.h"
@@ -222,5 +223,66 @@ int main(int argc, char** argv) {
     server.stop();
     
     std::cout << "BLE 서버 중지 완료" << std::endl;
+    return 0;
+}
+    */
+
+
+
+
+#include <iostream>
+#include "Server.h"
+#include "GattTypes.h"
+
+using namespace ggk;
+
+int main() {
+    // 서버 초기화
+    Server server;
+    if (!server.initialize("Test-BLE-Device")) {
+        std::cerr << "서버 초기화 실패" << std::endl;
+        return 1;
+    }
+    
+    // 간단한 서비스 생성 (CCCD 없음)
+    GattUuid serviceUuid("0193d852-eba5-7d28-9abe-e30a67d39d72"); // Battery Service UUID
+    auto service = server.createService(serviceUuid);
+    
+    // 읽기 전용 특성 생성 (알림/표시 기능 없음 = CCCD 없음)
+    GattUuid charUuid("944ecf35-cdc3-4b74-b477-5bcfe548c98e"); // Battery Level UUID
+    auto characteristic = service->createCharacteristic(
+        charUuid,
+        GattProperty::PROP_READ, // 읽기만 가능, 알림 없음
+        GattPermission::PERM_READ
+    );
+    
+    // 초기값 설정
+    std::vector<uint8_t> batteryLevel = {50}; // 50% 배터리
+    characteristic->setValue(batteryLevel);
+    
+    // 읽기 콜백 설정
+    characteristic->setReadCallback([]() -> std::vector<uint8_t> {
+        std::cout << "배터리 레벨 읽기 요청" << std::endl;
+        return {50}; // 항상 50% 반환
+    });
+    
+    // 서비스 추가
+    if (!server.addService(service)) {
+        std::cerr << "서비스 추가 실패" << std::endl;
+        return 1;
+    }
+    
+    // 서버 시작
+    if (!server.start()) {
+        std::cerr << "서버 시작 실패" << std::endl;
+        return 1;
+    }
+    
+    std::cout << "BLE 서버 시작됨. 배터리 서비스 및 레벨 특성 노출 중..." << std::endl;
+    std::cout << "종료하려면 Ctrl+C를 누르세요." << std::endl;
+    
+    // 메인 루프 실행
+    server.run();
+    
     return 0;
 }

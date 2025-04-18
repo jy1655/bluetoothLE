@@ -1,3 +1,4 @@
+// src/GattCharacteristic.cpp
 #include "GattCharacteristic.h"
 #include "GattService.h" // 여기서만 포함 (헤더에서는 전방 선언만)
 #include "Logger.h"
@@ -17,7 +18,9 @@ GattCharacteristic::GattCharacteristic(
       parentService(service),
       properties(properties),
       permissions(permissions),
-      notifying(false) {
+      notifying(false),
+      interfaceSetup(false),
+      objectRegistered(false) {
 }
 
 void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
@@ -29,7 +32,7 @@ void GattCharacteristic::setValue(const std::vector<uint8_t>& newValue) {
         }
         
         // 등록된 경우 PropertyChanged 시그널 발생
-        if (object.isRegistered()) {
+        if (objectRegistered) {
             // Value 속성 변경 알림
             object.emitPropertyChanged(
                 sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
@@ -69,7 +72,7 @@ void GattCharacteristic::setValue(std::vector<uint8_t>&& newValue) {
         }
         
         // 등록된 경우 PropertyChanged 시그널 발생
-        if (object.isRegistered()) {
+        if (objectRegistered) {
             // Value 속성 변경 알림
             object.emitPropertyChanged(
                 sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
@@ -158,6 +161,22 @@ GattDescriptorPtr GattCharacteristic::createDescriptor(
         // 맵에 추가
         descriptors[uuidStr] = descriptor;
         
+        // 특성이 이미 등록된 상태면 설명자도 인터페이스 설정 및 등록
+        if (objectRegistered) {
+            if (!descriptor->setupInterfaces()) {
+                Logger::error("설명자 인터페이스 설정 실패: " + uuidStr);
+                return nullptr;
+            }
+            
+            if (!descriptor->registerObject()) {
+                Logger::error("설명자 객체 등록 실패: " + uuidStr);
+                return nullptr;
+            }
+            
+            // InterfacesAdded 시그널 발생
+            emitInterfacesAddedForDescriptor(descriptor);
+        }
+        
         Logger::info("설명자 생성됨: " + uuidStr + ", 경로: " + descriptorPath);
         return descriptor;
     } catch (const std::exception& e) {
@@ -196,7 +215,7 @@ bool GattCharacteristic::startNotify() {
     notifying = true;
     
     // Notifying 속성에 대한 PropertyChanged 시그널 발생
-    if (object.isRegistered()) {
+    if (objectRegistered) {
         object.emitPropertyChanged(
             sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
             sdbus::PropertyName{BlueZConstants::PROPERTY_NOTIFYING}
@@ -230,7 +249,7 @@ bool GattCharacteristic::stopNotify() {
     notifying = false;
     
     // Notifying 속성에 대한 PropertyChanged 시그널 발생
-    if (object.isRegistered()) {
+    if (objectRegistered) {
         object.emitPropertyChanged(
             sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
             sdbus::PropertyName{BlueZConstants::PROPERTY_NOTIFYING}
@@ -346,28 +365,13 @@ bool GattCharacteristic::setupInterfaces() {
         auto stopNotifyVTable = sdbus::registerMethod(sdbus::MethodName{BlueZConstants::STOP_NOTIFY})
                                   .implementedAs([this]() { handleStopNotify(); });
         
-        // vtable 등록 - 이 호출에서 D-Bus 객체가 자동으로 등록됨
+        // vtable 등록
         sdbusObj.addVTable(
             uuidVTable, serviceVTable, valueVTable, flagsVTable, 
             notifyingVTable, descriptorsVTable,
             readValueVTable, writeValueVTable, 
             startNotifyVTable, stopNotifyVTable
         ).forInterface(interfaceName);
-        
-        // 모든 설명자에 대해 인터페이스 설정 (계층적 등록)
-        std::lock_guard<std::mutex> lock(descriptorsMutex);
-        for (const auto& [uuid, descriptor] : descriptors) {
-            if (descriptor && !descriptor->isInterfaceSetup()) {
-                Logger::debug("설명자 인터페이스 설정 시작: " + uuid);
-                if (!descriptor->setupInterfaces()) {
-                    Logger::error("설명자 인터페이스 설정 실패: " + uuid);
-                    return false;
-                }
-            }
-        }
-        
-        // BlueZ 5.82에서는 CCCD 설명자가 알림/표시 지원 특성에 대해 자동으로 생성됨
-        // 따라서 명시적으로 생성할 필요가 없음
         
         // 설정 완료 표시
         interfaceSetup = true;
@@ -377,6 +381,149 @@ bool GattCharacteristic::setupInterfaces() {
         Logger::error("특성 인터페이스 설정 실패: " + std::string(e.what()));
         return false;
     }
+}
+
+bool GattCharacteristic::registerObject() {
+    if (objectRegistered) {
+        return true;
+    }
+    
+    // 인터페이스가 설정되지 않은 경우 먼저 설정
+    if (!interfaceSetup) {
+        if (!setupInterfaces()) {
+            return false;
+        }
+    }
+    
+    // D-Bus에 등록
+    if (!object.registerObject()) {
+        Logger::error("특성 객체 등록 실패: " + uuid.toString());
+        return false;
+    }
+    
+    objectRegistered = true;
+    
+    // 모든 설명자에 대해 인터페이스 설정 및 등록
+    std::lock_guard<std::mutex> lock(descriptorsMutex);
+    for (const auto& [uuid, descriptor] : descriptors) {
+        if (!descriptor) continue;
+        
+        // 인터페이스 설정
+        if (!descriptor->setupInterfaces()) {
+            Logger::error("설명자 인터페이스 설정 실패: " + uuid);
+            continue;
+        }
+        
+        // 객체 등록
+        if (!descriptor->registerObject()) {
+            Logger::error("설명자 객체 등록 실패: " + uuid);
+            continue;
+        }
+        
+        // InterfacesAdded 시그널 발생
+        emitInterfacesAddedForDescriptor(descriptor);
+    }
+    
+    Logger::info("특성 객체 등록 완료: " + uuid.toString());
+    return true;
+}
+
+bool GattCharacteristic::unregisterObject() {
+    if (!objectRegistered) {
+        return true;
+    }
+    
+    // 모든 설명자 먼저 등록 해제
+    std::lock_guard<std::mutex> lock(descriptorsMutex);
+    for (const auto& [uuid, descriptor] : descriptors) {
+        if (!descriptor) continue;
+        
+        // 설명자 등록 해제 전 InterfacesRemoved 시그널 발생
+        emitInterfacesRemovedForDescriptor(descriptor);
+        
+        // 객체 등록 해제
+        descriptor->unregisterObject();
+    }
+    
+    // 특성 객체 등록 해제
+    if (!object.unregisterObject()) {
+        Logger::error("특성 객체 등록 해제 실패: " + uuid.toString());
+        return false;
+    }
+    
+    objectRegistered = false;
+    Logger::info("특성 객체 등록 해제 완료: " + uuid.toString());
+    return true;
+}
+
+void GattCharacteristic::emitInterfacesAddedForDescriptor(GattDescriptorPtr descriptor) {
+    if (!descriptor) return;
+    
+    // 상위 경로 (애플리케이션 경로) 추출
+    std::string charPath = getPath();
+    std::string servicePath = charPath.substr(0, charPath.find_last_of('/'));
+    std::string appPath = servicePath.substr(0, servicePath.find_last_of('/'));
+    
+    // 올바른 경로인지 확인
+    if (appPath.empty() || appPath == servicePath) {
+        appPath = "/";  // 루트 경로로 기본 설정
+    }
+    
+    // 애플리케이션 객체 생성
+    SDBusObject appObject(connection, appPath);
+    
+    // 설명자의 인터페이스 정보 생성
+    sdbus::ObjectPath descPath(descriptor->getPath());
+    std::map<std::string, std::map<std::string, sdbus::Variant>> descInterfaces;
+    std::map<std::string, sdbus::Variant> descProperties;
+    
+    // UUID 속성
+    descProperties["UUID"] = sdbus::Variant(descriptor->getUuid().toBlueZFormat());
+    
+    // Characteristic 속성
+    descProperties["Characteristic"] = sdbus::Variant(sdbus::ObjectPath(getPath()));
+    
+    // 인터페이스에 속성 추가
+    descInterfaces[BlueZConstants::GATT_DESCRIPTOR_INTERFACE] = descProperties;
+    
+    // InterfacesAdded 시그널 발생
+    appObject.emitSignal(
+        sdbus::SignalName{"InterfacesAdded"},
+        sdbus::InterfaceName{"org.freedesktop.DBus.ObjectManager"},
+        descPath,
+        descInterfaces
+    );
+}
+
+void GattCharacteristic::emitInterfacesRemovedForDescriptor(GattDescriptorPtr descriptor) {
+    if (!descriptor) return;
+    
+    // 상위 경로 (애플리케이션 경로) 추출
+    std::string charPath = getPath();
+    std::string servicePath = charPath.substr(0, charPath.find_last_of('/'));
+    std::string appPath = servicePath.substr(0, servicePath.find_last_of('/'));
+    
+    // 올바른 경로인지 확인
+    if (appPath.empty() || appPath == servicePath) {
+        appPath = "/";  // 루트 경로로 기본 설정
+    }
+    
+    // 애플리케이션 객체 생성
+    SDBusObject appObject(connection, appPath);
+    
+    // 설명자의 경로와 인터페이스 이름 설정
+    sdbus::ObjectPath descPath(descriptor->getPath());
+    std::vector<sdbus::InterfaceName> interfaceNames = {
+        sdbus::InterfaceName{BlueZConstants::GATT_DESCRIPTOR_INTERFACE}
+    };
+    
+    // InterfacesRemoved 시그널 발생
+    appObject.emitSignal(
+        sdbus::SignalName{"InterfacesRemoved"},
+        sdbus::InterfaceName{"org.freedesktop.DBus.ObjectManager"},
+        descPath,
+        interfaceNames
+    );
 }
 
 std::vector<uint8_t> GattCharacteristic::handleReadValue(const std::map<std::string, sdbus::Variant>& options) {
@@ -481,7 +628,7 @@ void GattCharacteristic::handleWriteValue(const std::vector<uint8_t>& value, con
             std::copy(value.begin(), value.end(), this->value.begin() + offset);
             
             // 값 변경 알림 발생
-            if (object.isRegistered()) {
+            if (objectRegistered) {
                 object.emitPropertyChanged(
                     sdbus::InterfaceName{BlueZConstants::GATT_CHARACTERISTIC_INTERFACE}, 
                     sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE}

@@ -1,3 +1,4 @@
+// src/GattAdvertisement.cpp
 #include "GattAdvertisement.h"
 #include "Logger.h"
 #include <unistd.h>
@@ -15,7 +16,8 @@ GattAdvertisement::GattAdvertisement(
       duration(0),
       includeTxPower(false),
       discoverable(true), 
-      registered(false) {
+      interfaceSetup(false),
+      boundToBlueZ(false) {
 }
 
 void GattAdvertisement::addServiceUUID(const GattUuid& uuid) {
@@ -117,7 +119,6 @@ void GattAdvertisement::setIncludes(const std::vector<std::string>& items) {
     Logger::debug(std::to_string(includes.size()) + " 항목으로 includes 배열 설정됨");
 }
 
-// src/GattAdvertisement.cpp (메서드 구현)
 bool GattAdvertisement::setupInterfaces() {
     if (interfaceSetup) return true;
     
@@ -128,11 +129,77 @@ bool GattAdvertisement::setupInterfaces() {
     
     try {
         auto& sdbusObj = object.getSdbusObject();
+        sdbus::InterfaceName interfaceName{BlueZConstants::LE_ADVERTISEMENT_INTERFACE};
         
-        // 기존의 vtable 등록 코드...
+        // Type 속성 vtable
+        auto typeVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_TYPE})
+                            .withGetter([this](){ return getTypeProperty(); });
+        
+        // ServiceUUIDs 속성 vtable (있는 경우)
+        auto serviceUUIDsVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_SERVICE_UUIDS})
+                                   .withGetter([this](){ return getServiceUUIDsProperty(); });
+        
+        // ManufacturerData 속성 vtable (있는 경우)
+        auto manufacturerDataVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_MANUFACTURER_DATA})
+                                       .withGetter([this](){ return getManufacturerDataProperty(); });
+        
+        // ServiceData 속성 vtable (있는 경우)
+        auto serviceDataVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_SERVICE_DATA})
+                                  .withGetter([this](){ return getServiceDataProperty(); });
+        
+        // LocalName 속성 vtable (있는 경우)
+        auto localNameVTable = !localName.empty() ? 
+                               sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_LOCAL_NAME})
+                                 .withGetter([this](){ return localName; }) : 
+                               sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_LOCAL_NAME})
+                                 .withGetter([](){ return std::string(); });
+        
+        // Appearance 속성 vtable (있는 경우)
+        auto appearanceVTable = appearance != 0 ? 
+                                sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_APPEARANCE})
+                                  .withGetter([this](){ return appearance; }) : 
+                                sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_APPEARANCE})
+                                  .withGetter([](){ return uint16_t(0); });
+        
+        // Duration 속성 vtable (있는 경우)
+        auto durationVTable = duration != 0 ? 
+                              sdbus::registerProperty(sdbus::PropertyName{"Duration"})
+                                .withGetter([this](){ return duration; }) : 
+                              sdbus::registerProperty(sdbus::PropertyName{"Duration"})
+                                .withGetter([](){ return uint16_t(0); });
+        
+        // IncludeTxPower 속성 vtable
+        auto includeTxPowerVTable = sdbus::registerProperty(sdbus::PropertyName{BlueZConstants::PROPERTY_INCLUDE_TX_POWER})
+                                     .withGetter([this](){ return includeTxPower; });
+        
+        // Discoverable 속성 vtable (BlueZ 5.82에서는 필수)
+        auto discoverableVTable = sdbus::registerProperty(sdbus::PropertyName{"Discoverable"})
+                                   .withGetter([this](){ return discoverable; });
+        
+        // Includes 속성 vtable (BlueZ 5.82에서는 중요)
+        auto includesVTable = sdbus::registerProperty(sdbus::PropertyName{"Includes"})
+                               .withGetter([this](){ return includes; });
+        
+        // Release 메서드 vtable
+        auto releaseVTable = sdbus::registerMethod(sdbus::MethodName{"Release"})
+                              .implementedAs([this](){ handleRelease(); });
+        
+        // 모든 vtable 등록
+        sdbusObj.addVTable(
+            typeVTable, serviceUUIDsVTable, manufacturerDataVTable, serviceDataVTable,
+            localNameVTable, appearanceVTable, durationVTable, includeTxPowerVTable,
+            discoverableVTable, includesVTable, releaseVTable
+        ).forInterface(interfaceName);
         
         // 설정 완료 표시
         interfaceSetup = true;
+        
+        // 객체 직접 등록 (BlueZ 5.82에서는 수동으로 각 객체 등록)
+        if (!object.registerObject()) {
+            Logger::error("광고 객체 D-Bus 등록 실패");
+            return false;
+        }
+        
         Logger::info("광고 인터페이스 설정 완료");
         return true;
     } catch (const std::exception& e) {
@@ -155,14 +222,56 @@ bool GattAdvertisement::bindToBlueZ() {
             }
         }
         
-        // 기존의 광고 등록 코드...
+        // BlueZ LEAdvertisingManager 프록시 생성
+        auto proxy = connection.createProxy(
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
+        );
         
-        // 성공 시 상태 업데이트
-        boundToBlueZ = true;
+        if (!proxy) {
+            Logger::error("BlueZ LEAdvertisingManager 프록시 생성 실패");
+            return false;
+        }
+        
+        // 빈 옵션 딕셔너리 생성
+        std::map<std::string, sdbus::Variant> options;
+        
+        // RegisterAdvertisement 호출
+        try {
+            proxy->callMethod("RegisterAdvertisement")
+                .onInterface(sdbus::InterfaceName{BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE})
+                .withArguments(sdbus::ObjectPath{object.getPath()}, options);
+            
+            boundToBlueZ = true;
+            Logger::info("BlueZ에 광고 등록 성공");
+        } catch (const sdbus::Error& e) {
+            std::string errorName = e.getName();
+            std::string errorMsg = e.getMessage();
+            
+            Logger::error("BlueZ 광고 등록 실패: " + errorName + " - " + errorMsg);
+            
+            // 대체 광고 방법 시도
+            if (tryAlternativeAdvertisingMethods()) {
+                boundToBlueZ = true;
+                Logger::info("대체 방법으로 광고 활성화됨");
+                return true;
+            }
+            
+            return false;
+        }
+        
         return true;
     }
     catch (const std::exception& e) {
         Logger::error("bindToBlueZ 예외: " + std::string(e.what()));
+        
+        // 대체 광고 방법 시도
+        if (tryAlternativeAdvertisingMethods()) {
+            boundToBlueZ = true;
+            Logger::info("예외 발생 후 대체 방법으로 광고 활성화됨");
+            return true;
+        }
+        
         return false;
     }
 }
@@ -175,10 +284,38 @@ bool GattAdvertisement::unbindFromBlueZ() {
     }
     
     try {
-        // 기존의 광고 등록 해제 코드...
+        // BlueZ LEAdvertisingManager 프록시 생성
+        auto proxy = connection.createProxy(
+            sdbus::ServiceName{BlueZConstants::BLUEZ_SERVICE},
+            sdbus::ObjectPath{BlueZConstants::ADAPTER_PATH}
+        );
         
-        // 상태 업데이트
+        if (!proxy) {
+            Logger::error("BlueZ LEAdvertisingManager 프록시 생성 실패");
+            boundToBlueZ = false; // 재시도 방지를 위해 상태 업데이트
+            return false;
+        }
+        
+        // UnregisterAdvertisement 호출
+        try {
+            proxy->callMethod("UnregisterAdvertisement")
+                .onInterface(sdbus::InterfaceName{BlueZConstants::LE_ADVERTISING_MANAGER_INTERFACE})
+                .withArguments(sdbus::ObjectPath{object.getPath()});
+            
+            Logger::info("BlueZ에서 광고 등록 해제 성공");
+        } catch (const sdbus::Error& e) {
+            // 오류는 무시해도 됨 (이미 해제되었거나 존재하지 않는 경우)
+            Logger::warn("BlueZ에서 광고 등록 해제 중 오류: " + std::string(e.what()));
+        }
+        
+        // 객체 등록 해제
+        object.unregisterObject();
+        
+        // 대체 메서드로 광고 비활성화 시도 (안전을 위해)
+        system("sudo hciconfig hci0 noleadv > /dev/null 2>&1");
+        
         boundToBlueZ = false;
+        Logger::info("BlueZ에서 광고 바인딩 해제 성공");
         return true;
     } catch (const std::exception& e) {
         Logger::error("unbindFromBlueZ 예외: " + std::string(e.what()));
@@ -191,7 +328,7 @@ void GattAdvertisement::handleRelease() {
     Logger::info("BlueZ가 광고에 대해 Release 호출함: " + object.getPath());
     
     // 등록 상태 업데이트
-    registered = false;
+    boundToBlueZ = false;
 }
 
 void GattAdvertisement::ensureBlueZ582Compatibility() {
@@ -268,7 +405,6 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
         
         if (methods.bluetoothctl) {
             Logger::info("bluetoothctl을 통한 광고 활성화 성공");
-            registered = true;
             return true;
         }
     } catch (...) {
@@ -282,7 +418,6 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
         
         if (methods.hciconfig) {
             Logger::info("hciconfig를 통한 광고 활성화 성공");
-            registered = true;
             return true;
         }
     } catch (...) {
@@ -300,7 +435,6 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
         
         if (methods.btmgmt) {
             Logger::info("btmgmt를 통한 광고 활성화 성공");
-            registered = true;
             return true;
         }
     } catch (...) {
@@ -334,7 +468,6 @@ bool GattAdvertisement::tryAlternativeAdvertisingMethods() {
             
             methods.direct_dbus = true;
             Logger::info("D-Bus 속성을 통한 광고 활성화 성공");
-            registered = true;
             return true;
         }
     } catch (const std::exception& e) {

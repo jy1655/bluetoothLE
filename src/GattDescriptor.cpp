@@ -1,3 +1,4 @@
+// src/GattDescriptor.cpp
 #include "GattDescriptor.h"
 #include "GattCharacteristic.h" // 여기서만 포함 (헤더에서는 전방 선언만)
 #include "Logger.h"
@@ -14,7 +15,9 @@ GattDescriptor::GattDescriptor(
       object(connection, path),
       uuid(uuid),
       parentCharacteristic(characteristic),
-      permissions(permissions) {
+      permissions(permissions),
+      interfaceSetup(false),
+      objectRegistered(false) {
 }
 
 void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
@@ -48,7 +51,7 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
         }
         
         // 등록된 경우 속성 변경 시그널 발생
-        if (object.isRegistered()) {
+        if (objectRegistered) {
             // Value 속성 변경 알림
             object.emitPropertyChanged(
                 sdbus::InterfaceName{BlueZConstants::GATT_DESCRIPTOR_INTERFACE}, 
@@ -60,7 +63,6 @@ void GattDescriptor::setValue(const std::vector<uint8_t>& newValue) {
     }
 }
 
-// src/GattDescriptor.cpp (메서드 수정)
 bool GattDescriptor::setupInterfaces() {
     if (interfaceSetup) return true;
     
@@ -97,7 +99,21 @@ bool GattDescriptor::setupInterfaces() {
                                 if (permissions & GattPermission::PERM_READ) {
                                     flags.push_back(BlueZConstants::FLAG_READ);
                                 }
-                                // 다른 권한들...
+                                if (permissions & GattPermission::PERM_WRITE) {
+                                    flags.push_back(BlueZConstants::FLAG_WRITE);
+                                }
+                                if (permissions & GattPermission::PERM_READ_ENCRYPTED) {
+                                    flags.push_back(BlueZConstants::FLAG_ENCRYPT_READ);
+                                }
+                                if (permissions & GattPermission::PERM_WRITE_ENCRYPTED) {
+                                    flags.push_back(BlueZConstants::FLAG_ENCRYPT_WRITE);
+                                }
+                                if (permissions & GattPermission::PERM_READ_AUTHENTICATED) {
+                                    flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_READ);
+                                }
+                                if (permissions & GattPermission::PERM_WRITE_AUTHENTICATED) {
+                                    flags.push_back(BlueZConstants::FLAG_ENCRYPT_AUTHENTICATED_WRITE);
+                                }
                                 
                                 return flags;
                             });
@@ -113,7 +129,7 @@ bool GattDescriptor::setupInterfaces() {
                                     handleWriteValue(value, options);
                                 });
         
-        // vtable 등록 - 여기서 객체가 D-Bus에 자동으로 등록됨
+        // vtable 등록
         sdbusObj.addVTable(
             uuidVTable, characteristicVTable, valueVTable, flagsVTable,
             readValueVTable, writeValueVTable
@@ -127,6 +143,45 @@ bool GattDescriptor::setupInterfaces() {
         Logger::error("설명자 인터페이스 설정 실패: " + std::string(e.what()));
         return false;
     }
+}
+
+bool GattDescriptor::registerObject() {
+    if (objectRegistered) {
+        return true;
+    }
+    
+    // 인터페이스가 설정되지 않은 경우 먼저 설정
+    if (!interfaceSetup) {
+        if (!setupInterfaces()) {
+            return false;
+        }
+    }
+    
+    // D-Bus에 등록
+    if (!object.registerObject()) {
+        Logger::error("설명자 객체 등록 실패: " + uuid.toString());
+        return false;
+    }
+    
+    objectRegistered = true;
+    Logger::info("설명자 객체 등록 완료: " + uuid.toString());
+    return true;
+}
+
+bool GattDescriptor::unregisterObject() {
+    if (!objectRegistered) {
+        return true;
+    }
+    
+    // 객체 등록 해제
+    if (!object.unregisterObject()) {
+        Logger::error("설명자 객체 등록 해제 실패: " + uuid.toString());
+        return false;
+    }
+    
+    objectRegistered = false;
+    Logger::info("설명자 객체 등록 해제 완료: " + uuid.toString());
+    return true;
 }
 
 std::vector<uint8_t> GattDescriptor::handleReadValue(const std::map<std::string, sdbus::Variant>& options) {
@@ -241,7 +296,7 @@ void GattDescriptor::handleWriteValue(const std::vector<uint8_t>& value, const s
             std::copy(value.begin(), value.end(), this->value.begin() + offset);
             
             // 값 변경 알림 발생
-            if (object.isRegistered()) {
+            if (objectRegistered) {
                 object.emitPropertyChanged(
                     sdbus::InterfaceName{BlueZConstants::GATT_DESCRIPTOR_INTERFACE}, 
                     sdbus::PropertyName{BlueZConstants::PROPERTY_VALUE}
