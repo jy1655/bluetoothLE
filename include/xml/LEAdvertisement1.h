@@ -39,14 +39,20 @@ protected:
                           , sdbus::registerProperty("ManufacturerData").withGetter([this](){ return this->ManufacturerData(); })
                           , sdbus::registerProperty("SolicitUUIDs").withGetter([this](){ return this->SolicitUUIDs(); })
                           , sdbus::registerProperty("ServiceData").withGetter([this](){ return this->ServiceData(); })
+                          , sdbus::registerProperty("Data").withGetter([this](){ return this->Data(); })
+                          , sdbus::registerProperty("ScanResponseServiceUUIDs").withGetter([this](){ return this->ScanResponseServiceUUIDs(); })
+                          , sdbus::registerProperty("ScanResponseManufacturerData").withGetter([this](){ return this->ScanResponseManufacturerData(); })
+                          , sdbus::registerProperty("ScanResponseSolicitUUIDs").withGetter([this](){ return this->ScanResponseSolicitUUIDs(); })
+                          , sdbus::registerProperty("ScanResponseServiceData").withGetter([this](){ return this->ScanResponseServiceData(); })
+                          , sdbus::registerProperty("ScanResponseData").withGetter([this](){ return this->ScanResponseData(); })
+                          , sdbus::registerProperty("Discoverable").withGetter([this](){ return this->Discoverable(); })
+                          , sdbus::registerProperty("DiscoverableTimeout").withGetter([this](){ return this->DiscoverableTimeout(); })
                           , sdbus::registerProperty("Includes").withGetter([this](){ return this->Includes(); })
                           , sdbus::registerProperty("LocalName").withGetter([this](){ return this->LocalName(); })
                           , sdbus::registerProperty("Appearance").withGetter([this](){ return this->Appearance(); })
                           , sdbus::registerProperty("Duration").withGetter([this](){ return this->Duration(); })
                           , sdbus::registerProperty("Timeout").withGetter([this](){ return this->Timeout(); })
                           , sdbus::registerProperty("SecondaryChannel").withGetter([this](){ return this->SecondaryChannel(); })
-                          , sdbus::registerProperty("Discoverable").withGetter([this](){ return this->Discoverable(); })
-                          , sdbus::registerProperty("DiscoverableTimeout").withGetter([this](){ return this->DiscoverableTimeout(); })
                           , sdbus::registerProperty("MinInterval").withGetter([this](){ return this->MinInterval(); })
                           , sdbus::registerProperty("MaxInterval").withGetter([this](){ return this->MaxInterval(); })
                           , sdbus::registerProperty("TxPower").withGetter([this](){ return this->TxPower(); })
@@ -62,14 +68,20 @@ private:
     virtual std::map<uint16_t, sdbus::Variant> ManufacturerData() = 0;
     virtual std::vector<std::string> SolicitUUIDs() = 0;
     virtual std::map<std::string, sdbus::Variant> ServiceData() = 0;
+    virtual std::map<uint8_t, sdbus::Variant> Data() = 0;
+    virtual std::vector<std::string> ScanResponseServiceUUIDs() = 0;
+    virtual std::map<uint16_t, sdbus::Variant> ScanResponseManufacturerData() = 0;
+    virtual std::vector<std::string> ScanResponseSolicitUUIDs() = 0;
+    virtual std::map<std::string, sdbus::Variant> ScanResponseServiceData() = 0;
+    virtual std::map<uint8_t, sdbus::Variant> ScanResponseData() = 0;
+    virtual bool Discoverable() = 0;
+    virtual uint16_t DiscoverableTimeout() = 0;
     virtual std::vector<std::string> Includes() = 0;
     virtual std::string LocalName() = 0;
     virtual uint16_t Appearance() = 0;
     virtual uint16_t Duration() = 0;
     virtual uint16_t Timeout() = 0;
     virtual std::string SecondaryChannel() = 0;
-    virtual bool Discoverable() = 0;
-    virtual uint16_t DiscoverableTimeout() = 0;
     virtual uint32_t MinInterval() = 0;
     virtual uint32_t MaxInterval() = 0;
     virtual int16_t TxPower() = 0;

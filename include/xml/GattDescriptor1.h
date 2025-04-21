@@ -37,7 +37,9 @@ protected:
                           , sdbus::registerMethod("WriteValue").withInputParamNames("value", "options").implementedAs([this](const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options){ return this->WriteValue(value, options); })
                           , sdbus::registerProperty("UUID").withGetter([this](){ return this->UUID(); })
                           , sdbus::registerProperty("Characteristic").withGetter([this](){ return this->Characteristic(); })
+                          , sdbus::registerProperty("Value").withGetter([this](){ return this->Value(); })
                           , sdbus::registerProperty("Flags").withGetter([this](){ return this->Flags(); })
+                          , sdbus::registerProperty("Handle").withGetter([this](){ return this->Handle(); }).withSetter([this](const uint16_t& value){ this->Handle(value); })
                           ).forInterface(INTERFACE_NAME);
     }
 
@@ -48,7 +50,10 @@ private:
 private:
     virtual std::string UUID() = 0;
     virtual sdbus::ObjectPath Characteristic() = 0;
+    virtual std::vector<uint8_t> Value() = 0;
     virtual std::vector<std::string> Flags() = 0;
+    virtual uint16_t Handle() = 0;
+    virtual void Handle(const uint16_t& value) = 0;
 
 private:
     sdbus::IObject& m_object;

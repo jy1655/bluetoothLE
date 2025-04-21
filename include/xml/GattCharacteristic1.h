@@ -40,9 +40,12 @@ protected:
                           , sdbus::registerProperty("UUID").withGetter([this](){ return this->UUID(); })
                           , sdbus::registerProperty("Service").withGetter([this](){ return this->Service(); })
                           , sdbus::registerProperty("Value").withGetter([this](){ return this->Value(); })
+                          , sdbus::registerProperty("WriteAcquired").withGetter([this](){ return this->WriteAcquired(); })
+                          , sdbus::registerProperty("NotifyAcquired").withGetter([this](){ return this->NotifyAcquired(); })
                           , sdbus::registerProperty("Notifying").withGetter([this](){ return this->Notifying(); })
                           , sdbus::registerProperty("Flags").withGetter([this](){ return this->Flags(); })
-                          , sdbus::registerProperty("Descriptors").withGetter([this](){ return this->Descriptors(); })
+                          , sdbus::registerProperty("Handle").withGetter([this](){ return this->Handle(); }).withSetter([this](const uint16_t& value){ this->Handle(value); })
+                          , sdbus::registerProperty("MTU").withGetter([this](){ return this->MTU(); })
                           ).forInterface(INTERFACE_NAME);
     }
 
@@ -56,9 +59,13 @@ private:
     virtual std::string UUID() = 0;
     virtual sdbus::ObjectPath Service() = 0;
     virtual std::vector<uint8_t> Value() = 0;
+    virtual bool WriteAcquired() = 0;
+    virtual bool NotifyAcquired() = 0;
     virtual bool Notifying() = 0;
     virtual std::vector<std::string> Flags() = 0;
-    virtual std::vector<sdbus::ObjectPath> Descriptors() = 0;
+    virtual uint16_t Handle() = 0;
+    virtual void Handle(const uint16_t& value) = 0;
+    virtual uint16_t MTU() = 0;
 
 private:
     sdbus::IObject& m_object;

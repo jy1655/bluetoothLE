@@ -60,7 +60,7 @@ bool GattApplication::createBatteryService() {
     std::string servicePath = m_path + "/service1";
     auto service = std::make_shared<GattService>(
         m_connection,
-        servicePath,
+        sdbus::ObjectPath(servicePath),
         batteryServiceUuid,
         true  // Primary
     );
@@ -69,10 +69,10 @@ bool GattApplication::createBatteryService() {
     std::string charPath = servicePath + "/char1";
     auto characteristic = std::make_shared<GattCharacteristic>(
         m_connection,
-        charPath,
+        sdbus::ObjectPath(charPath),
         batteryLevelUuid,
         GattProperty::PROP_READ | GattProperty::PROP_NOTIFY,
-        servicePath
+        sdbus::ObjectPath(servicePath)
     );
     
     // 초기 배터리 값 설정
@@ -91,7 +91,7 @@ bool GattApplication::setupAdvertisement(const std::string& name) {
     std::string advPath = m_path + "/advertisement";
     auto advertisement = std::make_shared<LEAdvertisement>(
         m_connection,
-        advPath,
+        sdbus::ObjectPath(advPath),
         name
     );
     
@@ -119,8 +119,8 @@ bool GattApplication::registerWithBlueZ() {
         std::map<std::string, sdbus::Variant> options;
         
         // 경로를 문자열 대신 ObjectPath로 전달 (중요 수정 부분)
-        proxy->callMethod("RegisterApplication")
-             .onInterface("org.bluez.GattManager1")
+        proxy->callMethod(sdbus::InterfaceName("RegisterApplication"))
+             .onInterface(sdbus::ObjectPath("org.bluez.GattManager1"))
              .withArguments(sdbus::ObjectPath(m_path), options);
         
         // 2. LE 광고 등록 (여기도 수정 필요)
@@ -133,8 +133,8 @@ bool GattApplication::registerWithBlueZ() {
             std::map<std::string, sdbus::Variant> advOptions;
             
             // 여기도 ObjectPath로 전달
-            advProxy->callMethod("RegisterAdvertisement")
-                    .onInterface("org.bluez.LEAdvertisingManager1")
+            advProxy->callMethod(sdbus::InterfaceName("RegisterAdvertisement"))
+                    .onInterface(sdbus::ObjectPath("org.bluez.LEAdvertisingManager1"))
                     .withArguments(sdbus::ObjectPath(advertisement->getPath()), advOptions);
         }
         
@@ -160,8 +160,8 @@ bool GattApplication::unregisterFromBlueZ() {
             auto advertisement = std::static_pointer_cast<LEAdvertisement>(m_advertisement);
             
             // ObjectPath로 전달
-            advProxy->callMethod("UnregisterAdvertisement")
-                    .onInterface("org.bluez.LEAdvertisingManager1")
+            advProxy->callMethod(sdbus::InterfaceName("UnregisterAdvertisement"))
+                    .onInterface(sdbus::ObjectPath("org.bluez.LEAdvertisingManager1"))
                     .withArguments(sdbus::ObjectPath(advertisement->getPath()));
         }
         
@@ -171,8 +171,8 @@ bool GattApplication::unregisterFromBlueZ() {
                                         sdbus::ObjectPath("/org/bluez/hci0"));
         
         // ObjectPath로 전달
-        proxy->callMethod("UnregisterApplication")
-             .onInterface("org.bluez.GattManager1")
+        proxy->callMethod(sdbus::InterfaceName("UnregisterApplication"))
+             .onInterface(sdbus::ObjectPath("org.bluez.GattManager1"))
              .withArguments(sdbus::ObjectPath(m_path));
         
         m_registered = false;

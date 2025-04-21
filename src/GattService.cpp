@@ -16,10 +16,12 @@ GattService::GattService(sdbus::IConnection& connection,
     // 인터페이스 등록
     registerAdaptor();
     std::cout << "GattService 생성됨: " << m_objectPath << " (UUID: " << uuid.toString() << ")" << std::endl;
+    //getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::GattService1_adaptor::INTERFACE_NAME}});
 }
 
 GattService::~GattService() {
     // 어댑터 등록 해제
+    //getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattService1_adaptor::INTERFACE_NAME}});
     unregisterAdaptor();
     std::cout << "GattService 소멸됨: " << m_objectPath << std::endl;
 }

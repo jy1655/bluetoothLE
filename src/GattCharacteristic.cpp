@@ -20,11 +20,13 @@ GattCharacteristic::GattCharacteristic(sdbus::IConnection& connection,
     
     // 인터페이스 등록
     registerAdaptor();
+    //getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME}});
     std::cout << "GattCharacteristic 생성됨: " << m_objectPath << " (UUID: " << uuid.toString() << ")" << std::endl;
 }
 
 GattCharacteristic::~GattCharacteristic() {
     // 어댑터 등록 해제
+    //getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME}});
     unregisterAdaptor();
     std::cout << "GattCharacteristic 소멸됨: " << m_objectPath << std::endl;
 }

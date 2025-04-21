@@ -35,7 +35,7 @@ int main() {
         g_connection->requestName(serviceName);
 
         // 2. GATT 애플리케이션 생성
-        g_app = std::make_shared<ggk::GattApplication>(*g_connection);
+        g_app = std::make_unique<ggk::GattApplication>(*g_connection, sdbus::ObjectPath{"/com/example/ble"});
         g_app->run();
         
         // 3. 서비스, 특성, 설명자 설정

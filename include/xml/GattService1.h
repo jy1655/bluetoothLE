@@ -36,6 +36,7 @@ protected:
         m_object.addVTable( sdbus::registerProperty("UUID").withGetter([this](){ return this->UUID(); })
                           , sdbus::registerProperty("Primary").withGetter([this](){ return this->Primary(); })
                           , sdbus::registerProperty("Includes").withGetter([this](){ return this->Includes(); })
+                          , sdbus::registerProperty("Handle").withGetter([this](){ return this->Handle(); }).withSetter([this](const uint16_t& value){ this->Handle(value); })
                           ).forInterface(INTERFACE_NAME);
     }
 
@@ -43,6 +44,8 @@ private:
     virtual std::string UUID() = 0;
     virtual bool Primary() = 0;
     virtual std::vector<sdbus::ObjectPath> Includes() = 0;
+    virtual uint16_t Handle() = 0;
+    virtual void Handle(const uint16_t& value) = 0;
 
 private:
     sdbus::IObject& m_object;
