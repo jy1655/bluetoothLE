@@ -1,134 +1,54 @@
+// include/GattCharacteristic.h
 #pragma once
 
-#include "IGattNode.h"
-#include "GattDescriptor.h"
-#include "GattCallbacks.h"
-#include "SDBusObject.h"
-#include "BlueZConstants.h"
-#include <vector>
-#include <map>
-#include <memory>
-#include <mutex>
+#include <sdbus-c++/sdbus-c++.h>
+#include "GattTypes.h"
+#include "xml/GattCharacteristic1.h"
 
 namespace ggk {
 
-// 전방 선언
-class GattService;
-
-/**
- * @brief GATT 특성 구현
- */
-class GattCharacteristic : public IGattNode {
+class GattCharacteristic : public sdbus::AdaptorInterfaces<org::bluez::GattCharacteristic1_adaptor> {
 public:
-    GattCharacteristic(
-        SDBusConnection& connection,
-        const std::string& path,
-        const GattUuid& uuid,
-        GattService* service, // 포인터로 변경 (weak reference)
-        uint8_t properties,
-        uint8_t permissions);
+    GattCharacteristic(sdbus::IConnection& connection,
+                      const std::string& path,
+                      const GattUuid& uuid,
+                      uint8_t properties,
+                      const std::string& servicePath);
     
-    virtual ~GattCharacteristic() = default;
+    ~GattCharacteristic();
     
-    // IGattNode 인터페이스 구현
-    const GattUuid& getUuid() const override { return uuid; }
-    const std::string& getPath() const override { return object.getPath(); }
-    bool setupInterfaces() override;
-    bool isInterfaceSetup() const override { return interfaceSetup; }
+    // GattCharacteristic1_adaptor 필수 메소드 구현
+    std::vector<uint8_t> ReadValue(const std::map<std::string, sdbus::Variant>& options) override;
+    void WriteValue(const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) override;
+    void StartNotify() override;
+    void StopNotify() override;
     
-    // 값 관련 메서드
-    const std::vector<uint8_t>& getValue() const {
-        std::lock_guard<std::mutex> lock(valueMutex);
-        return value;
-    }
+    // 속성 구현
+    std::string UUID() override;
+    sdbus::ObjectPath Service() override;
+    std::vector<uint8_t> Value() override;
+    bool Notifying() override;
+    std::vector<std::string> Flags() override;
+    std::vector<sdbus::ObjectPath> Descriptors() override;
     
+    // 경로 얻기
+    std::string getPath() const { return m_objectPath; }
+    
+    // 값 설정
     void setValue(const std::vector<uint8_t>& value);
-    void setValue(std::vector<uint8_t>&& value);
-    
-    // 설명자 관리
-    GattDescriptorPtr createDescriptor(
-        const GattUuid& uuid,
-        uint8_t permissions);
-    
-    GattDescriptorPtr getDescriptor(const GattUuid& uuid) const;
-    
-    const std::map<std::string, GattDescriptorPtr>& getDescriptors() const {
-        std::lock_guard<std::mutex> lock(descriptorsMutex);
-        return descriptors;
-    }
-    
-    // 알림 관리
-    bool startNotify();
-    bool stopNotify();
-    bool isNotifying() const {
-        std::lock_guard<std::mutex> lock(notifyMutex);
-        return notifying;
-    }
-    
-    // 콜백 설정
-    void setReadCallback(GattReadCallback callback) {
-        std::lock_guard<std::mutex> lock(callbackMutex);
-        readCallback = callback;
-    }
-    
-    void setWriteCallback(GattWriteCallback callback) {
-        std::lock_guard<std::mutex> lock(callbackMutex);
-        writeCallback = callback;
-    }
-    
-    void setNotifyCallback(GattNotifyCallback callback) {
-        std::lock_guard<std::mutex> lock(callbackMutex);
-        notifyCallback = callback;
-    }
-    
-    // 속성 접근자
-    uint8_t getProperties() const { return properties; }
-    uint8_t getPermissions() const { return permissions; }
-    
-    // 서비스 약한 참조 접근자
-    GattService* getService() const { return parentService; }
-    
-    // D-Bus 객체 등록 관리
-    bool registerObject();
-    bool unregisterObject();
-    bool isRegistered() const { return objectRegistered; }
-    
-    // 신호 발생 도우미
-    void emitInterfacesAddedForDescriptor(GattDescriptorPtr descriptor);
-    void emitInterfacesRemovedForDescriptor(GattDescriptorPtr descriptor);
     
 private:
-    // D-Bus 메서드 핸들러
-    std::vector<uint8_t> handleReadValue(const std::map<std::string, sdbus::Variant>& options);
-    void handleWriteValue(const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options);
-    void handleStartNotify();
-    void handleStopNotify();
+    std::string m_objectPath;
+    GattUuid m_uuid;
+    uint8_t m_properties;
+    std::string m_servicePath;
+    std::vector<uint8_t> m_value;
+    bool m_notifying = false;
+    std::vector<std::string> m_descriptorPaths;
     
-    // 내부 상태
-    SDBusConnection& connection;
-    SDBusObject object;
-    GattUuid uuid;
-    GattService* parentService; // 약한 참조로 변경
-    uint8_t properties;
-    uint8_t permissions;
-    std::vector<uint8_t> value;
-    mutable std::mutex valueMutex;
-    bool interfaceSetup;
-    bool objectRegistered;
-    
-    bool notifying;
-    mutable std::mutex notifyMutex;
-    
-    // 설명자 관리
-    std::map<std::string, GattDescriptorPtr> descriptors;
-    mutable std::mutex descriptorsMutex;
-    
-    // 콜백
-    GattReadCallback readCallback;
-    GattWriteCallback writeCallback;
-    GattNotifyCallback notifyCallback;
-    mutable std::mutex callbackMutex;
+    // 콜백 함수
+    std::function<std::vector<uint8_t>()> m_readCallback;
+    std::function<bool(const std::vector<uint8_t>&)> m_writeCallback;
 };
 
-using GattCharacteristicPtr = std::shared_ptr<GattCharacteristic>;
 } // namespace ggk

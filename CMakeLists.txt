@@ -1,78 +1,60 @@
+# CMakeLists.txt
 cmake_minimum_required(VERSION 3.10)
 project(ble_peripheral VERSION 1.0)
 
-# C++ standard
+# C++ 표준 설정
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Enable warnings
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wall -Wextra -Wpedantic)
-endif()
-
-# Find required packages
+# 필수 패키지 찾기
 find_package(PkgConfig REQUIRED)
-find_package(sdbus-c++ REQUIRED)
-pkg_check_modules(GLIB REQUIRED glib-2.0)
-pkg_check_modules(GIO REQUIRED gio-2.0)
-pkg_check_modules(BLUEZ REQUIRED bluez)
+pkg_check_modules(SDBUS REQUIRED sdbus-c++ IMPORTED_TARGET)
 
-# Source files
+# 헤더 파일 목록
+set(HEADERS
+    include/GattApplication.h
+    include/GattService.h
+    include/GattCharacteristic.h
+    include/GattDescriptor.h
+    include/GattAdvertisement.h
+    include/GattTypes.h
+    include/xml/GattService1.h
+    include/xml/GattCharacteristic1.h
+    include/xml/GattDescriptor1.h
+    include/xml/LEAdvertisement1.h
+)
+
+# 소스 파일 목록
 set(SOURCES
-    # 기본 클래스 및 인터페이스
-    src/Logger.cpp
-    src/Utils.cpp
-    
-    # BlueZ 유틸리티
-    src/BlueZUtils.cpp
-    
-    # D-Bus 관련 클래스
-    src/SDBusInterface.cpp
-    #src/SDBusConnection.cpp
-    src/SDBusObject.cpp
-    src/SDBusProxy.cpp
-    src/SDBusError.cpp
-    src/DBusName.cpp
-    
-    # GATT 클래스
-    src/GattTypes.cpp
+    src/main.cpp
     src/GattApplication.cpp
     src/GattService.cpp
     src/GattCharacteristic.cpp
     src/GattDescriptor.cpp
     src/GattAdvertisement.cpp
-    
-    # 연결 및 HCI 관리
-    src/ConnectionManager.cpp
-    src/HciAdapter.cpp
-    
-    # 서버 클래스
-    src/Server.cpp
 )
 
-# Create executable
-add_executable(ble_peripheral 
-    ${SOURCES}
-    src/main.cpp
+# IDE에서 헤더 파일 그룹화 (선택사항)
+source_group("Header Files" FILES ${HEADERS})
+source_group("Source Files" FILES ${SOURCES})
+
+# 실행 파일 생성 (헤더 파일 포함)
+add_executable(ble_peripheral ${SOURCES} ${HEADERS})
+
+# 헤더 디렉토리 설정
+target_include_directories(ble_peripheral PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Include directories
-target_include_directories(ble_peripheral
-    PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${GLIB_INCLUDE_DIRS}
-        ${GIO_INCLUDE_DIRS}
-        ${BLUEZ_INCLUDE_DIRS}
+# 라이브러리 링크
+target_link_libraries(ble_peripheral PRIVATE
+    PkgConfig::SDBUS
+    pthread
 )
 
-# Link libraries
-target_link_libraries(ble_peripheral
-    PRIVATE
-        ${GLIB_LIBRARIES}
-        ${GIO_LIBRARIES}
-        ${BLUEZ_LIBRARIES}
-        SDBusCpp::sdbus-c++
-        bluetooth
-        pthread
-)
+# 인스톨 타겟 설정
+install(TARGETS ble_peripheral DESTINATION bin)
+
+# 헤더 파일을 인스톨할 경우 (선택사항)
+# install(FILES ${HEADERS} DESTINATION include/ble_peripheral)

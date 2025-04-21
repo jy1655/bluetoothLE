@@ -1,77 +1,36 @@
+// include/GattService.h
 #pragma once
 
-#include "IGattNode.h"
-#include "GattCharacteristic.h"
-#include "SDBusObject.h"
-#include "BlueZConstants.h"
-#include <map>
-#include <memory>
-#include <mutex>
+#include <sdbus-c++/sdbus-c++.h>
+#include "GattTypes.h"
+#include "xml/GattService1.h"
 
 namespace ggk {
 
-/**
- * @brief GATT 서비스 구현
- */
-class GattService : public IGattNode {
+class GattService : public sdbus::AdaptorInterfaces<org::bluez::GattService1_adaptor> {
 public:
-    GattService(
-        SDBusConnection& connection, 
-        const std::string& path,
-        const GattUuid& uuid,
-        bool isPrimary);
+    GattService(sdbus::IConnection& connection, 
+                const std::string& path,
+                const GattUuid& uuid, 
+                bool isPrimary);
     
-    virtual ~GattService() = default;
+    ~GattService();
     
-    // IGattNode 인터페이스 구현
-    const GattUuid& getUuid() const override { return uuid; }
-    const std::string& getPath() const override { return object.getPath(); }
-    bool setupInterfaces() override;
-    bool isInterfaceSetup() const override { return interfaceSetup; }
+    // GattService1_adaptor 필수 메소드 구현
+    std::string UUID() override;
+    bool Primary() override;
+    std::vector<sdbus::ObjectPath> Includes() override;
     
-    // 특성 관리
-    GattCharacteristicPtr createCharacteristic(
-        const GattUuid& uuid,
-        uint8_t properties,
-        uint8_t permissions);
+    // 경로 얻기
+    std::string getPath() const { return m_objectPath; }
     
-    GattCharacteristicPtr getCharacteristic(const GattUuid& uuid) const;
-    
-    const std::map<std::string, GattCharacteristicPtr>& getCharacteristics() const {
-        std::lock_guard<std::mutex> lock(characteristicsMutex);
-        return characteristics;
-    }
-    
-    // 속성 접근자
-    bool isPrimary() const { return primary; }
-    
-    // D-Bus 객체 등록 관리
-    bool registerObject();
-    bool unregisterObject();
-    bool isRegistered() const { return objectRegistered; }
-    
-    // 신호 발생 도우미
-    void emitInterfacesAddedForCharacteristic(GattCharacteristicPtr characteristic);
-    void emitInterfacesRemovedForCharacteristic(GattCharacteristicPtr characteristic);
+    // UUID 얻기
+    GattUuid getUuid() const { return m_uuid; }
     
 private:
-    // D-Bus 속성 게터
-    std::string getUuidProperty() const;
-    bool getPrimaryProperty() const;
-    std::vector<sdbus::ObjectPath> getCharacteristicsProperty() const;
-    
-    // 내부 상태
-    SDBusConnection& connection;
-    SDBusObject object;
-    GattUuid uuid;
-    bool primary;
-    bool interfaceSetup;
-    bool objectRegistered;
-    
-    // 특성 관리
-    std::map<std::string, GattCharacteristicPtr> characteristics;
-    mutable std::mutex characteristicsMutex;
+    std::string m_objectPath;
+    GattUuid m_uuid;
+    bool m_isPrimary;
 };
 
-using GattServicePtr = std::shared_ptr<GattService>;
-}
+} // namespace ggk

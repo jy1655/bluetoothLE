@@ -1,90 +1,51 @@
-// include/GattAdvertisement.h
+// include/LEAdvertisement.h
 #pragma once
 
-#include "SDBusInterface.h"
-#include "SDBusObject.h"
-#include "BlueZConstants.h"
+#include <sdbus-c++/sdbus-c++.h>
 #include "GattTypes.h"
-#include <vector>
-#include <map>
-#include <string>
+#include "xml/LEAdvertisement1.h"
 
 namespace ggk {
 
-class GattAdvertisement {
+class LEAdvertisement : public sdbus::AdaptorInterfaces<org::bluez::LEAdvertisement1_adaptor> {
 public:
-    enum class AdvertisementType {
-        BROADCAST,
-        PERIPHERAL
-    };
+    LEAdvertisement(sdbus::IConnection& connection,
+                   const std::string& path,
+                   const std::string& name);
     
-    GattAdvertisement(
-        SDBusConnection& connection,
-        const std::string& path,
-        AdvertisementType type = AdvertisementType::PERIPHERAL);
+    ~LEAdvertisement();
     
-    virtual ~GattAdvertisement() = default;
+    // LEAdvertisement1_adaptor 필수 메소드 구현
+    void Release() override;
     
-    // 광고 데이터 설정
+    // 속성 구현
+    std::string Type() override;
+    std::vector<std::string> ServiceUUIDs() override;
+    std::map<uint16_t, sdbus::Variant> ManufacturerData() override;
+    std::vector<std::string> SolicitUUIDs() override;
+    std::map<std::string, sdbus::Variant> ServiceData() override;
+    std::vector<std::string> Includes() override;
+    std::string LocalName() override;
+    uint16_t Appearance() override;
+    uint16_t Duration() override;
+    uint16_t Timeout() override;
+    std::string SecondaryChannel() override;
+    bool Discoverable() override;
+    uint16_t DiscoverableTimeout() override;
+    uint32_t MinInterval() override;
+    uint32_t MaxInterval() override;
+    int16_t TxPower() override;
+    
+    // 서비스 UUID 추가
     void addServiceUUID(const GattUuid& uuid);
-    void addServiceUUIDs(const std::vector<GattUuid>& uuids);
-    void setManufacturerData(uint16_t manufacturerId, const std::vector<uint8_t>& data);
-    void setServiceData(const GattUuid& serviceUuid, const std::vector<uint8_t>& data);
-    void setLocalName(const std::string& name);
-    void setDiscoverable(bool discoverable);
-    void setAppearance(uint16_t appearance);
-    void setDuration(uint16_t duration);
-    void setIncludeTxPower(bool include);
-    void addInclude(const std::string& item);
-    void setIncludes(const std::vector<std::string>& items);
-    
-    // D-Bus 인터페이스 설정
-    bool setupInterfaces();
-    bool isInterfaceSetup() const { return interfaceSetup; }
-    
-    // BlueZ 등록
-    bool bindToBlueZ();
-    bool unbindFromBlueZ();
-    bool isBoundToBlueZ() const { return boundToBlueZ; }
-    
-    // Release 메서드 처리
-    void handleRelease();
-    
-    // BlueZ 5.82 호환성 확보
-    void ensureBlueZ582Compatibility();
-    
-    // 속성 접근자
-    const std::vector<std::string>& getIncludes() const { return includes; }
-    uint16_t getAppearance() const { return appearance; }
-    const std::string& getLocalName() const { return localName; }
-    bool getIncludeTxPower() const { return includeTxPower; }
-    const std::string& getPath() const { return object.getPath(); }
+
+    std::string getPath() const { return m_objectPath; }
     
 private:
-    // D-Bus 속성 게터
-    std::string getTypeProperty() const;
-    std::vector<std::string> getServiceUUIDsProperty() const;
-    std::map<uint16_t, sdbus::Variant> getManufacturerDataProperty() const;
-    std::map<std::string, sdbus::Variant> getServiceDataProperty() const;
-    
-    // 내부 상태
-    SDBusConnection& connection;
-    SDBusObject object;
-    AdvertisementType type;
-    std::vector<GattUuid> serviceUUIDs;
-    std::map<uint16_t, std::vector<uint8_t>> manufacturerData;
-    std::map<GattUuid, std::vector<uint8_t>> serviceData;
-    std::string localName;
-    uint16_t appearance;
-    uint16_t duration;
-    bool includeTxPower;
-    bool discoverable;
-    std::vector<std::string> includes;
-    bool interfaceSetup;
-    bool boundToBlueZ;
-    
-    // 대체 광고 방법
-    bool tryAlternativeAdvertisingMethods();
+    std::string m_objectPath;
+    std::string m_localName;
+    std::vector<std::string> m_serviceUUIDs;
+    std::vector<std::string> m_includes = {"tx-power", "local-name"};
 };
 
 } // namespace ggk

@@ -1,61 +1,52 @@
 // include/GattApplication.h
 #pragma once
 
-#include "SDBusInterface.h"
-#include "SDBusObject.h"
-#include "GattService.h"
-#include <vector>
+#include <sdbus-c++/sdbus-c++.h>
 #include <memory>
-#include <mutex>
+#include <string>
+#include "GattTypes.h"
 
 namespace ggk {
 
-    using ManagedObjectsDict = std::map<sdbus::ObjectPath, 
-                            std::map<std::string, 
-                            std::map<std::string, sdbus::Variant>>>;
-
 class GattApplication {
 public:
-    GattApplication(SDBusConnection& connection, const std::string& path = "/com/example/gatt");
-    virtual ~GattApplication();
+    // 생성자는 이미 생성된 연결과 객체를 받음
+    GattApplication(sdbus::IConnection& connection, 
+                    const std::string& path = "/com/example/ble");
+    ~GattApplication();
     
-    // 서비스 관리
-    bool addService(GattServicePtr service);
-    bool removeService(const GattUuid& uuid);
-    GattServicePtr getService(const GattUuid& uuid) const;
-    std::vector<GattServicePtr> getServices() const;
+    // 애플리케이션 설정하기
+    bool setupApplication();
     
-    // D-Bus 객체 등록 관리
-    bool registerObject();
-    bool unregisterObject();
-    bool isRegistered() const { return object.isRegistered(); }
+    // 서비스/특성/설명자 생성 메소드
+    bool createBatteryService();
     
-    // 인터페이스 설정
-    bool setupInterfaces();
-    bool bindToBlueZ();
-    bool unbindFromBlueZ();
-    bool isInterfaceSetup() const { return interfaceSetup; }
-    bool isBoundToBlueZ() const { return boundToBlueZ; }
+    // 광고 설정
+    bool setupAdvertisement(const std::string& name = "BleBatteryDevice");
     
-    // 객체 경로 접근자
-    const std::string& getPath() const { return object.getPath(); }
+    // BlueZ에 등록
+    bool registerWithBlueZ();
+    
+    // BlueZ에서 등록 해제
+    bool unregisterFromBlueZ();
+    
+    // 이벤트 루프 실행
+    void run();
     
 private:
-    // D-Bus 객체 핸들러
-    ManagedObjectsDict createManagedObjectsDict();
+    sdbus::IConnection& m_connection;
+    std::string m_path;
+    std::shared_ptr<sdbus::IObject> m_appObject;
     
-    // 서비스 등록/해제
-    bool registerServices();
-    void unregisterServices();
+    // 서비스, 특성, 설명자 컨테이너
+    std::vector<std::shared_ptr<void>> m_services;
+    std::vector<std::shared_ptr<void>> m_characteristics;
+    std::vector<std::shared_ptr<void>> m_descriptors;
     
-    // 내부 상태
-    SDBusConnection& connection;
-    SDBusObject object;
-    std::vector<GattServicePtr> services;
-    mutable std::mutex servicesMutex;
-    bool registered;
-    bool interfaceSetup;
-    bool boundToBlueZ;
+    // 광고 객체
+    std::shared_ptr<void> m_advertisement;
+    
+    bool m_registered = false;
 };
 
-}
+} // namespace ggk
