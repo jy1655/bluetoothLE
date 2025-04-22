@@ -45,6 +45,7 @@ private:
     
     // 광고 객체
     std::shared_ptr<void> m_advertisement;
+    sdbus::Slot m_objectManagerSlot;
     
     bool m_registered = false;
 };

@@ -1,6 +1,7 @@
 // src/LEAdvertisement.cpp
 #include "GattAdvertisement.h"
 #include <iostream>
+#include <algorithm>
 
 namespace ggk {
 
@@ -18,6 +19,7 @@ LEAdvertisement::LEAdvertisement(sdbus::IConnection& connection,
 
 LEAdvertisement::~LEAdvertisement() {
     // 어댑터 등록 해제
+    getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::LEAdvertisement1_adaptor::INTERFACE_NAME}});
     unregisterAdaptor();
     std::cout << "LEAdvertisement 소멸됨: " << m_objectPath << std::endl;
 }
@@ -56,6 +58,37 @@ std::map<std::string, sdbus::Variant> LEAdvertisement::ServiceData() {
     return {};
 }
 
+std::map<uint8_t, sdbus::Variant> LEAdvertisement::Data() {
+    // BlueZ 5.82에서 추가된 속성
+    // 임의의 광고 데이터를 설정할 수 있음
+    return {};
+}
+
+std::vector<std::string> LEAdvertisement::ScanResponseServiceUUIDs() {
+    // BlueZ 5.82에서 추가된 속성: 스캔 응답에 포함할 서비스 UUID
+    return {};
+}
+
+std::map<uint16_t, sdbus::Variant> LEAdvertisement::ScanResponseManufacturerData() {
+    // BlueZ 5.82에서 추가된 속성: 스캔 응답에 포함할 제조사 데이터
+    return {};
+}
+
+std::vector<std::string> LEAdvertisement::ScanResponseSolicitUUIDs() {
+    // BlueZ 5.82에서 추가된 속성: 스캔 응답에 포함할 Solicit UUID
+    return {};
+}
+
+std::map<std::string, sdbus::Variant> LEAdvertisement::ScanResponseServiceData() {
+    // BlueZ 5.82에서 추가된 속성: 스캔 응답에 포함할 서비스 데이터
+    return {};
+}
+
+std::map<uint8_t, sdbus::Variant> LEAdvertisement::ScanResponseData() {
+    // BlueZ 5.82에서 추가된 속성: 스캔 응답에 포함할 임의 데이터
+    return {};
+}
+
 std::vector<std::string> LEAdvertisement::Includes() {
     return m_includes;
 }
@@ -84,6 +117,7 @@ uint16_t LEAdvertisement::Timeout() {
 
 std::string LEAdvertisement::SecondaryChannel() {
     // 보조 광고 채널 (일반적으로 사용하지 않음)
+    // "1M" (기본값), "2M", "Coded" 중 하나
     return "";
 }
 
@@ -99,12 +133,14 @@ uint16_t LEAdvertisement::DiscoverableTimeout() {
 }
 
 uint32_t LEAdvertisement::MinInterval() {
-    // 최소 광고 간격 (일반적으로 사용하지 않음)
+    // 최소 광고 간격 (마이크로초)
+    // 0 = 시스템 기본값 사용
     return 0;
 }
 
 uint32_t LEAdvertisement::MaxInterval() {
-    // 최대 광고 간격 (일반적으로 사용하지 않음)
+    // 최대 광고 간격 (마이크로초)
+    // 0 = 시스템 기본값 사용
     return 0;
 }
 

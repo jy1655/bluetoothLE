@@ -17,13 +17,12 @@ GattDescriptor::GattDescriptor(sdbus::IConnection& connection,
     
     // 인터페이스 등록
     registerAdaptor();
-    //getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::GattDescriptor1_adaptor::INTERFACE_NAME}});
     std::cout << "GattDescriptor 생성됨: " << m_objectPath << " (UUID: " << uuid.toString() << ")" << std::endl;
 }
 
 GattDescriptor::~GattDescriptor() {
     // 어댑터 등록 해제
-    //getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattDescriptor1_adaptor::INTERFACE_NAME}});
+    getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattDescriptor1_adaptor::INTERFACE_NAME}});
     unregisterAdaptor();
     std::cout << "GattDescriptor 소멸됨: " << m_objectPath << std::endl;
 }
@@ -104,6 +103,10 @@ sdbus::ObjectPath GattDescriptor::Characteristic() {
     return sdbus::ObjectPath(m_characteristicPath);
 }
 
+std::vector<uint8_t> GattDescriptor::Value() {
+    return m_value;
+}
+
 std::vector<std::string> GattDescriptor::Flags() {
     std::vector<std::string> flags;
     
@@ -121,6 +124,16 @@ std::vector<std::string> GattDescriptor::Flags() {
         flags.push_back("encrypt-authenticated-write");
     
     return flags;
+}
+
+uint16_t GattDescriptor::Handle() {
+    // BlueZ에 의해 할당된 핸들 값, 일반적으로 0x0000(자동 할당)
+    return 0x0000;
+}
+
+void GattDescriptor::Handle(const uint16_t& value) {
+    // 핸들 값 설정 - 일반적으로 동작하지 않음 (BlueZ가 관리)
+    // 구현만 존재하는 더미 함수
 }
 
 std::string GattDescriptor::getPath() const {

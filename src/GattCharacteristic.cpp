@@ -20,13 +20,12 @@ GattCharacteristic::GattCharacteristic(sdbus::IConnection& connection,
     
     // 인터페이스 등록
     registerAdaptor();
-    //getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME}});
     std::cout << "GattCharacteristic 생성됨: " << m_objectPath << " (UUID: " << uuid.toString() << ")" << std::endl;
 }
 
 GattCharacteristic::~GattCharacteristic() {
     // 어댑터 등록 해제
-    //getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME}});
+    getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME}});
     unregisterAdaptor();
     std::cout << "GattCharacteristic 소멸됨: " << m_objectPath << std::endl;
 }
@@ -88,8 +87,6 @@ void GattCharacteristic::WriteValue(const std::vector<uint8_t>& value, const std
         
         std::copy(value.begin(), value.end(), m_value.begin() + offset);
     }
-    
-    // 프로퍼티 변경 시그널은 생략 - BlueZ에서 처리
 }
 
 void GattCharacteristic::StartNotify() {
@@ -101,7 +98,6 @@ void GattCharacteristic::StartNotify() {
     
     if (!m_notifying) {
         m_notifying = true;
-        // 프로퍼티 변경 시그널은 생략 - BlueZ에서 처리
     }
 }
 
@@ -110,7 +106,6 @@ void GattCharacteristic::StopNotify() {
     
     if (m_notifying) {
         m_notifying = false;
-        // 프로퍼티 변경 시그널은 생략 - BlueZ에서 처리
     }
 }
 
@@ -124,6 +119,16 @@ sdbus::ObjectPath GattCharacteristic::Service() {
 
 std::vector<uint8_t> GattCharacteristic::Value() {
     return m_value;
+}
+
+bool GattCharacteristic::WriteAcquired() {
+    // BlueZ 5.82에서 추가된 속성: acquire-write를 사용할 경우 true
+    return false;
+}
+
+bool GattCharacteristic::NotifyAcquired() {
+    // BlueZ 5.82에서 추가된 속성: acquire-notify를 사용할 경우 true
+    return false;
 }
 
 bool GattCharacteristic::Notifying() {
@@ -149,6 +154,22 @@ std::vector<std::string> GattCharacteristic::Flags() {
         flags.push_back("authenticated-signed-writes");
     
     return flags;
+}
+
+uint16_t GattCharacteristic::Handle() {
+    // BlueZ에 의해 할당된 핸들 값, 일반적으로 0x0000(자동 할당)
+    return 0x0000;
+}
+
+void GattCharacteristic::Handle(const uint16_t& value) {
+    // 핸들 값 설정 - 일반적으로 동작하지 않음 (BlueZ가 관리)
+    // 구현만 존재하는 더미 함수
+}
+
+uint16_t GattCharacteristic::MTU() {
+    // BlueZ 5.82에서 추가된 속성: 현재 연결의 MTU 값
+    // 연결이 없으면 0 반환
+    return 0;
 }
 
 std::vector<sdbus::ObjectPath> GattCharacteristic::Descriptors() {

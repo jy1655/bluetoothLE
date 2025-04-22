@@ -20,6 +20,8 @@ public:
     std::string UUID() override;
     bool Primary() override;
     std::vector<sdbus::ObjectPath> Includes() override;
+    uint16_t Handle() override;
+    void Handle(const uint16_t& value) override;
     
     // 경로 얻기
     std::string getPath() const { return m_objectPath; }
@@ -27,6 +29,8 @@ public:
     // UUID 얻기
     GattUuid getUuid() const { return m_uuid; }
     
+    sdbus::IObject& getObject() { return AdaptorInterfaces::getObject(); }
+
 private:
     std::string m_objectPath;
     GattUuid m_uuid;

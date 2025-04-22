@@ -24,7 +24,10 @@ public:
     // 속성 구현
     std::string UUID() override;
     sdbus::ObjectPath Characteristic() override;
+    std::vector<uint8_t> Value() override;
     std::vector<std::string> Flags() override;
+    uint16_t Handle() override;
+    void Handle(const uint16_t& value) override;
     
     // 경로 얻기
     std::string getPath() const;
@@ -32,6 +35,8 @@ public:
     // 값 설정
     void setValue(const std::vector<uint8_t>& value);
     
+    sdbus::IObject& getObject() { return AdaptorInterfaces::getObject(); }
+
 private:
     std::string m_objectPath;
     GattUuid m_uuid;

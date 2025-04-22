@@ -2,11 +2,13 @@
 #include <sdbus-c++/sdbus-c++.h>
 #include <iostream>
 #include <csignal>
+#include <thread>
+#include <chrono>
 #include "GattApplication.h"
 
 static std::shared_ptr<sdbus::IConnection> g_connection;
 static std::shared_ptr<ggk::GattApplication> g_app;
-sdbus::ServiceName serviceName{"com.example.ble"};
+static sdbus::ServiceName serviceName{"com.example.ble"};
 
 // 시그널 핸들러
 static void signalHandler(int sig) {
@@ -25,43 +27,40 @@ static void signalHandler(int sig) {
 }
 
 int main() {
-    // 시그널 핸들러 등록
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
+    // 1. Create connection
+    auto connection = sdbus::createSystemBusConnection();
+    connection->requestName(sdbus::ServiceName("com.example.ble"));
+    connection->enterEventLoopAsync();
     
-    try {
-        // 1. D-Bus 연결 생성
-        g_connection = sdbus::createSystemBusConnection();
-        g_connection->requestName(serviceName);
-
-        // 2. GATT 애플리케이션 생성
-        g_app = std::make_unique<ggk::GattApplication>(*g_connection, sdbus::ObjectPath{"/com/example/ble"});
-        g_app->run();
-        
-        // 3. 서비스, 특성, 설명자 설정
-        if (!g_app->setupApplication()) {
-            std::cerr << "애플리케이션 설정 실패" << std::endl;
-            return 1;
-        }
-        
-        // 4. 광고 설정
-        if (!g_app->setupAdvertisement("Battery Service")) {
-            std::cerr << "광고 설정 실패" << std::endl;
-            return 1;
-        }
-
-        
-        
-        // 5. BlueZ에 등록
-        if (!g_app->registerWithBlueZ()) {
-            std::cerr << "BlueZ 등록 실패" << std::endl;
-            return 1;
-        }
+    // 2. Create GATT application
+    auto app = std::make_shared<ggk::GattApplication>(*connection, "/com/example/ble");
     
-        return 0;
-    }
-    catch (const std::exception& e) {
-        std::cerr << "예외 발생: " << e.what() << std::endl;
+    // 3. Set up all services and characteristics
+    if (!app->setupApplication()) {
+        std::cerr << "Failed to set up application" << std::endl;
         return 1;
     }
+    
+    // 4. Set up advertisement
+    if (!app->setupAdvertisement("My BLE Device")) {
+        std::cerr << "Failed to set up advertisement" << std::endl;
+        return 1;
+    }
+    
+    // 5. Register with BlueZ (only after everything is set up)
+    if (!app->registerWithBlueZ()) {
+        std::cerr << "Failed to register with BlueZ" << std::endl;
+        return 1;
+    }
+    
+    // Wait for signals/interrupts
+    std::cout << "BLE peripheral running. Press Ctrl+C to exit." << std::endl;
+    pause();
+    
+    // Clean up
+    app->unregisterFromBlueZ();
+    connection->releaseName(sdbus::ServiceName("com.example.ble"));
+    connection->leaveEventLoop();
+    
+    return 0;
 }
