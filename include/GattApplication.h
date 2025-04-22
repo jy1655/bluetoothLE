@@ -1,4 +1,3 @@
-// include/GattApplication.h
 #pragma once
 
 #include <sdbus-c++/sdbus-c++.h>
@@ -7,6 +6,11 @@
 #include "GattTypes.h"
 
 namespace ggk {
+
+class GattService;
+class GattCharacteristic;
+class GattDescriptor;
+class LEAdvertisement;
 
 class GattApplication {
 public:
@@ -37,15 +41,15 @@ private:
     sdbus::IConnection& m_connection;
     std::string m_path;
     std::shared_ptr<sdbus::IObject> m_appObject;
+    sdbus::Slot m_objectManagerSlot;
     
     // 서비스, 특성, 설명자 컨테이너
-    std::vector<std::shared_ptr<void>> m_services;
-    std::vector<std::shared_ptr<void>> m_characteristics;
-    std::vector<std::shared_ptr<void>> m_descriptors;
+    std::vector<std::shared_ptr<GattService>> m_services;
+    std::vector<std::shared_ptr<GattCharacteristic>> m_characteristics;
+    std::vector<std::shared_ptr<GattDescriptor>> m_descriptors;
     
     // 광고 객체
-    std::shared_ptr<void> m_advertisement;
-    sdbus::Slot m_objectManagerSlot;
+    std::shared_ptr<LEAdvertisement> m_advertisement;
     
     bool m_registered = false;
 };
