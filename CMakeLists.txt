@@ -13,7 +13,20 @@ endif()
 
 # Find required packages
 find_package(PkgConfig REQUIRED)
+
+# ▶️ sdbus-c++ 경로 힌트 추가 (자동 탐색)
+list(APPEND CMAKE_PREFIX_PATH
+    /usr/lib/aarch64-linux-gnu
+    /usr/lib/aarch64-linux-gnu/cmake/sdbus-c++
+    /usr/local/lib
+    /usr/local/lib/cmake/sdbus-c++
+    /usr
+    /usr/local
+)
+
+# sdbus-c++ 찾기
 find_package(sdbus-c++ REQUIRED)
+
 pkg_check_modules(GLIB REQUIRED glib-2.0)
 pkg_check_modules(GIO REQUIRED gio-2.0)
 pkg_check_modules(BLUEZ REQUIRED bluez)
