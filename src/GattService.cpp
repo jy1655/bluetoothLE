@@ -1,32 +1,39 @@
-// src/GattService.cpp
+// GattService.cpp
 #include "GattService.h"
 #include <iostream>
 
-namespace ggk {
+namespace ble {
 
 GattService::GattService(sdbus::IConnection& connection, 
-                         const std::string& path,
-                         const GattUuid& uuid, 
-                         bool isPrimary)
+                       const std::string& path,
+                       const std::string& uuid, 
+                       bool isPrimary)
     : AdaptorInterfaces(connection, sdbus::ObjectPath(path)),
       m_objectPath(path),
       m_uuid(uuid),
       m_isPrimary(isPrimary) {
     
-    // 인터페이스 등록
+    // Register the adaptor interface
     registerAdaptor();
-    std::cout << "GattService 생성됨: " << m_objectPath << " (UUID: " << uuid.toString() << ")" << std::endl;
+    
+    // Emit the InterfacesAdded signal for this object
+    getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::GattService1_adaptor::INTERFACE_NAME}});
+    
+    std::cout << "GattService created: " << m_objectPath << " (UUID: " << uuid << ")" << std::endl;
 }
 
 GattService::~GattService() {
-    // 어댑터 등록 해제
+    // Emit the InterfacesRemoved signal when this object is destroyed
     getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattService1_adaptor::INTERFACE_NAME}});
+    
+    // Unregister the adaptor
     unregisterAdaptor();
-    std::cout << "GattService 소멸됨: " << m_objectPath << std::endl;
+    
+    std::cout << "GattService destroyed: " << m_objectPath << std::endl;
 }
 
 std::string GattService::UUID() {
-    return m_uuid.toBlueZFormat();
+    return m_uuid;
 }
 
 bool GattService::Primary() {
@@ -34,18 +41,18 @@ bool GattService::Primary() {
 }
 
 std::vector<sdbus::ObjectPath> GattService::Includes() {
-    // 이 서비스가 포함하는 다른 서비스 목록 (일반적으로 비어있음)
+    // List of included services, usually empty
     return {};
 }
 
 uint16_t GattService::Handle() {
-    // BlueZ에 의해 할당된 핸들 값, 일반적으로 0x0000(자동 할당)
-    return 0x0000;
+    // BlueZ-assigned handle value, typically 0x0000 (auto-assign)
+    return m_handle;
 }
 
 void GattService::Handle(const uint16_t& value) {
-    // 핸들 값 설정 - 일반적으로 동작하지 않음 (BlueZ가 관리)
-    // 구현만 존재하는 더미 함수
+    // Handle value setter - typically not used (BlueZ manages it)
+    m_handle = value;
 }
 
-} // namespace ggk
+} // namespace ble

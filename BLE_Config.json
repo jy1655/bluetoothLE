@@ -1,0 +1,47 @@
+{
+    "connection": {
+      "dbus_service_name": "com.example.ble",
+      "bluez_adapter_path": "/org/bluez/hci0"
+    },
+    "application": {
+      "base_path": "/com/example/ble",
+      "advertisement": {
+        "path": "/com/example/ble/adv0",
+        "type": "peripheral",
+        "local_name": "My BLE Device",
+        "includes": ["tx-power", "local-name", "service-uuids"],
+        "discoverable": true,
+        "manufacturer_data": {
+          "0x0059": [1, 2, 3, 4]
+        },
+        "appearance": 0,
+        "duration": 0,
+        "timeout": 0,
+        "tx_power": -127,
+        "min_interval": 0,
+        "max_interval": 0
+      },
+      "services": [
+        {
+          "uuid": "0000180f-0000-1000-8000-00805f9b34fb",
+          "path": "/com/example/ble/service0",
+          "primary": true,
+          "characteristics": [
+            {
+              "uuid": "00002a19-0000-1000-8000-00805f9b34fb",
+              "path": "/com/example/ble/service0/char0",
+              "properties": ["read"],
+              "flags": ["read"],
+              "initial_value": [50],
+              "descriptors": []
+            }
+          ]
+        }
+      ]
+    },
+    "performance": {
+      "registration_timeout": 30,
+      "retry_attempts": 3,
+      "retry_interval": 5
+    }
+}

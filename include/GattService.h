@@ -1,40 +1,38 @@
-// include/GattService.h
+// GattService.h
 #pragma once
 
 #include <sdbus-c++/sdbus-c++.h>
-#include "GattTypes.h"
+#include <string>
+#include "BleConstants.h"
 #include "xml/GattService1.h"
 
-namespace ggk {
+namespace ble {
 
 class GattService : public sdbus::AdaptorInterfaces<org::bluez::GattService1_adaptor> {
 public:
     GattService(sdbus::IConnection& connection, 
-                const std::string& path,
-                const GattUuid& uuid, 
-                bool isPrimary);
+               const std::string& path,
+               const std::string& uuid, 
+               bool isPrimary);
     
-    ~GattService();
+    virtual ~GattService();
     
-    // GattService1_adaptor 필수 메소드 구현
+    // GattService1_adaptor required methods
     std::string UUID() override;
     bool Primary() override;
     std::vector<sdbus::ObjectPath> Includes() override;
     uint16_t Handle() override;
     void Handle(const uint16_t& value) override;
     
-    // 경로 얻기
+    // Utility methods
     std::string getPath() const { return m_objectPath; }
+    std::string getUuid() const { return m_uuid; }
     
-    // UUID 얻기
-    GattUuid getUuid() const { return m_uuid; }
-    
-    sdbus::IObject& getObject() { return AdaptorInterfaces::getObject(); }
-
 private:
     std::string m_objectPath;
-    GattUuid m_uuid;
+    std::string m_uuid;
     bool m_isPrimary;
+    uint16_t m_handle = 0;
 };
 
-} // namespace ggk
+} // namespace ble

@@ -31,7 +31,20 @@ sudo kill -9 1234  # 위에서 찾은 PID 입력
 
 sudo dbus-monitor --system "interface=org.bluez.GattManager1"
 sudo dbus-monitor --system "interface=org.freedesktop.DBus.ObjectManager"
+sudo dbus-monitor --system "sender='org.bluez'" "interface='org.bluez.LEAdvertisingManager1'"
+
 ```
+
+```bash
+# Bluetooth 서비스 중지
+sudo systemctl stop bluetooth
+# 디버그 모드로 bluetoothd 실행
+sudo /usr/lib/bluetooth/bluetoothd -d -n
+```
+
+
+
+
 
 
 ```bash

@@ -1,24 +1,26 @@
-// include/LEAdvertisement.h
+// BleAdvertisement.h
 #pragma once
 
 #include <sdbus-c++/sdbus-c++.h>
-#include "GattTypes.h"
+#include <string>
+#include <vector>
+#include <map>
 #include "xml/LEAdvertisement1.h"
 
-namespace ggk {
+namespace ble {
 
-class LEAdvertisement : public sdbus::AdaptorInterfaces<org::bluez::LEAdvertisement1_adaptor> {
+class BleAdvertisement : public sdbus::AdaptorInterfaces<org::bluez::LEAdvertisement1_adaptor> {
 public:
-    LEAdvertisement(sdbus::IConnection& connection,
-                   const std::string& path,
-                   const std::string& name);
+    BleAdvertisement(sdbus::IConnection& connection,
+                    const std::string& path,
+                    const std::string& name);
     
-    ~LEAdvertisement();
+    virtual ~BleAdvertisement();
     
-    // LEAdvertisement1_adaptor 필수 메소드 구현
+    // LEAdvertisement1_adaptor required methods
     void Release() override;
     
-    // 속성 구현
+    // Property getters
     std::string Type() override;
     std::vector<std::string> ServiceUUIDs() override;
     std::map<uint16_t, sdbus::Variant> ManufacturerData() override;
@@ -26,13 +28,14 @@ public:
     std::map<std::string, sdbus::Variant> ServiceData() override;
     std::map<uint8_t, sdbus::Variant> Data() override;
     
-    // BlueZ 5.82 스캔 응답 속성
+    // BlueZ 5.82 scan response properties
     std::vector<std::string> ScanResponseServiceUUIDs() override;
     std::map<uint16_t, sdbus::Variant> ScanResponseManufacturerData() override;
     std::vector<std::string> ScanResponseSolicitUUIDs() override;
     std::map<std::string, sdbus::Variant> ScanResponseServiceData() override;
     std::map<uint8_t, sdbus::Variant> ScanResponseData() override;
     
+    // Other properties
     std::vector<std::string> Includes() override;
     std::string LocalName() override;
     uint16_t Appearance() override;
@@ -45,18 +48,18 @@ public:
     uint32_t MaxInterval() override;
     int16_t TxPower() override;
     
-    // 서비스 UUID 추가
-    void addServiceUUID(const GattUuid& uuid);
-
+    // Service UUID management
+    void addServiceUUID(const std::string& uuid);
+    
+    // Utility methods
     std::string getPath() const { return m_objectPath; }
     
-    sdbus::IObject& getObject() { return AdaptorInterfaces::getObject(); }
-
 private:
     std::string m_objectPath;
     std::string m_localName;
     std::vector<std::string> m_serviceUUIDs;
     std::vector<std::string> m_includes = {"tx-power", "local-name"};
+    std::map<uint16_t, sdbus::Variant> m_manufacturerData;
 };
 
-} // namespace ggk
+} // namespace ble

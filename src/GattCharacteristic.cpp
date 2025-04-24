@@ -1,54 +1,61 @@
-// src/GattCharacteristic.cpp
+// GattCharacteristic.cpp
 #include "GattCharacteristic.h"
 #include <iostream>
 
-namespace ggk {
+namespace ble {
 
 GattCharacteristic::GattCharacteristic(sdbus::IConnection& connection,
-                                      const std::string& path,
-                                      const GattUuid& uuid,
-                                      uint8_t properties,
-                                      const std::string& servicePath)
+                                    const std::string& path,
+                                    const std::string& uuid,
+                                    uint8_t properties,
+                                    const std::string& servicePath)
     : AdaptorInterfaces(connection, sdbus::ObjectPath(path)),
       m_objectPath(path),
       m_uuid(uuid),
       m_properties(properties),
       m_servicePath(servicePath) {
     
-    // 초기값 설정
+    // Initialize value
     m_value = {0};
     
-    // 인터페이스 등록
+    // Register the adaptor
     registerAdaptor();
-    std::cout << "GattCharacteristic 생성됨: " << m_objectPath << " (UUID: " << uuid.toString() << ")" << std::endl;
+    
+    // Emit the InterfacesAdded signal for this object
+    getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME}});
+    
+    std::cout << "GattCharacteristic created: " << m_objectPath << " (UUID: " << uuid << ")" << std::endl;
 }
 
 GattCharacteristic::~GattCharacteristic() {
-    // 어댑터 등록 해제
+    // Emit the InterfacesRemoved signal when this object is destroyed
     getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME}});
+    
+    // Unregister the adaptor
     unregisterAdaptor();
-    std::cout << "GattCharacteristic 소멸됨: " << m_objectPath << std::endl;
+    
+    std::cout << "GattCharacteristic destroyed: " << m_objectPath << std::endl;
 }
 
 std::vector<uint8_t> GattCharacteristic::ReadValue(const std::map<std::string, sdbus::Variant>& options) {
-    std::cout << "ReadValue 호출됨: " << m_objectPath << std::endl;
+    std::cout << "ReadValue called on: " << m_objectPath << std::endl;
     
-    // 옵션 처리 (예: offset)
+    // Process options (e.g., offset)
     uint16_t offset = 0;
     if (options.count("offset") > 0) {
         try {
             offset = options.at("offset").get<uint16_t>();
         } catch (...) {
-            // 변환 실패 시 offset = 0 유지
+            // Keep offset = 0 if conversion fails
         }
     }
     
-    // 읽기 콜백이 있으면 사용
+    // Use the read callback if provided
     if (m_readCallback) {
         return m_readCallback();
     }
     
-    // 콜백이 없으면 저장된 값 반환
+    // Otherwise return the stored value
     if (offset < m_value.size()) {
         return std::vector<uint8_t>(m_value.begin() + offset, m_value.end());
     }
@@ -57,40 +64,52 @@ std::vector<uint8_t> GattCharacteristic::ReadValue(const std::map<std::string, s
 }
 
 void GattCharacteristic::WriteValue(const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
-    std::cout << "WriteValue 호출됨: " << m_objectPath << std::endl;
+    std::cout << "WriteValue called on: " << m_objectPath << std::endl;
     
-    // 옵션 처리 (예: offset)
+    // Process options (e.g., offset)
     uint16_t offset = 0;
     if (options.count("offset") > 0) {
         try {
             offset = options.at("offset").get<uint16_t>();
         } catch (...) {
-            // 변환 실패 시 offset = 0 유지
+            // Keep offset = 0 if conversion fails
         }
     }
     
-    // 쓰기 콜백이 있으면 사용
+    // Use the write callback if provided
     if (m_writeCallback) {
         if (!m_writeCallback(value)) {
             throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), "Write operation rejected by callback");
         }
     }
     
-    // 값 업데이트
+    // Update the value
     if (offset == 0) {
         m_value = value;
     } else {
-        // offset이 있는 경우 부분 업데이트
+        // Handle partial writes with offset
         if (offset >= m_value.size()) {
             m_value.resize(offset + value.size(), 0);
         }
         
         std::copy(value.begin(), value.end(), m_value.begin() + offset);
     }
+    
+    // Print the received value for debugging
+    std::cout << "Written value: ";
+    for (auto byte : value) {
+        std::cout << std::hex << static_cast<int>(byte) << " ";
+    }
+    std::cout << std::dec << std::endl;
+    
+    // Emit PropertiesChanged if this is a read & notify characteristic
+    if (m_properties & GattProperty::PROP_NOTIFY) {
+        notifyValueChanged();
+    }
 }
 
 void GattCharacteristic::StartNotify() {
-    std::cout << "StartNotify 호출됨: " << m_objectPath << std::endl;
+    std::cout << "StartNotify called on: " << m_objectPath << std::endl;
     
     if (!(m_properties & (GattProperty::PROP_NOTIFY | GattProperty::PROP_INDICATE))) {
         throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.NotSupported"), "Characteristic does not support notifications");
@@ -102,7 +121,7 @@ void GattCharacteristic::StartNotify() {
 }
 
 void GattCharacteristic::StopNotify() {
-    std::cout << "StopNotify 호출됨: " << m_objectPath << std::endl;
+    std::cout << "StopNotify called on: " << m_objectPath << std::endl;
     
     if (m_notifying) {
         m_notifying = false;
@@ -110,7 +129,7 @@ void GattCharacteristic::StopNotify() {
 }
 
 std::string GattCharacteristic::UUID() {
-    return m_uuid.toBlueZFormat();
+    return m_uuid;
 }
 
 sdbus::ObjectPath GattCharacteristic::Service() {
@@ -122,12 +141,12 @@ std::vector<uint8_t> GattCharacteristic::Value() {
 }
 
 bool GattCharacteristic::WriteAcquired() {
-    // BlueZ 5.82에서 추가된 속성: acquire-write를 사용할 경우 true
+    // Always return false as we don't support acquire-write
     return false;
 }
 
 bool GattCharacteristic::NotifyAcquired() {
-    // BlueZ 5.82에서 추가된 속성: acquire-notify를 사용할 경우 true
+    // Always return false as we don't support acquire-notify
     return false;
 }
 
@@ -152,36 +171,45 @@ std::vector<std::string> GattCharacteristic::Flags() {
         flags.push_back("indicate");
     if (m_properties & GattProperty::PROP_AUTHENTICATED_SIGNED_WRITES)
         flags.push_back("authenticated-signed-writes");
+    if (m_properties & GattProperty::PROP_EXTENDED_PROPERTIES)
+        flags.push_back("extended-properties");
     
     return flags;
 }
 
 uint16_t GattCharacteristic::Handle() {
-    // BlueZ에 의해 할당된 핸들 값, 일반적으로 0x0000(자동 할당)
-    return 0x0000;
+    // BlueZ-assigned handle value, typically 0x0000 (auto-assign)
+    return m_handle;
 }
 
 void GattCharacteristic::Handle(const uint16_t& value) {
-    // 핸들 값 설정 - 일반적으로 동작하지 않음 (BlueZ가 관리)
-    // 구현만 존재하는 더미 함수
+    // Handle value setter - typically not used (BlueZ manages it)
+    m_handle = value;
 }
 
 uint16_t GattCharacteristic::MTU() {
-    // BlueZ 5.82에서 추가된 속성: 현재 연결의 MTU 값
-    // 연결이 없으면 0 반환
+    // Return 0 for no connection or let BlueZ provide the actual value
     return 0;
-}
-
-std::vector<sdbus::ObjectPath> GattCharacteristic::Descriptors() {
-    std::vector<sdbus::ObjectPath> paths;
-    for (const auto& path : m_descriptorPaths) {
-        paths.push_back(sdbus::ObjectPath(path));
-    }
-    return paths;
 }
 
 void GattCharacteristic::setValue(const std::vector<uint8_t>& value) {
     m_value = value;
 }
 
-} // namespace ggk
+void GattCharacteristic::notifyValueChanged() {
+    if (m_notifying && (m_properties & GattProperty::PROP_NOTIFY)) {
+        // Create a vector of property names to notify
+        std::vector<sdbus::PropertyName> properties;
+        properties.push_back(sdbus::PropertyName("Value"));
+        
+        // Emit a PropertiesChanged signal for the Value property
+        getObject().emitPropertiesChangedSignal(
+            org::bluez::GattCharacteristic1_adaptor::INTERFACE_NAME,
+            properties
+        );
+        
+        std::cout << "Notification sent for: " << m_objectPath << std::endl;
+    }
+}
+
+} // namespace ble

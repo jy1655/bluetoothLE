@@ -1,12 +1,12 @@
-// src/GattDescriptor.cpp
+// GattDescriptor.cpp
 #include "GattDescriptor.h"
 #include <iostream>
 
-namespace ggk {
+namespace ble {
 
 GattDescriptor::GattDescriptor(sdbus::IConnection& connection,
                              const std::string& path,
-                             const GattUuid& uuid,
+                             const std::string& uuid,
                              uint8_t permissions,
                              const std::string& characteristicPath)
     : AdaptorInterfaces(connection, sdbus::ObjectPath(path)),
@@ -15,37 +15,44 @@ GattDescriptor::GattDescriptor(sdbus::IConnection& connection,
       m_permissions(permissions),
       m_characteristicPath(characteristicPath) {
     
-    // 인터페이스 등록
+    // Register the adaptor
     registerAdaptor();
-    std::cout << "GattDescriptor 생성됨: " << m_objectPath << " (UUID: " << uuid.toString() << ")" << std::endl;
+    
+    // Emit the InterfacesAdded signal for this object
+    getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::GattDescriptor1_adaptor::INTERFACE_NAME}});
+    
+    std::cout << "GattDescriptor created: " << m_objectPath << " (UUID: " << uuid << ")" << std::endl;
 }
 
 GattDescriptor::~GattDescriptor() {
-    // 어댑터 등록 해제
+    // Emit the InterfacesRemoved signal when this object is destroyed
     getObject().emitInterfacesRemovedSignal({sdbus::InterfaceName{org::bluez::GattDescriptor1_adaptor::INTERFACE_NAME}});
+    
+    // Unregister the adaptor
     unregisterAdaptor();
-    std::cout << "GattDescriptor 소멸됨: " << m_objectPath << std::endl;
+    
+    std::cout << "GattDescriptor destroyed: " << m_objectPath << std::endl;
 }
 
 std::vector<uint8_t> GattDescriptor::ReadValue(const std::map<std::string, sdbus::Variant>& options) {
-    std::cout << "Descriptor ReadValue 호출됨: " << m_objectPath << std::endl;
+    std::cout << "Descriptor ReadValue called on: " << m_objectPath << std::endl;
     
-    // 옵션 처리 (예: offset)
+    // Process options (e.g., offset)
     uint16_t offset = 0;
     if (options.count("offset") > 0) {
         try {
             offset = options.at("offset").get<uint16_t>();
         } catch (...) {
-            // 변환 실패 시 offset = 0 유지
+            // Keep offset = 0 if conversion fails
         }
     }
     
-    // 읽기 콜백이 있으면 사용
+    // Use the read callback if provided
     if (m_readCallback) {
         return m_readCallback();
     }
     
-    // 콜백이 없으면 저장된 값 반환
+    // Otherwise return the stored value
     if (offset < m_value.size()) {
         return std::vector<uint8_t>(m_value.begin() + offset, m_value.end());
     }
@@ -54,49 +61,64 @@ std::vector<uint8_t> GattDescriptor::ReadValue(const std::map<std::string, sdbus
 }
 
 void GattDescriptor::WriteValue(const std::vector<uint8_t>& value, const std::map<std::string, sdbus::Variant>& options) {
-    std::cout << "Descriptor WriteValue 호출됨: " << m_objectPath << std::endl;
+    std::cout << "Descriptor WriteValue called on: " << m_objectPath << std::endl;
     
-    // 옵션 처리 (예: offset)
+    // Process options (e.g., offset)
     uint16_t offset = 0;
     if (options.count("offset") > 0) {
         try {
             offset = options.at("offset").get<uint16_t>();
         } catch (...) {
-            // 변환 실패 시 offset = 0 유지
+            // Keep offset = 0 if conversion fails
         }
     }
     
-    // CCCD (Client Characteristic Configuration Descriptor, UUID 0x2902) 특별 처리
-    if (m_uuid.toBlueZFormat() == "00002902-0000-1000-8000-00805f9b34fb") {
-        std::cout << "CCCD 값 설정: ";
+    // Special handling for CCCD (Client Characteristic Configuration Descriptor)
+    if (m_uuid == BleConstants::CCCD_UUID) {
+        std::cout << "CCCD value set: ";
         if (!value.empty()) {
-            std::cout << "0x" << std::hex << (int)value[0] << std::dec;
+            std::cout << "0x" << std::hex << static_cast<int>(value[0]) << std::dec;
         }
         std::cout << std::endl;
     }
     
-    // 쓰기 콜백이 있으면 사용
+    // Use the write callback if provided
     if (m_writeCallback) {
         if (!m_writeCallback(value)) {
             throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Failed"), "Write operation rejected by callback");
         }
     }
     
-    // 값 업데이트
+    // Update the value
     if (offset == 0) {
         m_value = value;
     } else {
-        // offset이 있는 경우 부분 업데이트
+        // Handle partial writes with offset
         if (offset >= m_value.size()) {
             m_value.resize(offset + value.size(), 0);
         }
         
         std::copy(value.begin(), value.end(), m_value.begin() + offset);
     }
+    
+    // Print the received value for debugging
+    std::cout << "Descriptor value: ";
+    for (auto byte : value) {
+        std::cout << std::hex << static_cast<int>(byte) << " ";
+    }
+    std::cout << std::dec << std::endl;
+    
+    // Emit PropertiesChanged signal for Value property
+    std::vector<sdbus::PropertyName> properties;
+    properties.push_back(sdbus::PropertyName("Value"));
+    getObject().emitPropertiesChangedSignal(
+        org::bluez::GattDescriptor1_adaptor::INTERFACE_NAME,
+        properties
+    );
 }
 
 std::string GattDescriptor::UUID() {
-    return m_uuid.toBlueZFormat();
+    return m_uuid;
 }
 
 sdbus::ObjectPath GattDescriptor::Characteristic() {
@@ -127,21 +149,26 @@ std::vector<std::string> GattDescriptor::Flags() {
 }
 
 uint16_t GattDescriptor::Handle() {
-    // BlueZ에 의해 할당된 핸들 값, 일반적으로 0x0000(자동 할당)
-    return 0x0000;
+    // BlueZ-assigned handle value, typically 0x0000 (auto-assign)
+    return m_handle;
 }
 
 void GattDescriptor::Handle(const uint16_t& value) {
-    // 핸들 값 설정 - 일반적으로 동작하지 않음 (BlueZ가 관리)
-    // 구현만 존재하는 더미 함수
-}
-
-std::string GattDescriptor::getPath() const {
-    return m_objectPath;
+    // Handle value setter - typically not used (BlueZ manages it)
+    m_handle = value;
 }
 
 void GattDescriptor::setValue(const std::vector<uint8_t>& value) {
     m_value = value;
+    
+    // Emit PropertiesChanged signal for Value property
+    std::vector<sdbus::PropertyName> properties;
+    properties.push_back(sdbus::PropertyName("Value"));
+    
+    getObject().emitPropertiesChangedSignal(
+        org::bluez::GattDescriptor1_adaptor::INTERFACE_NAME,
+        properties
+    );
 }
 
-} // namespace ggk
+} // namespace ble
