@@ -1,20 +1,27 @@
 // BleAdvertisement.cpp
 #include "BleAdvertisement.h"
+#include "BleConstants.h"
 #include <iostream>
 #include <algorithm>
 
 namespace ble {
 
 BleAdvertisement::BleAdvertisement(sdbus::IConnection& connection,
-                                 const std::string& path,
-                                 const std::string& name)
+                               const std::string& path,
+                               const std::string& name)
     : AdaptorInterfaces(connection, sdbus::ObjectPath(path)),
       m_objectPath(path),
-      m_localName(name) {
+      m_localName(name.substr(0, 8)) { // Limit name length to 8 characters
     
-    // Set up manufacturer data (example: using Nordic Semiconductor's ID)
-    std::vector<uint8_t> mfgData = {0x01, 0x02, 0x03, 0x04};
-    m_manufacturerData[0x0059] = sdbus::Variant(mfgData);  // 0x0059 is Nordic Semiconductor
+    // We'll only include essential data
+    // Either include manufacturer data OR service UUIDs, not both
+    
+    // Option 1: Keep manufacturer data, skip service UUIDs initially
+    std::vector<uint8_t> mfgData = {0x01, 0x02};  // Make this smaller
+    m_manufacturerData[0x0059] = sdbus::Variant(mfgData);
+    
+    // Minimal includes
+    m_includes = {"tx-power"};  // Keep only essential includes
     
     // Register the adaptor
     registerAdaptor();
@@ -22,7 +29,7 @@ BleAdvertisement::BleAdvertisement(sdbus::IConnection& connection,
     // Emit the InterfacesAdded signal for this object
     getObject().emitInterfacesAddedSignal({sdbus::InterfaceName{org::bluez::LEAdvertisement1_adaptor::INTERFACE_NAME}});
     
-    std::cout << "BleAdvertisement created: " << m_objectPath << " (Name: " << name << ")" << std::endl;
+    std::cout << "BleAdvertisement created: " << m_objectPath << " (Name: " << m_localName << ")" << std::endl;
 }
 
 BleAdvertisement::~BleAdvertisement() {
@@ -118,9 +125,9 @@ uint16_t BleAdvertisement::Timeout() {
 }
 
 std::string BleAdvertisement::SecondaryChannel() {
-    // Secondary advertising channel (not used)
-    // Can be "1M" (default), "2M", or "Coded"
-    return "";
+    // Secondary advertising channel
+    // Valid values: "1M" (default), "2M", or "Coded"
+    return "1M";  // Return the default value instead of empty string
 }
 
 bool BleAdvertisement::Discoverable() {
@@ -134,13 +141,15 @@ uint16_t BleAdvertisement::DiscoverableTimeout() {
 }
 
 uint32_t BleAdvertisement::MinInterval() {
-    // Minimum advertising interval in microseconds (0 = system default)
-    return 0;
+    // Minimum advertising interval in microseconds
+    // 20ms = 20,000 microseconds is a common minimum
+    return 20000;  // 20 milliseconds
 }
 
 uint32_t BleAdvertisement::MaxInterval() {
-    // Maximum advertising interval in microseconds (0 = system default)
-    return 0;
+    // Maximum advertising interval in microseconds
+    // 1s = 1,000,000 microseconds is a common maximum
+    return 1000000;  // 1 second
 }
 
 int16_t BleAdvertisement::TxPower() {
@@ -154,12 +163,27 @@ void BleAdvertisement::addServiceUUID(const std::string& uuid) {
         return;
     }
     
-    m_serviceUUIDs.push_back(uuid);
-    std::cout << "Service UUID added to advertisement: " << uuid << std::endl;
-    
-    // Add "service-uuids" to Includes if not already there
-    if (std::find(m_includes.begin(), m_includes.end(), "service-uuids") == m_includes.end()) {
-        m_includes.push_back("service-uuids");
+    // Only add essential service UUIDs to save space
+    // For standard services, limit to just one or two important ones
+    if (m_serviceUUIDs.empty()) {
+        m_serviceUUIDs.push_back(uuid);
+        std::cout << "Service UUID added to advertisement: " << uuid << std::endl;
+        
+        // Add "service-uuids" to Includes if not already there
+        if (std::find(m_includes.begin(), m_includes.end(), "service-uuids") == m_includes.end()) {
+            m_includes.push_back("service-uuids");
+        }
+    } else if (m_serviceUUIDs.size() < 2) { // Limit to max 2 service UUIDs
+        // Only add if it's an important service
+        if (uuid == BleConstants::BATTERY_SERVICE_UUID || 
+            uuid == BleConstants::DEVICE_INFO_SERVICE_UUID) {
+            m_serviceUUIDs.push_back(uuid);
+            std::cout << "Service UUID added to advertisement: " << uuid << std::endl;
+        } else {
+            std::cout << "Skipping non-essential service UUID to save advertisement space: " << uuid << std::endl;
+        }
+    } else {
+        std::cout << "Maximum service UUIDs reached, skipping: " << uuid << std::endl;
     }
 }
 
