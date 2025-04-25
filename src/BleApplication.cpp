@@ -19,12 +19,27 @@ BleApplication::BleApplication(sdbus::IConnection& connection, const std::string
 }
 
 BleApplication::~BleApplication() {
-    // Stop data simulation if running
+    // 데이터 시뮬레이션 중지
     stopDataSimulation();
     
-    // Unregister from BlueZ if registered
-    if (m_registered) {
-        unregisterFromBlueZ();
+    try {
+        // BlueZ에서 등록 해제
+        if (m_registered) {
+            unregisterFromBlueZ();
+        }
+        
+        // 광고 정리
+        if (m_advertisement) {
+            m_advertisement.reset();
+        }
+        
+        // 순서대로 정리: 먼저 디스크립터, 그 다음 특성, 마지막으로 서비스
+        m_descriptors.clear();
+        m_characteristics.clear();
+        m_services.clear();
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error during cleanup: " << e.what() << std::endl;
     }
 }
 
@@ -161,91 +176,150 @@ bool BleApplication::setupAdvertisement(const std::string& name) {
 bool BleApplication::registerWithBlueZ() {
     if (m_registered) return true;
     
-    try {
-        // Register the GATT application
-        auto gattManagerProxy = sdbus::createProxy(
-            m_connection, 
-            sdbus::ServiceName("org.bluez"), 
-            sdbus::ObjectPath("/org/bluez/hci0")
-        );
-        
-        // Empty options map
-        std::map<std::string, sdbus::Variant> options;
-        
-        std::cout << "Registering GATT application with BlueZ..." << std::endl;
-        
-        gattManagerProxy->callMethod("RegisterApplication")
-            .onInterface("org.bluez.GattManager1")
-            .withArguments(sdbus::ObjectPath(m_path), options);
-        
-        std::cout << "GATT application registered successfully" << std::endl;
-        
-        // Register the advertisement
-        if (m_advertisement) {
-            auto leAdvManagerProxy = sdbus::createProxy(
+    const int MAX_RETRIES = 3;
+    const int RETRY_DELAY_MS = 1000;
+    
+    for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            std::cout << "Registering GATT application with BlueZ (attempt " << attempt << "/" << MAX_RETRIES << ")..." << std::endl;
+            
+            // 1. 먼저 BlueZ가 올바르게 실행 중인지 확인
+            auto gattManagerProxy = sdbus::createProxy(
                 m_connection, 
                 sdbus::ServiceName("org.bluez"), 
                 sdbus::ObjectPath("/org/bluez/hci0")
             );
             
-            std::map<std::string, sdbus::Variant> advOptions;
+            // 인터페이스가 존재하는지 확인
+            bool interfaceExists = false;
+            try {
+                std::map<std::string, sdbus::Variant> props;
+                gattManagerProxy->callMethod("GetAll")
+                    .onInterface("org.freedesktop.DBus.Properties")
+                    .withArguments("org.bluez.GattManager1")
+                    .storeResultsTo(props);
+                interfaceExists = true;
+            } catch (const sdbus::Error& e) {
+                if (std::string(e.getName()) == "org.freedesktop.DBus.Error.UnknownInterface") {
+                    std::cerr << "GattManager1 interface not found - BlueZ might be outdated or not running" << std::endl;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                    continue;
+                }
+                throw;
+            }
             
-            std::cout << "Registering advertisement with BlueZ..." << std::endl;
+            if (!interfaceExists) {
+                std::cerr << "GattManager interface not found, retrying..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                continue;
+            }
             
-            leAdvManagerProxy->callMethod("RegisterAdvertisement")
-                .onInterface("org.bluez.LEAdvertisingManager1")
-                .withArguments(sdbus::ObjectPath(m_advertisement->getPath()), advOptions);
+            // Empty options map
+            std::map<std::string, sdbus::Variant> options;
             
-            std::cout << "Advertisement registered successfully" << std::endl;
+            // 2. GATT 애플리케이션 등록
+            gattManagerProxy->callMethod("RegisterApplication")
+                .onInterface("org.bluez.GattManager1")
+                .withArguments(sdbus::ObjectPath(m_path), options);
+            
+            std::cout << "GATT application registered successfully" << std::endl;
+            
+            // 3. 광고 등록
+            if (m_advertisement) {
+                auto leAdvManagerProxy = sdbus::createProxy(
+                    m_connection, 
+                    sdbus::ServiceName("org.bluez"), 
+                    sdbus::ObjectPath("/org/bluez/hci0")
+                );
+                
+                std::map<std::string, sdbus::Variant> advOptions;
+                
+                std::cout << "Registering advertisement with BlueZ..." << std::endl;
+                
+                leAdvManagerProxy->callMethod("RegisterAdvertisement")
+                    .onInterface("org.bluez.LEAdvertisingManager1")
+                    .withArguments(sdbus::ObjectPath(m_advertisement->getPath()), advOptions);
+                
+                std::cout << "Advertisement registered successfully" << std::endl;
+            }
+            
+            m_registered = true;
+            std::cout << "BLE Application registered with BlueZ successfully" << std::endl;
+            return true;
+            
+        } catch (const sdbus::Error& e) {
+            std::cerr << "Failed to register with BlueZ (attempt " << attempt << "): " 
+                      << e.getName() << " - " << e.getMessage() << std::endl;
+            
+            if (attempt < MAX_RETRIES) {
+                std::cerr << "Retrying in " << (RETRY_DELAY_MS/1000.0) << " seconds..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to register with BlueZ (attempt " << attempt << "): " 
+                      << e.what() << std::endl;
+                      
+            if (attempt < MAX_RETRIES) {
+                std::cerr << "Retrying in " << (RETRY_DELAY_MS/1000.0) << " seconds..." << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+            }
         }
-        
-        m_registered = true;
-        std::cout << "BLE Application registered with BlueZ successfully" << std::endl;
-        return true;
-    } catch (const sdbus::Error& e) {
-        std::cerr << "Failed to register with BlueZ: " << e.getName() << " - " << e.getMessage() << std::endl;
-        return false;
-    } catch (const std::exception& e) {
-        std::cerr << "Failed to register with BlueZ: " << e.what() << std::endl;
-        return false;
     }
+    
+    std::cerr << "All registration attempts failed" << std::endl;
+    return false;
 }
 
 bool BleApplication::unregisterFromBlueZ() {
     if (!m_registered) return true;
     
+    bool success = true;
+    
     try {
-        // Unregister the advertisement
+        // 광고 등록 해제
         if (m_advertisement) {
-            auto advManagerProxy = sdbus::createProxy(
+            try {
+                auto advManagerProxy = sdbus::createProxy(
+                    m_connection, 
+                    sdbus::ServiceName("org.bluez"), 
+                    sdbus::ObjectPath("/org/bluez/hci0")
+                );
+                
+                advManagerProxy->callMethod("UnregisterAdvertisement")
+                    .onInterface("org.bluez.LEAdvertisingManager1")
+                    .withArguments(sdbus::ObjectPath(m_advertisement->getPath()));
+                
+                std::cout << "Advertisement unregistered" << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << "Failed to unregister advertisement: " << e.what() << std::endl;
+                success = false;
+                // 계속 진행
+            }
+        }
+        
+        // GATT 애플리케이션 등록 해제
+        try {
+            auto gattManagerProxy = sdbus::createProxy(
                 m_connection, 
                 sdbus::ServiceName("org.bluez"), 
                 sdbus::ObjectPath("/org/bluez/hci0")
             );
             
-            advManagerProxy->callMethod("UnregisterAdvertisement")
-                .onInterface("org.bluez.LEAdvertisingManager1")
-                .withArguments(sdbus::ObjectPath(m_advertisement->getPath()));
+            gattManagerProxy->callMethod("UnregisterApplication")
+                .onInterface("org.bluez.GattManager1")
+                .withArguments(sdbus::ObjectPath(m_path));
             
-            std::cout << "Advertisement unregistered" << std::endl;
+            std::cout << "BLE Application unregistered from BlueZ" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to unregister application: " << e.what() << std::endl;
+            success = false;
         }
         
-        // Unregister the GATT application
-        auto gattManagerProxy = sdbus::createProxy(
-            m_connection, 
-            sdbus::ServiceName("org.bluez"), 
-            sdbus::ObjectPath("/org/bluez/hci0")
-        );
-        
-        gattManagerProxy->callMethod("UnregisterApplication")
-            .onInterface("org.bluez.GattManager1")
-            .withArguments(sdbus::ObjectPath(m_path));
-        
         m_registered = false;
-        std::cout << "BLE Application unregistered from BlueZ" << std::endl;
-        return true;
+        return success;
     } catch (const std::exception& e) {
         std::cerr << "Failed to unregister from BlueZ: " << e.what() << std::endl;
+        m_registered = false;  // 어쨌든 등록 해제된 것으로 간주
         return false;
     }
 }

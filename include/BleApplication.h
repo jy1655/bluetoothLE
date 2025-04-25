@@ -18,7 +18,7 @@ class BleApplication {
 public:
     // Constructor takes a connection and a base path
     BleApplication(sdbus::IConnection& connection, 
-                  const std::string& path = "/com/ble/peripheral");
+                  const std::string& path = "/com/example/ble");
     
     // Destructor
     ~BleApplication();

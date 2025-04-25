@@ -85,74 +85,30 @@ bool BluetoothAdapter::startAdvertising() {
 }
 
 bool BluetoothAdapter::setupPermissions() {
-    // Create a BlueZ configuration file with permissive settings
-    const char* config = 
-        "[General]\n"
-        "ControllerMode = dual\n"
-        "Privacy = off\n"
-        "JustWorksRepairing = always\n"
-        "Security = low\n\n"
-        "[Policy]\n"
-        "AutoEnable = true\n"
-        "Pairable = true\n"
-        "PairableTimeout = 0\n"
-        "MinimumEncryptionKeySize = 1\n";
+    // 프로그래밍 방식으로 설정하는 대신 사전에 설정된 구성 사용
+    std::cout << "Using pre-configured Bluetooth settings..." << std::endl;
     
-    pid_t pid = fork();
-    if (pid == -1) {
-        std::cerr << "Fork failed" << std::endl;
+    // 시스템의 Bluetooth 서비스가 실행 중인지 확인
+    try {
+        auto systemBus = sdbus::createSystemBusConnection();
+        auto bluetoothProxy = sdbus::createProxy(
+            *systemBus,
+            sdbus::ServiceName("org.bluez"),
+            sdbus::ObjectPath("/org/bluez")
+        );
+        
+        // 연결 테스트 (GetManagedObjects 호출)
+        std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
+        bluetoothProxy->callMethod("GetManagedObjects")
+                       .onInterface("org.freedesktop.DBus.ObjectManager")
+                       .storeResultsTo(objects);
+        
+        std::cout << "Successfully connected to BlueZ" << std::endl;
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error connecting to BlueZ: " << e.what() << std::endl;
+        std::cerr << "Please ensure bluetoothd is running: 'sudo systemctl start bluetooth'" << std::endl;
         return false;
-    }
-    
-    if (pid == 0) {
-        // Child process
-        // Write the configuration to /etc/bluetooth/main.conf
-        execl("/bin/sh", "sh", "-c", 
-              std::string("echo '").append(config).append("' | sudo tee /etc/bluetooth/main.conf > /dev/null").c_str(),
-              nullptr);
-        
-        // If execl returns, it failed
-        exit(EXIT_FAILURE);
-    } else {
-        // Parent process
-        int status;
-        waitpid(pid, &status, 0);
-        
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
-            std::cout << "Bluetooth configuration file created successfully" << std::endl;
-            
-            // Now restart the bluetooth service
-            pid_t restart_pid = fork();
-            if (restart_pid == -1) {
-                std::cerr << "Fork failed for restart" << std::endl;
-                return false;
-            }
-            
-            if (restart_pid == 0) {
-                // Child process
-                execl("/bin/sh", "sh", "-c", "sudo systemctl restart bluetooth", nullptr);
-                
-                // If execl returns, it failed
-                exit(EXIT_FAILURE);
-            } else {
-                // Parent process
-                int restart_status;
-                waitpid(restart_pid, &restart_status, 0);
-                
-                if (WIFEXITED(restart_status) && WEXITSTATUS(restart_status) == 0) {
-                    std::cout << "Bluetooth service restarted successfully" << std::endl;
-                    // Give time for the bluetooth service to fully restart
-                    sleep(2);
-                    return true;
-                } else {
-                    std::cerr << "Failed to restart bluetooth service" << std::endl;
-                    return false;
-                }
-            }
-        } else {
-            std::cerr << "Failed to create bluetooth configuration file" << std::endl;
-            return false;
-        }
     }
 }
 
