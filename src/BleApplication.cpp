@@ -166,7 +166,12 @@ bool BleApplication::setupAdvertisement(const std::string& name) {
     
     // Add service UUIDs to the advertisement
     for (const auto& service : m_services) {
-        m_advertisement->addServiceUUID(service->getUuid());
+        std::string uuid = service->getUuid();
+        if (uuid == BleConstants::BATTERY_SERVICE_UUID || 
+            uuid == BleConstants::CUSTOM_SERVICE_UUID) {
+            m_advertisement->addServiceUUID(uuid);
+            std::cout << "Added essential service UUID to advertisement: " << uuid << std::endl;
+        }
     }
     
     std::cout << "Advertisement setup completed with name: " << name << std::endl;

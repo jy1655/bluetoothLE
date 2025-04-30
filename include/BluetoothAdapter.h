@@ -44,6 +44,8 @@ private:
     
     // Helper method to write properties
     bool writeProperty(const std::string& interface, const std::string& property, const sdbus::Variant& value);
+
+    bool removeDefaultUUIDs();
 };
 
 } // namespace ble

@@ -41,7 +41,7 @@ public:
     uint16_t Appearance() override;
     uint16_t Duration() override;
     uint16_t Timeout() override;
-    std::string SecondaryChannel() override;
+    // std::string SecondaryChannel() override;
     bool Discoverable() override;
     uint16_t DiscoverableTimeout() override;
     uint32_t MinInterval() override;

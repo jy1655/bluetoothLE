@@ -35,6 +35,8 @@ sudo dbus-monitor --system "sender='org.bluez'" "interface='org.bluez.LEAdvertis
 
 ```
 
+`sudo btmon`
+
 ```bash
 # Bluetooth 서비스 중지
 sudo systemctl stop bluetooth

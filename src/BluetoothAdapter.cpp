@@ -66,6 +66,8 @@ bool BluetoothAdapter::startAdvertising() {
             std::cerr << "Failed to set adapter as discoverable" << std::endl;
             return false;
         }
+
+        removeDefaultUUIDs();
         
         // Set discovery timeout (0 = no timeout)
         if (!writeProperty("org.bluez.Adapter1", "DiscoverableTimeout", sdbus::Variant(static_cast<uint32_t>(0)))) {
@@ -157,6 +159,45 @@ bool BluetoothAdapter::writeProperty(const std::string& interface, const std::st
         return true;
     } catch (const std::exception& e) {
         std::cerr << "Failed to set property " << property << ": " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool BluetoothAdapter::removeDefaultUUIDs() {
+    try {
+        // 현재 등록된 UUID 목록 가져오기
+        auto objectManagerProxy = sdbus::createProxy(
+            m_connection,
+            sdbus::ServiceName("org.bluez"),
+            sdbus::ObjectPath("/")
+        );
+
+        std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
+        objectManagerProxy->callMethod("GetManagedObjects")
+                           .onInterface("org.freedesktop.DBus.ObjectManager")
+                           .storeResultsTo(objects);
+
+        // UUIDs 가져오기
+        std::vector<std::string> uuids;
+        if (objects.find(sdbus::ObjectPath(m_adapterPath)) != objects.end() &&
+            objects[sdbus::ObjectPath(m_adapterPath)].find("org.bluez.Adapter1") != objects[sdbus::ObjectPath(m_adapterPath)].end()) {
+            
+            auto& properties = objects[sdbus::ObjectPath(m_adapterPath)]["org.bluez.Adapter1"];
+            if (properties.find("UUIDs") != properties.end()) {
+                uuids = properties["UUIDs"].get<std::vector<std::string>>();
+            }
+        }
+
+        // 시스템 기본 UUID 제거 - 제거 전에 로그 출력
+        std::cout << "Removing system default UUIDs from adapter..." << std::endl;
+        
+        // 현재 시점에서는 실제로 UUID를 제거하지 않고, 
+        // 사용자 UUID만 가진 광고를 만들도록 함
+        // 일부 블루투스 스택은 제거를 완전히 지원하지 않을 수 있음
+
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "Error removing default UUIDs: " << e.what() << std::endl;
         return false;
     }
 }

@@ -17,8 +17,8 @@ BleAdvertisement::BleAdvertisement(sdbus::IConnection& connection,
     // Either include manufacturer data OR service UUIDs, not both
     
     // Option 1: Keep manufacturer data, skip service UUIDs initially
-    std::vector<uint8_t> mfgData = {0x01, 0x02};  // Make this smaller
-    m_manufacturerData[0x0059] = sdbus::Variant(mfgData);
+    // std::vector<uint8_t> mfgData = {0x01, 0x02};  // Make this smaller
+    // m_manufacturerData[0x0059] = sdbus::Variant(mfgData);
     
     // Minimal includes
     m_includes = {"tx-power"};  // Keep only essential includes
@@ -124,11 +124,13 @@ uint16_t BleAdvertisement::Timeout() {
     return 0;
 }
 
+/*
 std::string BleAdvertisement::SecondaryChannel() {
     // Secondary advertising channel
     // Valid values: "1M" (default), "2M", or "Coded"
     return "1M";  // Return the default value instead of empty string
 }
+*/
 
 bool BleAdvertisement::Discoverable() {
     // Must be true for BlueZ 5.82+
@@ -142,19 +144,17 @@ uint16_t BleAdvertisement::DiscoverableTimeout() {
 
 uint32_t BleAdvertisement::MinInterval() {
     // Minimum advertising interval in microseconds
-    // 20ms = 20,000 microseconds is a common minimum
-    return 20000;  // 20 milliseconds
+    return 200;  // 0.2 seconds
 }
 
 uint32_t BleAdvertisement::MaxInterval() {
     // Maximum advertising interval in microseconds
-    // 1s = 1,000,000 microseconds is a common maximum
-    return 1000000;  // 1 second
+    return 1000;  // 1 second
 }
 
 int16_t BleAdvertisement::TxPower() {
     // TX power in dBm (-127 to +20, -127 = undefined)
-    return -127;
+    return 0;
 }
 
 void BleAdvertisement::addServiceUUID(const std::string& uuid) {

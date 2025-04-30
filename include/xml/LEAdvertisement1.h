@@ -52,7 +52,7 @@ protected:
                           , sdbus::registerProperty("Appearance").withGetter([this](){ return this->Appearance(); })
                           , sdbus::registerProperty("Duration").withGetter([this](){ return this->Duration(); })
                           , sdbus::registerProperty("Timeout").withGetter([this](){ return this->Timeout(); })
-                          , sdbus::registerProperty("SecondaryChannel").withGetter([this](){ return this->SecondaryChannel(); })
+                          //, sdbus::registerProperty("SecondaryChannel").withGetter([this](){ return this->SecondaryChannel(); })
                           , sdbus::registerProperty("MinInterval").withGetter([this](){ return this->MinInterval(); })
                           , sdbus::registerProperty("MaxInterval").withGetter([this](){ return this->MaxInterval(); })
                           , sdbus::registerProperty("TxPower").withGetter([this](){ return this->TxPower(); })
@@ -81,7 +81,7 @@ private:
     virtual uint16_t Appearance() = 0;
     virtual uint16_t Duration() = 0;
     virtual uint16_t Timeout() = 0;
-    virtual std::string SecondaryChannel() = 0;
+    // virtual std::string SecondaryChannel() = 0;
     virtual uint32_t MinInterval() = 0;
     virtual uint32_t MaxInterval() = 0;
     virtual int16_t TxPower() = 0;
